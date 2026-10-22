@@ -28,6 +28,8 @@ export interface AccountPageConfig {
     handle: string
     deviceJkt: string
     capabilityExpiresAt: string
+    /** Where the wallet is (`dito.did.md`): the Services tab's Identity host card. */
+    host?: string
     /** Set only after Wallet has returned a typed Root+Sign MLS credential
      * for this browser's Biset device leaf. */
     deviceKid?: string

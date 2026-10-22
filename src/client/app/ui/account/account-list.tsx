@@ -19,13 +19,29 @@ function coordinatorHost(url: string): string {
 export function AccountList() {
   const config = useStore(accountConfig)
   const wallet = config?.wallet
-  if (!config || !wallet?.didComm) return null
+  if (!config || !wallet) return null
   const showMessage = (text: string) => config.showMessage?.(text)
   return (
     <>
-      <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} />
+      {wallet.host ? <IdentityHostCard host={wallet.host} /> : null}
+      {wallet.didComm ? <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} /> : null}
       {config.rotationKey ? <DidCommKeyNotice rotationKey={config.rotationKey} showMessage={showMessage} /> : null}
     </>
+  )
+}
+
+/** Where the identity lives: the wallet that hosts the DID and approves changes to it. */
+function IdentityHostCard({ host }: { host: string }) {
+  return (
+    <div className="acc-card-wrap" id="cmd-acc-identity-host-card">
+      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
+          <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
+          <span style={{ fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</span>
+        </div>
+      </div>
+    </div>
   )
 }
 

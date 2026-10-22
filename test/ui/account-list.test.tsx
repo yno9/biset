@@ -36,6 +36,17 @@ test('nothing is drawn before there is a mediator', () => {
   expect(container.innerHTML).toBe('')
 })
 
+test('the Identity host card names where the wallet is, with or without a mediator', () => {
+  const next = config()
+  const { container } = render(<AccountList />)
+  set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  expect(container.querySelector('#cmd-acc-identity-host-card')!.textContent).toBe('Identity host:dito.did.md')
+  const { didComm: _, ...withoutMediator } = next.wallet!
+  set({ ...next, wallet: { ...withoutMediator, host: 'dito.did.md' } })
+  expect(container.querySelector('#cmd-acc-identity-host-card')).not.toBeNull()
+  expect(container.querySelector('#cmd-acc-mediator-card')).toBeNull()
+})
+
 test('the card shows the mediator host and its state', () => {
   const { container } = render(<AccountList />)
   set(config())

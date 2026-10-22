@@ -35,3 +35,10 @@ export const WALLET_DIRECTORY: readonly WalletDirectoryEntry[] = [
 ]
 
 export const DEFAULT_WALLET: WalletDirectoryEntry = WALLET_DIRECTORY[0]!
+
+/** The host a person sees as the wallet's place: dito's own pages are `dito` + the handle suffix (its issuer,
+ * `api.did.md`, is an API host); any other wallet is at its issuer. */
+export function walletHost(entry: WalletDirectoryEntry): string {
+  if (entry.id === 'dito') return `dito${entry.handleSuffix}`
+  try { return new URL(entry.issuer).host } catch { return entry.issuer }
+}
