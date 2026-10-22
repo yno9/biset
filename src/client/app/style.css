@@ -1857,6 +1857,11 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   text-overflow: ellipsis;
   min-width: 0;
 }
+#cmd-acc-identity-name .acc-name-sep {
+  margin: 0 0.5em;
+  font-weight: 400;
+  color: var(--text-dim);
+}
 #cmd-acc-identity-name-edit {
   display: flex;
   flex-shrink: 0;

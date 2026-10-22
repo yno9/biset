@@ -135,7 +135,7 @@ function IdentityCard({ did }: { did: string }) {
             void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ?? <AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton>}</span></div>
+          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <>{own.name}<span className="acc-name-sep">|</span></> : null}<AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span></div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => getAccountConfig()?.showMessage?.('DID copied')).catch(() => {}) }}>
@@ -143,7 +143,7 @@ function IdentityCard({ did }: { did: string }) {
               <path fill="none" strokeWidth="54" d="M580 150 L928 351 V735 M578 150 V541 L698 610 M578 255 L815 392 V810 M578 347 L698 416 V875 M348 285 V650 L700 853 M462 213 V594 L698 718" />
               <circle cx="580" cy="150" r="48" /><circle cx="928" cy="735" r="48" /><circle cx="816" cy="810" r="48" /><circle cx="702" cy="875" r="48" /><circle cx="351" cy="285" r="48" /><circle cx="463" cy="213" r="48" />
             </svg>
-            <span id="cmd-acc-identity-did" title={did}>{own.name ? <>{did.split(':').slice(0, 3).join(':')}:<AliasButton>{did.split(':').slice(3).join(':')}</AliasButton></> : did}</span>
+            <span id="cmd-acc-identity-did" title={did}>{did}</span>
           </div>
           {pgp ? <PgpKeyRow config={pgp} showMessage={text => getAccountConfig()?.showMessage?.(text)} /> : null}
         </div>
