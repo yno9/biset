@@ -207,7 +207,7 @@ function didCommMediatorIngressEnvelope(
  * approval's candidate, kept sealed in the session until the Vault is open)
  * -- if the DID document still publishes that key and the Vault lacks it --
  * and forgets the candidate either way. */
-async function storeApprovedRotationSeed(did: string, reader: GenerationSeedReader, sink: GenerationSeedSink, authority: GenerationSeedAuthority): Promise<void> {
+async function storeApprovedRotationSeed(did: string, identityId: string, reader: GenerationSeedReader, sink: GenerationSeedSink, authority: GenerationSeedAuthority): Promise<void> {
   const approved = await approvedRotationSeed()
   if (!approved) return
   try {
@@ -215,7 +215,7 @@ async function storeApprovedRotationSeed(did: string, reader: GenerationSeedRead
     const published = publishedRotationKey(log.last.state as Parameters<typeof publishedRotationKey>[0])
     const stored = (await reader.readAll()).some(value => equalBytes(value.seed, approved.seed))
     if (published === rotationSigningKey(approved.seed).publicKeyMultibase && !stored) {
-      await sink.store(generationSeedRecord(did, approved.seed, entryVersionNumber(log.last.versionId)))
+      await sink.store(generationSeedRecord(identityId, approved.seed, entryVersionNumber(log.last.versionId)))
       authority.refresh()
     }
     await approved.forget()
@@ -672,7 +672,7 @@ async function configureWalletAccountIfPresent(
           readLog: async () => (await fetchCurrentLog(device.did, freshFetch())).entries,
         })
         generationSeeds = { current: () => seedAuthority.require().then(value => value.seed, () => undefined) }
-        await timed('storeApprovedRotationSeed', storeApprovedRotationSeed(device.did, walletSeedReader, walletSeedSink, seedAuthority))
+        await timed('storeApprovedRotationSeed', storeApprovedRotationSeed(device.did, identityId, walletSeedReader, walletSeedSink, seedAuthority))
           .catch(error => console.warn('[did.md Wallet generation seed]', error instanceof Error ? error.message : error))
         try {
           const status = await timed('seedAuthority.status', seedAuthority.status())
