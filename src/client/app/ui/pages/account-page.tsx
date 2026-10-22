@@ -92,6 +92,9 @@ function AliasButton({ children }: { children: string }) {
   )
 }
 
+/** The first character, upper-cased, of a display name or of the mail address (a character, not a UTF-16 unit). */
+const initialOf = (text: string): string => (Array.from(text)[0] ?? '').toUpperCase()
+
 function IdentityCard({ did }: { did: string }) {
   const label = parseWebvhDid(did).domain
   const accountState = useStore(accountConfig)
@@ -142,7 +145,7 @@ function IdentityCard({ did }: { did: string }) {
           onClick={profile ? event => {
             event.stopPropagation()
             void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
-          } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : label.charAt(0).toUpperCase()}</div>
+          } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : initialOf(own.name?.trim() || label)}</div>
         <div id="cmd-acc-identity-text">
           <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <><span className="acc-display-name" role={profile ? 'button' : undefined} data-tip={profile ? 'Change display name' : undefined}
             onClick={profile ? event => { event.stopPropagation(); changeDisplayName(own.name) } : undefined}>{own.name}</span><span className="acc-name-sep">|</span></> : null}<AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span></div>
