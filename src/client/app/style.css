@@ -1867,14 +1867,14 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #cmd-acc-pgp-row {
   padding: 1px 3px;
   margin: -1px -3px;
-  border-radius: 4px;
+  border-radius: 8px;
   transition: background-color 0.12s;
 }
 #cmd-acc-identity-name .acc-display-name:hover,
 #cmd-acc-identity-name .acc-alias-edit:hover,
 #cmd-acc-identity-did-row:hover,
 #cmd-acc-pgp-row:hover {
-  background: rgba(128, 128, 128, 0.16);
+  background: rgba(128, 128, 128, 0.11);
 }
 #cmd-acc-identity-name .acc-name-sep {
   margin: 0 0.5em;
