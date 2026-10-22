@@ -127,7 +127,9 @@ export function NewUserPage() {
       // the sign-in succeeded, otherwise to this very URL.
       savePage: async () => {
         const login = await loginRequest
-        location.assign(`${ditoOrigin}/?embed=save&return=${encodeURIComponent(location.href)}${login ? `&login=${encodeURIComponent(login)}` : ''}`)
+        // Straight to the last page: the sign-in's own /authorize page with the request, or, without one, the page
+        // that only shows the Passphrase. Yes there is the real submit the password managers need.
+        location.assign(login ? `${ditoOrigin}/authorize${login}` : `${ditoOrigin}/?embed=save-done`)
       },
       // Nothing to do here: the frame itself opens on the log-in form for the identity this browser holds.
       existing: () => {},

@@ -319,7 +319,7 @@ async function configureWalletAccountIfPresent(
           const login = await prepareDidMdMovedDidLoginRequest(moved.did, readBisetConfig())
           const origin = ditoEmbedOrigin()
           if (!origin) throw new Error('Changing the alias needs the embedded wallet.')
-          location.assign(`${origin}/?embed=save&return=${encodeURIComponent(location.href)}&login=${encodeURIComponent(login)}`)
+          location.assign(`${origin}/authorize${login}`)
         },
         onDisconnect: async () => {
           await disconnectWalletAndLocalData()
