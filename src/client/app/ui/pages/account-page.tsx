@@ -36,7 +36,6 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
   const profile = config?.profile
   const didItem: MenuItem = { label: did.expanded ? 'Hide DID' : 'View DID', onClick: did.onToggle }
   const profileItems: MenuItem[] = profile ? [
-    { label: 'Remove profile picture', onClick: () => { void profile.setAvatar(null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
     // Once there is a name, the name in the card is what changes it.
     ...(currentName ? [] : [{ label: 'Set display name', onClick: () => changeDisplayName() }]),
   ] : []
@@ -137,7 +136,7 @@ function IdentityCard({ did }: { did: string }) {
   return (
     <div className={`cmd-page-section${expanded ? ' expanded' : ''}`} id="cmd-acc-identity-section">
       <div id="cmd-acc-identity-fields">
-        <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? 'Set profile picture' : undefined}
+        <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? (own.avatar ? 'Change profile picture' : 'Set profile picture') : undefined}
           style={{ background: avatarColor(label), ...(profile ? { cursor: 'pointer' } : {}) }}
           // The picture is set where it is shown: a click on it asks for an image (not the card opening).
           onClick={profile ? event => {
