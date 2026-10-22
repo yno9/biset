@@ -17,9 +17,7 @@ import { NewUserPage } from './new-user-page.tsx'
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
-/** The identity menu. A Wallet account can reconnect, move its messages, and disconnect; the rest of
- * the old menu (passkey protection) has no backend here. */
-/** Asks for the display name (the menu's "Set display name", and a click on the name in the card). */
+/** Asks for the display name: a click on the name in the card, or the menu's "Set display name" while there is none. */
 function changeDisplayName(current?: string): void {
   const profile = getAccountConfig()?.profile
   if (!profile) return
@@ -28,6 +26,8 @@ function changeDisplayName(current?: string): void {
   void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
 }
 
+/** The identity menu. A Wallet account can reconnect, move its messages, and disconnect; the rest of
+ * the old menu (passkey protection) has no backend here. */
 function identityMenuItems(currentName: string | undefined, did: { expanded: boolean; onToggle: () => void }): MenuItem[] {
   const config = getAccountConfig()
   const wallet = config?.wallet
@@ -37,7 +37,8 @@ function identityMenuItems(currentName: string | undefined, did: { expanded: boo
   const didItem: MenuItem = { label: did.expanded ? 'Hide DID' : 'View DID', onClick: did.onToggle }
   const profileItems: MenuItem[] = profile ? [
     { label: 'Remove profile picture', onClick: () => { void profile.setAvatar(null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(showMessage) } },
-    { label: 'Set display name', onClick: () => changeDisplayName(currentName) },
+    // Once there is a name, the name in the card is what changes it.
+    ...(currentName ? [] : [{ label: 'Set display name', onClick: () => changeDisplayName() }]),
   ] : []
   const invite: MenuItem[] = pgp ? [
     { label: 'Copy Delta Chat invite', onClick: () => copyInviteLink(pgp, text => config?.showMessage?.(text)) },
