@@ -4137,7 +4137,7 @@ html.pwa-standalone #app {
   flex: 1;
   min-width: 0;
   font-size: 14.5px;
-  font-weight: 600;
+  font-weight: 400;
 }
 #cmd-acc-keys {
   display: flex;
