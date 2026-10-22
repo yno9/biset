@@ -1861,12 +1861,19 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 /* Delta Chat's row, centred at the foot of the account page. */
+/* On the account page the row is at the very bottom: the page's boxes grow to fill the column, and the row's
+   auto top margin takes the space between the tabs and itself. */
+#right-pane:has(#cmd-acc-deltachat) { display: flex; flex-direction: column; }
+#right-pane:has(#cmd-acc-deltachat) > #active-thread { flex: 1 0 auto; display: flex; flex-direction: column; }
+#active-thread:has(#cmd-acc-deltachat) > .cmd-thread-card { flex: 1 0 auto; display: flex; flex-direction: column; }
+.cmd-thread-card:has(#cmd-acc-deltachat) > .cmd-page-content { flex: 1 0 auto; display: flex; flex-direction: column; }
 #cmd-acc-deltachat {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin: 28px 0 8px;
+  margin: auto 0 8px;
+  padding-top: 28px;
   color: var(--text-dim);
   font-size: 13px;
 }

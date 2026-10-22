@@ -8,6 +8,7 @@ import { resolve } from '../../../../protocol/webvh/resolver.ts'
 import { AccountList, KeysPanel } from '../account/account-list.tsx'
 import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
+import { DeltaChatIcon } from '../account/deltachat-icon.tsx'
 import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { openDropdownMenu, type MenuItem } from '../account/menu.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
@@ -213,8 +214,7 @@ function DeltaChatBar() {
   const showMessage = (text: string) => config?.showMessage?.(text)
   return (
     <div id="cmd-acc-deltachat">
-      {/* A speech bubble with a delta in it (drawn here, not Delta Chat's own artwork). */}
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"><path d="M5 3.5h14a2.5 2.5 0 0 1 2.5 2.5v8.5a2.5 2.5 0 0 1-2.5 2.5h-7L8 21v-4H5A2.5 2.5 0 0 1 2.5 14.5V6A2.5 2.5 0 0 1 5 3.5Z" /><path d="M12 7.5 15.5 13.5h-7Z" /></svg>
+      <DeltaChatIcon />
       <button type="button" onClick={() => joinDeltaChatInvite(pgp, showMessage)}>Join</button>
       <span aria-hidden="true">|</span>
       <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Copy URL</button>
