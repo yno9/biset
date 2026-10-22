@@ -1837,7 +1837,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   gap: 4px;
   margin: 4px 0 2px;
   padding: 0 6px;
-  border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.25));
 }
 .acc-nav-tab {
   padding: 8px 12px;
@@ -1853,10 +1852,10 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-nav-tab[aria-selected="true"] {
   color: var(--text);
 }
-/* The one underline, sliding to the chosen tab. It sits on the bar's own bottom border. */
+/* The one underline, sliding to the chosen tab. */
 .acc-nav-underline {
   position: absolute;
-  bottom: -1px;
+  bottom: 0;
   height: 2px;
   background: var(--accent, currentColor);
   transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);

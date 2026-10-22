@@ -224,7 +224,9 @@ function AccountTabs() {
     <>
       <nav id="cmd-acc-nav" role="tablist" aria-label="Account">
         {TABS.map(name => (
-          <button key={name} ref={element => { tabs.current[name] = element }} type="button" role="tab" className="acc-nav-tab" aria-selected={tab === name} onClick={() => setTab(name)}>{name}</button>
+          <button key={name} ref={element => { tabs.current[name] = element }} type="button" role="tab" className="acc-nav-tab" aria-selected={tab === name}
+            // The pointer over a tab picks it; a click (touch, keyboard) does too.
+            onPointerEnter={event => { if (event.pointerType === 'mouse') setTab(name) }} onClick={() => setTab(name)}>{name}</button>
         ))}
         {bar ? <span className="acc-nav-underline" style={{ left: bar.left, width: bar.width }} /> : null}
       </nav>
