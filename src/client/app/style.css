@@ -892,8 +892,10 @@ select {
 
 /* "+ New JMAP account" panel — opens on a Sign up / Log in choice, flush
    against the trigger card above it (no gap, no tint). */
+/* The panel under the tab bar: the same padding for Services and Files. */
 #cmd-acc-list {
   margin-bottom: 0;
+  padding: 14px 12px;
 }
 /* A system message about the account, below its cards: not dismissible, it
    goes when the thing it says is put right. */
@@ -1861,7 +1863,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 14px 12px;
 }
 .acc-file-btn {
   padding: 7px 16px;
