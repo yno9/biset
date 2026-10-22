@@ -98,6 +98,13 @@ export class SqliteMediatorStore {
     installSchema(database)
   }
 
+  /** Changes limits while the store runs (v2 admin); a set that would not be legal as a whole changes nothing. */
+  setLimits(patch: Partial<SqliteMediatorLimits>): void {
+    const next = { ...this.limits, ...patch }
+    assertLimits(next)
+    Object.assign(this.limits, next)
+  }
+
   static open(path: string, limits?: Partial<SqliteMediatorLimits>): SqliteMediatorStore {
     if (!path) throw new TypeError('mediator SQLite path is required')
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })

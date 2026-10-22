@@ -5,11 +5,12 @@ export class IpRateLimiter {
   private readonly windows = new Map<string, { startedAt: number; count: number }>()
 
   constructor(
-    private readonly maxPerWindow: number,
+    /** A function, when v2 admin may change the number while the server runs. */
+    private readonly maxPerWindow: number | (() => number),
     private readonly windowMs = 60_000,
     private readonly maxTrackedAddresses = 10_000,
   ) {
-    for (const [name, value] of Object.entries({ maxPerWindow, windowMs, maxTrackedAddresses })) {
+    for (const [name, value] of Object.entries({ maxPerWindow: typeof maxPerWindow === 'function' ? maxPerWindow() : maxPerWindow, windowMs, maxTrackedAddresses })) {
       if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError(`${name} must be a positive safe integer`)
     }
   }
@@ -22,7 +23,7 @@ export class IpRateLimiter {
       this.prune(now)
       return true
     }
-    if (existing.count >= this.maxPerWindow) return false
+    if (existing.count >= (typeof this.maxPerWindow === 'function' ? this.maxPerWindow() : this.maxPerWindow)) return false
     existing.count++
     return true
   }

@@ -1,0 +1,78 @@
+{
+  "id": "mediator",
+  "name": "biset mediator",
+  "description": "The blind DIDComm mediator: who may open an inbox, how much it holds, how fast it answers",
+  "unit": "biset-didcomm-mediator.service",
+  "settings": {
+    "registration.open": {
+      "type": "boolean",
+      "default": true,
+      "group": "New inboxes",
+      "reload": "live",
+      "description": "Off: no new device inbox is opened (existing ones keep working)."
+    },
+    "registration.newInboxesPerAddressPerHour": {
+      "type": "integer",
+      "default": 60,
+      "min": 1,
+      "max": 1000000,
+      "unit": "inboxes/hour",
+      "group": "New inboxes",
+      "reload": "live",
+      "description": "Inboxes one client address may open in an hour (the Tor entrance has ten times as many, being one address for all its visitors)."
+    },
+    "limits.maxInboxes": {
+      "type": "integer",
+      "default": 30000,
+      "min": 1,
+      "max": 10000000,
+      "unit": "inboxes",
+      "group": "New inboxes",
+      "reload": "live",
+      "description": "The mediator opens no new inbox once it keeps this many."
+    },
+    "limits.maxDevicesPerDid": {
+      "type": "integer",
+      "default": 3,
+      "min": 1,
+      "max": 64,
+      "unit": "devices",
+      "group": "New inboxes",
+      "reload": "live",
+      "description": "Devices (inboxes) one DID may have."
+    },
+    "limits.requestsPerMinute": {
+      "type": "integer",
+      "default": 3000,
+      "min": 1,
+      "max": 1000000,
+      "unit": "requests/minute",
+      "group": "Load",
+      "reload": "live",
+      "description": "Requests one client address may make in a minute (HTTP POST and WebSocket messages); more are answered 429."
+    },
+    "limits.maxQueueItemsPerInbox": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 100000,
+      "unit": "messages",
+      "group": "What it holds",
+      "reload": "live",
+      "description": "Messages waiting in one inbox; a full inbox takes no more."
+    },
+    "limits.maxQueueBytesPerInbox": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 1048576,
+      "max": 1073741824,
+      "unit": "bytes",
+      "group": "What it holds",
+      "reload": "live",
+      "description": "Bytes waiting in one inbox. Not below the largest message (1 MiB)."
+    }
+  },
+  "metrics": {
+    "url": "http://127.0.0.1:8791/admin/metrics"
+  }
+}

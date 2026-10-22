@@ -33,8 +33,20 @@ export interface MediatorDeploymentOptions {
    * `refreshSeconds` is how often every did:webvh with an inbox is resolved
    * again (default 300), which is how a device removed from its DID loses its inbox. */
   webvh?: { resolve?: boolean | WebvhStateResolver; refreshSeconds?: number }
+  /** Numbers v2 admin can change while the mediator runs (settings.ts); absent, `rateLimitPerMinute`, `registration` and `limits` stand. */
+  live?: LiveMediatorLimits
+  /** Answers `/admin/*` (admin-api.ts) before anything else does. */
+  admin?: (store: SqliteMediatorStore) => (request: Request, url: URL) => Promise<Response | undefined>
   serviceName?: string
   log?(level: 'info' | 'error', message: string, fields: Record<string, unknown>): void
+}
+
+export interface LiveMediatorLimits {
+  requestsPerMinute(): number
+  newInboxesPerAddressPerHour(): number
+  registrationOpen(): boolean
+  /** The store limits that may change while it runs. */
+  storeLimits(): Partial<SqliteMediatorLimits>
 }
 
 export interface MediatorDeployment {
@@ -63,19 +75,21 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
   const webvhResolve = options.webvh?.resolve
   const resolveWebvh = webvhResolve === false ? undefined : typeof webvhResolve === 'function' ? webvhResolve : createNetworkWebvhResolver()
-  const newInboxLimit = options.registration?.newInboxesPerAddressPerHour
+  const liveLimits = options.live
+  const admin = options.admin?.(store)
+  const newInboxLimit = liveLimits ? () => liveLimits.newInboxesPerAddressPerHour() : options.registration?.newInboxesPerAddressPerHour
   const newInboxLimiter = newInboxLimit ? new IpRateLimiter(newInboxLimit, 60 * 60_000) : undefined
   // Every Tor visitor reaches this server from the local Tor daemon: one
   // address for all of them, so that bucket is wider than a person's.
-  const onionLimiter = newInboxLimit ? new IpRateLimiter(newInboxLimit * 10, 60 * 60_000) : undefined
+  const onionLimiter = newInboxLimit ? new IpRateLimiter(typeof newInboxLimit === 'function' ? () => newInboxLimit() * 10 : newInboxLimit * 10, 60 * 60_000) : undefined
   const { handle, live, mediatorDid, refreshWebvh } = createMediator({
     mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes), resolveWebvh,
     registration: {
       ...(options.registration?.allowedDidDomains?.length ? { allowedDidDomains: options.registration.allowedDidDomains } : {}),
-      ...(newInboxLimiter ? { admitNewInbox: address => (isLoopback(address) ? onionLimiter! : newInboxLimiter).allow(address) } : {}),
+      ...(newInboxLimiter || liveLimits ? { admitNewInbox: (address: string) => (liveLimits?.registrationOpen() ?? true) && (!newInboxLimiter || (isLoopback(address) ? onionLimiter! : newInboxLimiter).allow(address)) } : {}),
     },
   })
-  const requestLimiter = new IpRateLimiter(options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
+  const requestLimiter = new IpRateLimiter(liveLimits ? () => liveLimits.requestsPerMinute() : options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
   const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
     || server.requestIP(request)?.address
     || 'unknown'
@@ -97,6 +111,8 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
     },
     async fetch(request) {
       const url = new URL(request.url)
+      const adminResponse = await admin?.(request, url)
+      if (adminResponse) return adminResponse
       if (request.method === 'OPTIONS') {
         const origin = request.headers.get('origin')
         if (!origin || !allowedOrigins.has(origin)) return new Response(null, { status: 403 })
@@ -133,6 +149,14 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
     },
   })
 
+  // The store's limits follow v2 admin's screen; a set that is not legal as a whole (say, a message larger than an inbox) changes nothing.
+  const followLive = () => {
+    if (!liveLimits) return
+    try { store.setLimits(liveLimits.storeLimits()) } catch (error) { log('error', 'live limits not applied', { error: errorMessage(error) }) }
+  }
+  followLive()
+  const liveTimer = liveLimits ? setInterval(followLive, 5000) : undefined
+  liveTimer?.unref()
   const expiryTimer = setInterval(() => {
     try { store.expire() } catch (error) { log('error', 'background expiry failed', { error: errorMessage(error) }) }
   }, 60_000)
@@ -181,6 +205,7 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
       if (shuttingDown) return
       shuttingDown = true
       clearInterval(expiryTimer)
+      if (liveTimer) clearInterval(liveTimer)
       if (webvhTimer) clearInterval(webvhTimer)
       relayPoller?.stop()
       log('info', 'mediator shutting down', { signal })
