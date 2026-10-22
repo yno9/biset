@@ -4,6 +4,7 @@
 // waiting frame also serves the alias change (dito's alias screen), so that opens at once too.
 import { useEffect, useRef } from 'react'
 import { createStore, useStore } from '../react/store.ts'
+import { accountConfig } from './account/state.ts'
 import { useDidMdWalletApprover } from '../../identity/wallet/did-md-oauth.ts'
 import { ditoEmbedOrigin, mountDito, type DitoEmbed } from '../../identity/wallet/dito-embed.ts'
 
@@ -60,11 +61,14 @@ export function ApproveDialog() {
     return slot
   }
 
+  // Nothing to approve before there is an account: the sign-up page keeps its one dito frame (a second
+  // dito frame in the tab is one more thing for a password manager to track while the person signs up).
+  const signedIn = useStore(accountConfig)?.did != null
   useEffect(() => {
-    if (!origin) return
+    if (!origin || !signedIn) return
     const idle = window.requestIdleCallback ?? ((run: () => void) => setTimeout(run, 500))
     idle(() => { if (!warm.current) start() }, { timeout: 3000 })
-  }, [])
+  }, [signedIn])
 
   useEffect(() => {
     if (!current) return
