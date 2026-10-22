@@ -1963,6 +1963,21 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-pgp-row:hover {
   background: rgba(128, 128, 128, 0.11);
 }
+/* Without a display name, "Set display name" shows when the pointer is on the name line. */
+.acc-name-add {
+  margin-left: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+#cmd-acc-identity-name-row:hover .acc-name-add,
+.acc-name-add:focus-visible { opacity: 1; }
 #cmd-acc-identity-name .acc-name-sep {
   margin: 0 0.5em;
   font-weight: 400;

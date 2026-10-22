@@ -25,7 +25,7 @@ export function AccountList() {
   const showMessage = (text: string) => config.showMessage?.(text)
   return (
     <>
-      {wallet.host && config.did ? <IdentityHostCard did={config.did} host={wallet.host} /> : null}
+      {wallet.host && config.did ? <IdentityHostCard did={config.did} host={wallet.host} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
       {wallet.didComm ? <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} /> : null}
       {config.rotationKey ? <DidCommKeyNotice rotationKey={config.rotationKey} showMessage={showMessage} /> : null}
     </>
@@ -34,10 +34,11 @@ export function AccountList() {
 
 /** Where the identity lives: the wallet that hosts the DID and approves changes to it. The dot is green when the
  * DID resolves (its `/.well-known/did.jsonl` is there and verifies), orange while that is being looked up, red
- * when it does not. The host is a link to the wallet itself (the origin
+ * when it does not. When the wallet's capability has lapsed a Reconnect button
+ * is here as well. The host is a link to the wallet itself (the origin
  * the identity's keys are stored under; app.did.md is another origin and does not have them); the document icon
  * on the right opens the DID's own log, `/.well-known/did.jsonl`, in a new tab. */
-function IdentityHostCard({ did, host }: { did: string; host: string }) {
+function IdentityHostCard({ did, host, onReconnect }: { did: string; host: string; onReconnect?: () => void }) {
   const [resolved, setResolved] = useState<'checking' | 'ok' | 'error'>('checking')
   useEffect(() => {
     let current = true
@@ -58,6 +59,8 @@ function IdentityHostCard({ did, host }: { did: string; host: string }) {
           <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
             style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a>
         </div>
+        {onReconnect ? <button type="button" onClick={onReconnect}
+          style={{ flexShrink: 0, padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Reconnect</button> : null}
         {logUrl ? <a href={logUrl} target="_blank" rel="noopener noreferrer" aria-label="Open the DID log" data-tip="Open the DID log (did.jsonl)"
           style={{ flexShrink: 0, color: 'var(--text-dim)', padding: 4, display: 'flex' }}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>

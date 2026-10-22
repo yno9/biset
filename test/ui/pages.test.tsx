@@ -11,7 +11,6 @@ vi.mock('../../src/client/app/ui/account/avatar-crop.tsx', async importOriginal 
 vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ name: 'Alice' })) }))
 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
-import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
 import { AccountPage } from '../../src/client/app/ui/pages/account-page.tsx'
 import { ComposePage, configureComposePage } from '../../src/client/app/ui/pages/compose-page.tsx'
 import { ConfigPage, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
@@ -146,40 +145,39 @@ test('account: clicking the avatar asks for a picture and sets it, without openi
   expect(bare.container.querySelector('#cmd-acc-identity-avatar')!.getAttribute('role')).toBeNull()
 })
 
-test('account: View DID in the identity menu opens the card and reads the DID document once; a click on the card does not', async () => {
-  const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
-  vi.mocked(resolve).mockResolvedValue({ id: DID, name: 'Alice' } as never)
+test('account: the identity card has no menu button and no clickable DID panel', () => {
   accountConfig.set(account())
-  const { container } = render(<><AccountPage /><DropdownMenu /></>)
-  const section = container.querySelector('#cmd-acc-identity-section')!
-  const callsBefore = vi.mocked(resolve).mock.calls.length
+  const { container } = render(<AccountPage />)
+  expect(container.querySelector('#cmd-acc-identity-menu-btn')).toBeNull()
   fireEvent.click(container.querySelector('#cmd-acc-identity-fields')!)
-  expect(section.classList.contains('expanded')).toBe(false)
-  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  fireEvent.click(screen.getByText('View DID'))
-  expect(section.classList.contains('expanded')).toBe(true)
-  await waitFor(() => expect(container.querySelector('#cmd-acc-identity-doc')!.textContent).toContain('"name": "Alice"'))
-  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  fireEvent.click(screen.getByText('Hide DID'))
-  expect(section.classList.contains('expanded')).toBe(false)
-  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  fireEvent.click(screen.getByText('View DID'))
-  expect(vi.mocked(resolve).mock.calls.length).toBe(callsBefore + 1)
-  fireEvent.click(container.querySelector('#cmd-acc-identity-sync-btn')!)
-  await waitFor(() => expect(vi.mocked(resolve).mock.calls.length).toBe(callsBefore + 2))
+  expect(container.querySelector('#cmd-acc-identity-expanded')).toBeNull()
 })
 
-test('account: the Delta Chat row at the foot joins an invite and copies this identity\'s link, and the menu no longer has them', async () => {
+test('account: without a display name the name line offers to set one, and with one it is gone', async () => {
+  const prompt = vi.spyOn(window, 'prompt').mockReturnValue('Alice')
+  const setName = vi.fn(async () => {})
+  const profile = { current: async () => ({}), setName, setAvatar: async () => {} }
+  accountConfig.set(account({ profile }))
+  const { container } = render(<AccountPage />)
+  fireEvent.click(await screen.findByText('Set display name'))
+  expect(prompt).toHaveBeenCalled()
+  await waitFor(() => expect(setName).toHaveBeenCalledWith('Alice'))
+  cleanup()
+  accountConfig.set(account({ profile: { ...profile, current: async () => ({ name: 'Alice' }) } }))
+  const named = render(<AccountPage />)
+  await waitFor(() => expect(named.container.querySelector('.acc-display-name')!.textContent).toBe('Alice'))
+  expect(screen.queryByText('Set display name')).toBeNull()
+  void container
+})
+
+test('account: the Delta Chat row at the foot joins an invite and copies this identity\'s link', async () => {
   const writeText = vi.fn(async () => {})
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
   const joinInvite = vi.fn(async () => ({ name: 'Bob', address: 'bob@x.test' }))
   const pgp = { address: 'alice@did.md', current: async () => undefined, onCopyPublic: async () => '', inviteLink: async () => 'https://i.delta.chat/#FP', joinInvite }
   vi.spyOn(window, 'prompt').mockReturnValue('https://i.delta.chat/#ABC')
   accountConfig.set(account({ pgp }))
-  const { container } = render(<><AccountPage /><DropdownMenu /></>)
-  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  expect(screen.queryByText('Copy Delta Chat invite')).toBeNull()
-  expect(screen.queryByText('Join a Delta Chat invite')).toBeNull()
+  render(<AccountPage />)
   fireEvent.click(screen.getByText('Copy URL'))
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://i.delta.chat/#FP'))
   fireEvent.click(screen.getByText('Join'))
@@ -209,13 +207,10 @@ test('account: Disconnect in the Files tab disconnects only after a confirmation
   expect(onDisconnect).toHaveBeenCalled()
 })
 
-test('account: Export and Import are in the Files tab, not in the identity menu', () => {
+test('account: Export is in the Files tab', () => {
   const onExportMessages = vi.fn(async () => {})
   accountConfig.set(account({ wallet: { handle: 'alice.did.md', deviceJkt: 'j', capabilityExpiresAt: '2030-01-01T00:00:00Z', onDisconnect: vi.fn(async () => {}) }, onExportMessages }))
-  const { container } = render(<><AccountPage /><DropdownMenu /></>)
-  fireEvent.click(container.querySelector('#cmd-acc-identity-menu-btn')!)
-  expect(screen.queryByText('Export Messages')).toBeNull()
-  expect(screen.queryByText('Disconnect Wallet')).toBeNull()
+  render(<AccountPage />)
   fireEvent.click(screen.getByRole('tab', { name: 'Files' }))
   fireEvent.click(screen.getByText('Export'))
   expect(onExportMessages).toHaveBeenCalled()

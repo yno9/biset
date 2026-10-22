@@ -68,6 +68,18 @@ test('the Identity host card names where the wallet is, with or without a mediat
   expect(container.querySelector('#cmd-acc-mediator-card')).toBeNull()
 })
 
+test('a lapsed wallet capability shows a Reconnect button on the Identity host card', () => {
+  const onReconnect = vi.fn(async () => {})
+  const next = config({ did: REAL_DID })
+  const { container } = render(<AccountList />)
+  set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  expect(screen.queryByText('Reconnect')).toBeNull()
+  set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md', reconnectRequired: true, onReconnect } })
+  fireEvent.click(screen.getByText('Reconnect'))
+  expect(onReconnect).toHaveBeenCalled()
+  void container
+})
+
 test('the card shows the mediator host and its state', () => {
   const { container } = render(<AccountList />)
   set(config())
