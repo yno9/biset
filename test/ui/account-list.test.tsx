@@ -76,10 +76,10 @@ test('the card shows the mediator host and its state', () => {
   expect(container.textContent).toContain('Logged out')
 })
 
-test('while the mediator is being connected the card says so, and is neither green nor red', () => {
+test('while the mediator is being connected the dot is neither green nor red, and no text says so', () => {
   const { container } = render(<AccountList />)
   set(config({}, { connecting: true }))
-  expect(container.textContent).toContain('Connecting…')
+  expect(container.textContent).not.toContain('Connecting')
   expect(container.textContent).not.toContain('Registered')
   const dot = container.querySelector<HTMLElement>('#cmd-acc-mediator-card .cmd-page-row span')!
   expect(dot.style.background).not.toMatch(/34c759|ff3b30/)
