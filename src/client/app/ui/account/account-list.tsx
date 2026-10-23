@@ -38,12 +38,21 @@ export function AccountList() {
  * is here as well. The host is a link to the wallet itself (the origin
  * the identity's keys are stored under; app.did.md is another origin and does not have them); the document icon
  * on the right opens the DID's own log, `/.well-known/did.jsonl`, in a new tab. */
+type Resolution = 'checking' | 'ok' | 'error'
+/** What the last look at each DID found. The card is built again each time its tab is shown; it starts from this
+ * and does not look again, so switching tabs never turns the dot orange. A new DID (an alias change), or a page
+ * load, looks anew. */
+const resolutions = new Map<string, Resolution>()
+
 function IdentityHostCard({ did, host, onReconnect }: { did: string; host: string; onReconnect?: () => void }) {
-  const [resolved, setResolved] = useState<'checking' | 'ok' | 'error'>('checking')
+  const [resolved, setResolved] = useState<Resolution>(() => resolutions.get(did) ?? 'checking')
   useEffect(() => {
+    const known = resolutions.get(did)
+    if (known && known !== 'checking') { setResolved(known); return }
     let current = true
     setResolved('checking')
-    resolve(did).then(found => { if (current) setResolved(found ? 'ok' : 'error') }).catch(() => { if (current) setResolved('error') })
+    const done = (result: Resolution) => { resolutions.set(did, result); if (current) setResolved(result) }
+    resolve(did).then(found => done(found ? 'ok' : 'error')).catch(() => done('error'))
     return () => { current = false }
   }, [did])
   const logUrl = (() => { try { return didToHttpsUrl(did) } catch { return undefined } })()

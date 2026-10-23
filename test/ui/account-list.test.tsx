@@ -68,6 +68,21 @@ test('the Identity host card names where the wallet is, with or without a mediat
   expect(container.querySelector('#cmd-acc-mediator-card')).toBeNull()
 })
 
+test('the Identity host dot is not looked up again when the card is shown again (a tab switch)', async () => {
+  const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
+  const did = REAL_DID.replace('QmPLLK', 'QmPLLM')
+  const next = config({ did })
+  const first = render(<AccountList />)
+  set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  await waitFor(() => expect(first.container.querySelector('#cmd-acc-identity-host-card [role="status"]')!.getAttribute('data-state')).toBe('ok'))
+  const calls = vi.mocked(resolve).mock.calls.length
+  first.unmount()
+  const again = render(<AccountList />)
+  set({ ...next, wallet: { ...next.wallet!, host: 'dito.did.md' } })
+  expect(again.container.querySelector('#cmd-acc-identity-host-card [role="status"]')!.getAttribute('data-state')).toBe('ok')
+  expect(vi.mocked(resolve).mock.calls.length).toBe(calls)
+})
+
 test('a lapsed wallet capability shows a Reconnect button on the Identity host card', () => {
   const onReconnect = vi.fn(async () => {})
   const next = config({ did: REAL_DID })
