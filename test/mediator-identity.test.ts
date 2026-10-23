@@ -6,11 +6,10 @@ import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { resolveDidWeb } from '../src/protocol/didcomm/did-web.ts'
 import { keyAgreementRecipients } from '../src/protocol/didcomm/webvh-route.ts'
 import { expandEndpoint } from '../src/protocol/didcomm/mediator-endpoint.ts'
-import { selectDidCommEndpoint } from '../src/protocol/didcomm/service-endpoint.ts'
 import { fetchMediatorInfo } from '../src/protocol/didcomm/mediator-transport.ts'
 import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
-import { decodePeerDid2 } from '../src/protocol/didcomm/peer.ts'
+import { decodePeerDid2, encodePeerDid2 } from '../src/protocol/didcomm/peer.ts'
 import { freshMediator, freshMediatorFetch, MEDIATOR_URL, peer, T, utf8 } from './support/mediator.ts'
 
 describe('didWebForUrl', () => {
@@ -112,22 +111,26 @@ describe('the mediator\'s Tor entrance', () => {
     return webMediatorIdentity(store.loadIdentity('https://mediator.test.example'), 'https://mediator.test.example', onion)
   }
 
-  test('is published beside the clearnet URL, clearnet first, when one is configured', () => {
-    const endpoint = identity(ONION).doc.service[0]!.serviceEndpoint
-    expect(endpoint).toEqual([{ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] }, { uri: ONION, accept: ['didcomm/v2'] }])
+  test('its did:web document names one entrance only, the clearnet one, whatever the onion configured', () => {
+    expect(identity(ONION).doc.service[0]!.serviceEndpoint).toEqual({ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] })
   })
 
-  test('without one the document is what it always was', () => {
-    expect(identity().doc.service[0]!.serviceEndpoint).toEqual({ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] })
+  test('the same keys as a did:peer whose endpoint is the onion URL are its own: a Forward to that DID is opened', () => {
+    const mediator = identity(ONION)
+    const onionPeer = encodePeerDid2(mediator.xPub, mediator.edPub, { uri: ONION })
+    expect(mediator.aliasKids).toContain(`${onionPeer}#key-1`)
+    expect(decodePeerDid2(onionPeer).service[0]!.serviceEndpoint.uri).toBe(ONION)
+    expect(identity().aliasKids).toHaveLength(1)
   })
 
   test('only an http .onion URL is accepted', () => {
     expect(() => identity('https://evil.example')).toThrow('.onion')
   })
 
-  test('a sender on Tor dials the onion entry, any other the clearnet one', () => {
-    const endpoint = identity(ONION).doc.service[0]!.serviceEndpoint
-    expect(selectDidCommEndpoint(endpoint)?.uri).toBe('https://mediator.test.example')
-    expect(selectDidCommEndpoint(endpoint, true)?.uri).toBe(ONION)
+  test('a client names the mediator over Tor from the keys in its document, to the same DID the mediator accepts', async () => {
+    const mediator = identity(ONION)
+    const fetched = await fetchMediatorInfo('https://mediator.test.example', (async () => Response.json(mediator.doc)) as typeof fetch)
+    expect(fetched.edPub).toEqual(mediator.edPub)
+    expect(`${encodePeerDid2(fetched.xPub, fetched.edPub!, { uri: ONION })}#key-1`).toBe(mediator.aliasKids[1])
   })
 })

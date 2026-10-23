@@ -13,6 +13,7 @@ import { assertFromMatchesSender, buildPlaintext, type DidCommPlaintext } from '
 import { isProblemReport, problemReportError } from './problems.ts'
 import { publicKeyOf, type PeerDidDoc } from './peer.ts'
 import { keyAgreementRecipients } from './webvh-route.ts'
+import { decodeMultikey } from '../webvh/multikey.ts'
 import { defaultFetch } from '../net-fetch.ts'
 
 /** A DIDComm key this device holds: its own device key of its did:webvh,
@@ -25,7 +26,7 @@ export interface DidCommSender { did: string; xKid: string; xPriv: Uint8Array }
  * must not link inboxes of different DIDs (see mediator-device.ts). */
 export interface MediatorInboxClient extends DidCommSender { device: string }
 
-export interface MediatorInfo { url: string; did: string; xKid: string; xPub: Uint8Array }
+export interface MediatorInfo { url: string; did: string; xKid: string; xPub: Uint8Array; /** The Ed25519 authentication key (a did:web mediator's), when its document lists one. */ edPub?: Uint8Array }
 
 function trimSlash(u: string): string { return u.replace(/\/$/, '') }
 
@@ -53,7 +54,12 @@ export async function fetchMediatorInfo(mediatorUrl: string, fetchImpl: typeof f
     // This client talks to a mediator from an X25519 key (authcrypt): one of the mediator's on that curve.
     const key = keyAgreementRecipients(doc as Parameters<typeof keyAgreementRecipients>[0]).find(recipient => (recipient.curve ?? 'X25519') === 'X25519')
     if (!key) throw new Error(`fetchMediatorInfo: ${doc.id} has no keyAgreement key`)
-    info = { url: mediatorUrl, did: doc.id, xKid: key.kid, xPub: key.publicKey }
+    const web = doc as { authentication?: string[]; verificationMethod?: Array<{ id: string; publicKeyMultibase: string }> }
+    const authentication = web.authentication?.[0]
+    const method = authentication && web.verificationMethod?.find(value => value.id === authentication || value.id === authentication.slice(authentication.indexOf('#')))
+    let edPub: Uint8Array | undefined
+    try { edPub = method ? decodeMultikey(method.publicKeyMultibase) : undefined } catch { /* no usable authentication key: only the did:web can name this mediator */ }
+    info = { url: mediatorUrl, did: doc.id, xKid: key.kid, xPub: key.publicKey, ...(edPub ? { edPub } : {}) }
   }
   mediatorInfoCache.set(mediatorUrl, info)
   return info

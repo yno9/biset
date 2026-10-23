@@ -284,11 +284,11 @@ async function configureWalletAccountIfPresent(
     const mediatorCard = didComm ?? (configuredMediator
       ? { mediatorUrl: new URL(configuredMediator).toString(), loggedOut: true as const }
       : undefined)
-    // The configured onion paired with this card's mediator (same index as
-    // `mediatorUrls`) pre-fills the "Enable Tor" prompt; nothing publishes it
-    // until the user confirms.
+    // The configured onion paired with this card's mediator (same index as `mediatorUrls`) pre-fills the "Enable Tor" prompt (a
+    // card already at an onion address offers that one); nothing publishes it until the user confirms.
     const configuredOnionUrl = mediatorCard
       ? readBisetConfig().mediatorOnionUrls[readBisetConfig().mediatorUrls.findIndex(url => sameMediatorUrl(url, mediatorCard.mediatorUrl))]
+        ?? (readBisetConfig().mediatorOnionUrls.find(url => sameMediatorUrl(url, mediatorCard.mediatorUrl)))
       : undefined
     configureAccountPage({
       did: active.did,
@@ -313,7 +313,8 @@ async function configureWalletAccountIfPresent(
         // beginDidMdDocumentEdit as-is, since it already accepts
         // an array and takes its first valid entry (bisetMediatorFor).
         onEditMediator: async (mediatorUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorUrl] }, readBisetConfig()),
-        onEnableTor: async (onionUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [mediatorCard!.mediatorUrl], mediatorOnionUrls: [onionUrl] }, readBisetConfig()),
+        // Tor is the same edit as a new server, with the onion address as its default: the DID document then names that one mediator.
+        onEnableTor: async (onionUrl: string) => editDocument({ kind: 'mediator', mediatorUrls: [onionUrl] }, readBisetConfig()),
         onLogOutMediator: async () => editDocument({ kind: 'leaveMediator' }, readBisetConfig()),
         onChangeAlias: async () => {
           // dito moves the DID to the new address in its frame. The tab then goes to dito's save page, as
@@ -358,6 +359,7 @@ async function configureWalletAccountIfPresent(
   try {
     const config = readBisetConfig()
     const { mediatorUrls } = config
+    const onionMediatorUrls = config.mediatorOnionUrls
     const device = await timed('openDidMdWalletVaultDevice', openDidMdWalletVaultDevice())
     // What every local store and every address of this identity in stored data is keyed by: stable across an
     // alias change (the DID's host), unlike `device.did`, which is for talking to others.
@@ -621,7 +623,7 @@ async function configureWalletAccountIfPresent(
         // gains its trailing slash), whereas deployment configuration may
         // omit it.  Compare canonical URLs, not their source spellings.
         const authorizedMediator = new URL(didCommDevice.mediatorUrl).toString()
-        const configuredMediator = mediatorUrls.some(url => {
+        const configuredMediator = [...mediatorUrls, ...onionMediatorUrls].some(url => {
           try { return new URL(url).toString() === authorizedMediator } catch { return false }
         })
         if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Biset deployment')

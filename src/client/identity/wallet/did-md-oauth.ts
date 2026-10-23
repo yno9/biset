@@ -13,6 +13,7 @@ import { freshFetch } from '../webvh/log-io.ts'
 import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
+import { encodePeerDid2 } from '../../../protocol/didcomm/peer.ts'
 import { fetchMediatorInfo, updateRecipient } from '../../../protocol/didcomm/mediator-coordinate.ts'
 import { mediatorInbox } from '../../../protocol/didcomm/mediator-device.ts'
 import { registerWithMediator } from '../../didcomm/mediator-sync.ts'
@@ -237,31 +238,24 @@ function sameDocumentEdit(value: unknown, expected: DidCoreDocumentEdit): void {
   if (JSON.stringify(value) !== JSON.stringify(expected)) throw new Error('did.md returned a DID document edit different from the one this browser requested')
 }
 
-/** Validates an onion counterpart URL (PLAN-tor.md D-4). Syntactic only --
- * unlike `mediatorUrl`, never fetched, so a browser with no Tor path never
- * issues a `.onion` lookup just to configure a DID Document (I-3). */
-function validatedMediatorOnionUrl(value: string): string {
-  let url: URL
-  try { url = new URL(value) } catch { throw new Error('Biset DIDComm mediator Tor URL is invalid') }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password || url.search || url.hash || !isOnionUrl(url.toString())) {
-    throw new Error('Biset DIDComm mediator Tor URL is invalid')
-  }
-  return url.toString()
-}
-
-async function bisetMediatorFor(values: readonly string[], onionValues: readonly string[] = []): Promise<DidMdBisetMediator | undefined> {
+/** The mediator at `values`' first URL. Over https it is named by its did:web; at an onion address (http) by the did:peer of the
+ * same keys whose endpoint is that address -- one entrance, never both (the mediator's own document lists only its clearnet URL, so
+ * the onion DID is built here from the keys it lists). Only the document is fetched, from the address given. */
+async function bisetMediatorFor(values: readonly string[]): Promise<DidMdBisetMediator | undefined> {
   const index = values.findIndex(value => typeof value === 'string' && value.trim())
   if (index === -1) return undefined
   let url: URL
   try { url = new URL(values[index]!) } catch { throw new Error('Biset DIDComm mediator URL is invalid') }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Biset DIDComm mediator URL is invalid')
+  const onion = url.protocol === 'http:' && isOnionUrl(url.toString())
+  if ((url.protocol !== 'https:' && !onion) || url.username || url.password || url.search || url.hash) throw new Error('Biset DIDComm mediator URL is invalid')
   const mediatorUrl = url.toString()
   const info = await fetchMediatorInfo(mediatorUrl)
   // Named by its did:web, or by its did:peer (a mediator that is not at an https URL): either is a DID a document can name.
   if (!info.xKid || !(info.did.startsWith('did:web:') || info.did.startsWith('did:peer:'))) throw new Error('Biset DIDComm mediator did not provide a valid routing key')
-  const onionCandidate = onionValues[index]
-  const mediatorOnionUrl = onionCandidate && onionCandidate.trim() ? validatedMediatorOnionUrl(onionCandidate) : undefined
-  return { mediatorUrl, routingKid: info.xKid, mediatorDid: info.did, ...(mediatorOnionUrl ? { mediatorOnionUrl } : {}) }
+  if (!onion) return { mediatorUrl, routingKid: info.xKid, mediatorDid: info.did }
+  if (info.did.startsWith('did:peer:')) return { mediatorUrl, routingKid: info.xKid, mediatorDid: info.did }
+  if (!info.edPub) throw new Error('Biset DIDComm mediator lists no authentication key to name it over Tor')
+  return { mediatorUrl, routingKid: info.xKid, mediatorDid: encodePeerDid2(info.xPub, info.edPub, { uri: mediatorUrl.replace(/\/$/, '') }) }
 }
 
 /** Generates and seals the DIDComm device's own material -- none of it
@@ -827,7 +821,7 @@ async function submitToWallet(client: WalletClient, pending: DidMdPendingAuthori
  *    on the next log it is handed; senders stop encrypting to them, Vault Sync stops reaching them).
  */
 export type DidMdDocumentChange =
-  | { kind: 'mediator'; mediatorUrls: readonly string[]; mediatorOnionUrls?: readonly string[] }
+  | { kind: 'mediator'; mediatorUrls: readonly string[] }
   | { kind: 'leaveMediator' }
   | { kind: 'rotation'; removeOtherDevices?: boolean }
 
@@ -845,7 +839,7 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
     pending.documentEdit = buildDocumentEdit(session.did, config, undefined, [didcomm.id, ...(didcomm.previousIds ?? []), ...(previousDevice ? [previousDevice.xKid] : [])])
     delete pending.bisetDidCommDevice
   } else if (change.kind === 'mediator') {
-    const mediator = await bisetMediatorFor(change.mediatorUrls, change.mediatorOnionUrls ?? [])
+    const mediator = await bisetMediatorFor(change.mediatorUrls)
     if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
     if (previousDevice) pending.previousBisetDidCommDevice = previousDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)

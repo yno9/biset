@@ -142,7 +142,7 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
       .then(url => { if (url?.trim()) return wallet.onEditMediator?.(url.trim()) }).catch(report)
   }
   const enableTor = () => {
-    void requestText({ title: 'Onion address', value: didComm.onionUrl ?? '', placeholder: 'http://….onion', hint: 'The mediator\'s Tor address, published beside its usual one.', button: 'Enable Tor' })
+    void requestText({ title: 'Onion address', value: didComm.onionUrl ?? '', placeholder: 'http://….onion', hint: 'Your DID will name the mediator at this Tor address instead of its usual one.', button: 'Enable Tor' })
       .then(onion => { if (onion?.trim()) return wallet.onEnableTor?.(onion.trim()) }).catch(report)
   }
 

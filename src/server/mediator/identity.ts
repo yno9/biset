@@ -10,7 +10,7 @@
 //    `alsoKnownAs` alias of the did:web, so a client holding either works.
 import { encodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { encodeMultikey } from '../../protocol/webvh/multikey.ts'
-import type { PeerIdentity } from '../../protocol/didcomm/peer.ts'
+import { encodePeerDid2, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 
 export interface MediatorIdentity {
   did: string
@@ -64,9 +64,12 @@ export function webMediatorIdentity(peer: PeerIdentity, publicUrl: string, onion
     keyAgreement: ['#key-1'],
     authentication: ['#key-2'],
     assertionMethod: ['#key-2'],
-    // Its Tor entrance, when it has one, beside the clearnet URL (PLAN-tor.md D-4): a sender dials the clearnet entry, or the onion
-    // one when it is itself on Tor. Never onion alone.
-    service: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: onionUrl ? [{ uri: clearnet, accept: ['didcomm/v2'] }, { uri: onion!, accept: ['didcomm/v2'] }] : { uri: clearnet, accept: ['didcomm/v2'] } }],
+    // One entrance only: clearnet and Tor are alternatives, never listed together. A mediator reached over Tor is named by its own
+    // did:peer (below), whose endpoint is the onion URL.
+    service: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: clearnet, accept: ['didcomm/v2'] } }],
   }
-  return { did, xKid, edKid, xPub: peer.xPub, edPub: peer.edPub, xPriv: peer.xPriv, edPriv: peer.edPriv, doc, aliasKids: [peer.xKid], peerKid: peer.xKid }
+  // Reached at its onion address, the same keys are the did:peer whose endpoint is that address: a Forward encrypted to that
+  // DID's key is this mediator's own to open (the client builds the same DID from the keys in the document above).
+  const onionKid = onion ? `${encodePeerDid2(peer.xPub, peer.edPub, { uri: onion })}#key-1` : undefined
+  return { did, xKid, edKid, xPub: peer.xPub, edPub: peer.edPub, xPriv: peer.xPriv, edPriv: peer.edPriv, doc, aliasKids: [peer.xKid, ...(onionKid ? [onionKid] : [])], peerKid: peer.xKid }
 }
