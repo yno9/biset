@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ id: 'did:webvh:SCID:alice.did.md' })) }))
 
-import { AccountList, KeysPanel } from '../../src/client/app/ui/account/account-list.tsx'
+import { AccountList, KeysPanel, ellipsizeScid } from '../../src/client/app/ui/account/account-list.tsx'
 import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
 import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
@@ -95,6 +95,16 @@ test('a lapsed wallet capability shows a Reconnect button on the Identity host c
   fireEvent.click(screen.getByText('Reconnect'))
   expect(onReconnect).toHaveBeenCalled()
   void container
+})
+
+test('a SCID is cut to a whole number of characters, the ellipsis the last, and not at all when it fits', () => {
+  const scid = 'QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv'
+  expect(ellipsizeScid(scid, 100)).toBe(scid)
+  expect(ellipsizeScid(scid, scid.length)).toBe(scid)
+  expect(ellipsizeScid(scid, 10)).toBe('QmPLLKQAY…')
+  expect(Array.from(ellipsizeScid(scid, 10))).toHaveLength(10)
+  expect(ellipsizeScid(scid, 1)).toBe('Q…')
+  expect(ellipsizeScid(scid, 0)).toBe('Q…')
 })
 
 test('the card shows the mediator host and its state', () => {

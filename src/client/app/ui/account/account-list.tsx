@@ -1,6 +1,6 @@
 // What sits under the identity card on the account page: the mediator and a notice when the DIDComm key needs
 // a Wallet approval (the Services tab), and the keys: this identity's devices, and its PGP key (the Keys tab).
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
 import { didToHttpsUrl } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
@@ -44,15 +44,44 @@ type Resolution = 'checking' | 'ok' | 'error'
  * load, looks anew. */
 const resolutions = new Map<string, Resolution>()
 
-/** `did:webvh:` + SCID + `:alias.did.md` on one line: when the card is narrow the SCID gives way (ellipsis), the
- * alias never does. */
+/** The SCID cut to `chars` characters, an ellipsis the last of them: a whole number of characters (the font is monospace), so no part
+ * of a character cell is left empty between the ellipsis and what follows. */
+export function ellipsizeScid(scid: string, chars: number): string {
+  return chars >= scid.length ? scid : `${scid.slice(0, Math.max(1, chars - 1))}…`
+}
+
+/** `did:webvh:` + SCID + `:alias.did.md` on one line: when the card is narrow the SCID gives way (ellipsis), the alias never does. CSS
+ * cannot cut a line at a whole character (the rest of a cell shows as a gap before the ellipsis's neighbour), so the width the SCID may
+ * have is measured, in characters, from the room the card leaves. */
 function DidText({ did }: { did: string }) {
   const parts = did.split(':')
-  if (parts.length < 4) return <span className="acc-did-scid">{did}</span>
+  const scid = useRef<HTMLSpanElement>(null)
+  const [chars, setChars] = useState(Infinity)
+  useLayoutEffect(() => {
+    const element = scid.current
+    const text = element?.parentElement, row = text?.parentElement, column = row?.parentElement
+    if (!element || !text || !row || !column) return
+    const measure = () => {
+      if (!column.clientWidth) { setChars(Infinity); return } // no layout (a test): the whole SCID
+      const context = document.createElement('canvas').getContext('2d')
+      if (!context) return
+      context.font = getComputedStyle(element).font
+      const cell = context.measureText('0').width
+      const around = row.getBoundingClientRect().width - text.getBoundingClientRect().width // the icon, the gap, the padding
+      // `did:webvh:` and `:alias.did.md`, by their own widths (`text` itself may be narrower than what is in it)
+      const fixed = (element.previousElementSibling?.getBoundingClientRect().width ?? 0) + (element.nextElementSibling?.getBoundingClientRect().width ?? 0)
+      setChars(cell ? Math.floor((column.clientWidth - around - fixed - 1) / cell) : Infinity)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(column)
+    return () => observer.disconnect()
+  }, [did])
+  if (parts.length < 4) return <span className="acc-did-scid" ref={scid}>{did}</span>
   return (
     <>
       <span className="acc-did-fixed">{parts.slice(0, 2).join(':')}:</span>
-      <span className="acc-did-scid">{parts[2]}</span>
+      <span className="acc-did-scid" ref={scid}>{ellipsizeScid(parts[2]!, chars)}</span>
       <span className="acc-did-fixed">:{parts.slice(3).join(':')}</span>
     </>
   )

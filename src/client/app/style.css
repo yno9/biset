@@ -2089,9 +2089,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   min-width: 0;
   white-space: nowrap;
 }
-/* One line: the SCID shrinks to an ellipsis, the rest keeps its width. */
-.acc-did-fixed { flex: none; }
-.acc-did-scid { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* One line: the SCID is cut to whole characters by DidText (account-list.tsx), the rest keeps its width. */
+.acc-did-fixed, .acc-did-scid { flex: none; }
 .acc-pgp-row {
   display: flex;
   align-items: center;
