@@ -1960,7 +1960,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
    back by the same amount so the text stays where it was. */
 #cmd-acc-identity-name { padding: 0 4px; margin: 0 -4px; }
 #cmd-acc-identity-name .acc-display-name,
-#cmd-acc-identity-name .acc-alias-edit,
+#cmd-acc-identity-alias-row .acc-alias-edit,
 #cmd-acc-identity-did-row,
 .acc-pgp-row {
   padding: 1px 3px;
@@ -1969,7 +1969,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   transition: background-color 0.12s;
 }
 #cmd-acc-identity-name .acc-display-name:hover,
-#cmd-acc-identity-name .acc-alias-edit:hover,
+#cmd-acc-identity-alias-row .acc-alias-edit:hover,
 #cmd-acc-identity-did-row:hover,
 .acc-pgp-row:hover {
   background: rgba(128, 128, 128, 0.11);
@@ -1991,10 +1991,28 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 #cmd-acc-identity-fields:hover .acc-name-add,
 .acc-name-add:focus-visible { opacity: 1; }
 #cmd-acc-identity-fields:has(.acc-alias-edit:hover) .acc-name-add:not(:focus-visible) { opacity: 0; }
-#cmd-acc-identity-name .acc-name-sep {
-  margin: 0 0.5em;
-  font-weight: 400;
+/* The alias line: under the display name, smaller and quieter; alone (no display name) it looks like the name. */
+#cmd-acc-identity-alias-row {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  min-width: 0;
+  max-width: 100%;
+}
+.acc-identity-alias {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  margin: 0 -4px;
+  font-size: 13px;
   color: var(--text-dim);
+}
+.acc-identity-alias.as-name {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: inherit;
 }
 #cmd-acc-identity-name-edit {
   display: flex;

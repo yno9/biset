@@ -112,8 +112,12 @@ function IdentityCard({ did }: { did: string }) {
             void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
           } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : <GeneratedAvatar name={own.name?.trim() || label} />}</div>
         <div id="cmd-acc-identity-text">
-          <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name">{own.name ? <><span className="acc-display-name" role={profile ? 'button' : undefined} data-tip={profile ? 'Change display name' : undefined}
-            onClick={profile ? event => { event.stopPropagation(); changeDisplayName(own.name) } : undefined}>{own.name}</span><span className="acc-name-sep">|</span></> : null}<AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span>
+          {/* Two lines: the display name, and under it the alias (the mail address). Without a name the alias is the one line, and takes the name's look. */}
+          {own.name ? (
+            <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name"><span className="acc-display-name" role={profile ? 'button' : undefined} data-tip={profile ? 'Change display name' : undefined}
+              onClick={profile ? event => { event.stopPropagation(); changeDisplayName(own.name) } : undefined}>{own.name}</span></span></div>
+          ) : null}
+          <div id="cmd-acc-identity-alias-row"><span className={own.name ? 'acc-identity-alias' : 'acc-identity-alias as-name'}><AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span>
             {profile && !own.name ? <button type="button" className="acc-name-add" onClick={event => { event.stopPropagation(); changeDisplayName() }}>Set display name</button> : null}
           </div>
         </div>

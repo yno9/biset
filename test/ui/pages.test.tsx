@@ -124,13 +124,13 @@ test('config tab: the vault toggle reflects and flips the markdown vault', async
 
 // ── account ──────────────────────────────────────────────────────────────────
 
-test('account: the identity card shows the DID, then the name the DID document gives', async () => {
+test('account: the identity card shows the DID, then the name the DID document gives (on the alias line, as there is no display name)', async () => {
   accountConfig.set(account())
   const { container } = render(<AccountPage />)
   expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe(DID)
   // no picture: a generated avatar (boringavatars.com) drawn from the name, not an initial
   expect(container.querySelector('#cmd-acc-identity-avatar .avatar-generated svg')).not.toBeNull()
-  await waitFor(() => expect(container.querySelector('#cmd-acc-identity-name')!.textContent).toBe('Alice'))
+  await waitFor(() => expect(container.querySelector('#cmd-acc-identity-alias-row .acc-identity-alias')!.textContent).toBe('Alice'))
   expect(container.querySelector('#cmd-acc-capability-expiry')).toBeNull() // the identity card shows no expiry date any more
 })
 
@@ -202,6 +202,22 @@ test('account: the display name is asked for in a card; Esc or a click outside c
   const named = render(<AccountPage />)
   await waitFor(() => expect(named.container.querySelector('.acc-display-name')!.textContent).toBe('Alice'))
   expect(screen.queryByText('Set display name')).toBeNull()
+})
+
+test('account: the card has the display name on one line and the alias under it', async () => {
+  accountConfig.set(account({ profile: { current: async () => ({ name: 'Quiet Heron' }), setName: async () => {}, setAvatar: async () => {} } }))
+  const { container } = render(<AccountPage />)
+  await waitFor(() => expect(container.querySelector('#cmd-acc-identity-name .acc-display-name')!.textContent).toBe('Quiet Heron'))
+  const name = container.querySelector('#cmd-acc-identity-name-row')!
+  const alias = container.querySelector('#cmd-acc-identity-alias-row')!
+  expect(name.nextElementSibling).toBe(alias) // the alias is a line of its own, under the name
+  expect(name.textContent).not.toContain('|')
+  expect(alias.querySelector('.acc-identity-alias.as-name')).toBeNull()
+  cleanup()
+  accountConfig.set(account({ profile: { current: async () => ({}), setName: async () => {}, setAvatar: async () => {} } }))
+  const bare = render(<AccountPage />)
+  expect(bare.container.querySelector('#cmd-acc-identity-name-row')).toBeNull() // no name: the alias is the one line, in the name's look
+  expect(bare.container.querySelector('.acc-identity-alias.as-name')).not.toBeNull()
 })
 
 test('account: the Delta Chat row at the foot joins an invite and copies this identity\'s link', async () => {
