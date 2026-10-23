@@ -40,6 +40,12 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ type: 'acme.example/SomethingElse' }), 'credential')).toThrow(/expected one of/)
   })
 
+  test('a Tor hidden service callback is an audience, over http', () => {
+    const onion = `${'a'.repeat(56)}.onion`
+    expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience: `redirect_uri:http://${onion}/wallet/callback` } }), 'credential')).not.toThrow()
+    expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience: 'redirect_uri:http://evil.example/wallet/callback' } }), 'credential')).toThrow()
+  })
+
   test('only a redirect_uri Client Identifier is an audience', () => {
     for (const audience of ['client_abcdefghijklmnopqrstuvwxyzABCDEF', 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md', 'redirect_uri:http://biset.example/wallet/callback']) {
       expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience } }), 'credential')).toThrow()

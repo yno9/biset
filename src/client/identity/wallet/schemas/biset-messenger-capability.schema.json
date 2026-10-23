@@ -42,7 +42,7 @@
       "properties": {
         "audience": {
           "type": "string",
-          "pattern": "^redirect_uri:https://[^\\s]+$",
+          "pattern": "^redirect_uri:(https://[^\\s]+|http://[a-z2-7]{56}\\.onion/[^\\s]*)$",
           "description": "did.md's OAuth client_id for this Biset registration: either an RFC 7591 Dynamic Client Registration id, or (PLAN6) the did:webvh DID Biset authenticated itself with via JAR when running at https://t.biset.md."
         },
         "deviceJkt": {
