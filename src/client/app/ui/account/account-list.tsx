@@ -122,7 +122,7 @@ function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; show
           {onReconnect ? <button type="button" onClick={onReconnect}
             style={{ padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Reconnect</button> : null}
           {logUrl ? <a href={logUrl} target="_blank" rel="noopener noreferrer" aria-label="Open the DID log" data-tip="Open the DID log (did.jsonl)"
-            style={{ color: 'var(--text-dim)', padding: 4, display: 'flex' }}>
+            className="acc-icon-btn">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>
           </a> : null}
         </div>

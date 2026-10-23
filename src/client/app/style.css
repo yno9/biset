@@ -1922,7 +1922,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-file-btn.danger {
   color: #c0392b;
 }
-/* A card's icon buttons (the mediator's: edit the server, enable Tor) and its text button (log in). */
+/* A card's icon buttons (the mediator's: edit the server, enable Tor; the Identity host's: the DID log) and its text button (log in). */
 .acc-icon-btn,
 .acc-text-btn {
   display: flex;
@@ -1934,6 +1934,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text-dim);
   font: inherit;
   font-size: 13px;
+  text-decoration: none;
   cursor: pointer;
   transition: background-color 0.12s, color 0.12s;
 }
