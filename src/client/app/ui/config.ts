@@ -9,6 +9,8 @@ declare const __BISET_CONFIG__: {
    * (PLAN-tor.md D-4), or '' if that mediator has none. Unset/empty keeps
    * clearnet-only behavior exactly as before (I-5). */
   mediatorOnionUrls?: string[]
+  /** The address this app itself is served at over Tor (an onion URL), or unset when it is not: the account page offers to copy it. */
+  appOnionUrl?: string
   mimiSelfBaseUrl?: string
   /** Hosts whose WebFinger answers any mail address with a DID (a didmail
    * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
@@ -49,6 +51,8 @@ export interface BisetConfig {
    * (PLAN-tor.md D-4); '' or a short array means that mediator is
    * clearnet-only. Empty/unset keeps current, clearnet-only behavior (I-5). */
   mediatorOnionUrls: string[]
+  /** The onion URL this app is also served at ('' when it is not). */
+  appOnionUrl: string
   /** Dedicated normal-mode MIMI endpoint for the owner's Self/Vault room. */
   mimiSelfBaseUrl: string
   /** Mail gateways (WebFinger hosts), in the order they are asked. Empty: a
@@ -69,6 +73,7 @@ export function readBisetConfig(): BisetConfig {
     apexDomain: cfg.apexDomain ?? '',
     mediatorUrls: cfg.mediatorUrls ?? [],
     mediatorOnionUrls: cfg.mediatorOnionUrls ?? [],
+    appOnionUrl: cfg.appOnionUrl ?? '',
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
     mailGateways: cfg.mailGateways ?? [],
     walletDeviceName: cfg.walletDeviceName ?? 'Biset',

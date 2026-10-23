@@ -13,6 +13,8 @@ import { randomDisplayName } from '../account/default-name.ts'
 import { useOwnProfile } from '../account/use-own-profile.ts'
 import { requestDisplayName } from '../account/display-name-dialog.tsx'
 import { DeltaChatIcon } from '../account/deltachat-icon.tsx'
+import { OnionIcon } from '../account/onion-icon.tsx'
+import { readBisetConfig } from '../config.ts'
 import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
 import { avatarColor } from '../format.ts'
@@ -146,6 +148,18 @@ function DeltaChatBar() {
   )
 }
 
+/** Under the Delta Chat row, when this app is also served over Tor: the onion address to copy (the page's own, by the deployment's config). */
+function OnionBar() {
+  const onion = readBisetConfig().appOnionUrl
+  if (!onion) return null
+  return (
+    <div id="cmd-acc-onion">
+      <OnionIcon size={16} />
+      <button type="button" onClick={() => { navigator.clipboard?.writeText(onion).then(() => getAccountConfig()?.showMessage?.('Onion URL copied')).catch(() => {}) }}>Copy Onion URL</button>
+    </div>
+  )
+}
+
 const TABS = ['Services', 'Keys', 'Files', 'Config'] as const
 type Tab = typeof TABS[number]
 
@@ -195,6 +209,7 @@ export function AccountPage() {
           <IdentityCard did={config.did} />
           <AccountTabs />
           <DeltaChatBar />
+          <OnionBar />
           <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" data-tip="Compose" onClick={() => setPage('compose')}>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>

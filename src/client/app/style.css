@@ -1888,6 +1888,28 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text-dim);
   font-size: 13px;
 }
+/* Under it, when the app is served over Tor: the onion address to copy. */
+#cmd-acc-onion {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+#cmd-acc-onion button {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+#cmd-acc-onion button:hover {
+  color: var(--text);
+}
 #cmd-acc-deltachat button {
   padding: 2px 4px;
   border: 0;
