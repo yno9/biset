@@ -228,7 +228,7 @@ test('account: the Delta Chat row at the foot joins an invite and copies this id
   vi.spyOn(window, 'prompt').mockReturnValue('https://i.delta.chat/#ABC')
   accountConfig.set(account({ pgp }))
   render(<AccountPage />)
-  fireEvent.click(screen.getByText('Copy URL'))
+  fireEvent.click(screen.getByText('Invite'))
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://i.delta.chat/#FP'))
   fireEvent.click(screen.getByText('Join'))
   await waitFor(() => expect(joinInvite).toHaveBeenCalledWith('https://i.delta.chat/#ABC'))

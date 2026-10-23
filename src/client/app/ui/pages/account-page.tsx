@@ -141,7 +141,7 @@ function DeltaChatBar() {
       <DeltaChatIcon />
       <button type="button" onClick={() => joinDeltaChatInvite(pgp, showMessage)}>Join</button>
       <span aria-hidden="true">|</span>
-      <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Copy URL</button>
+      <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Invite</button>
     </div>
   )
 }
