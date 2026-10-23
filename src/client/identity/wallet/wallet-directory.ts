@@ -3,7 +3,7 @@
  * button abstraction. biset accepts any wallet that speaks the did.md
  * protocol family (SIOPv2/OID4VP-shaped, see ~/did.md/SPEC.md §5) -- did-md-
  * oauth.ts is not dito-specific code that happens to also work elsewhere;
- * it is the OAuth/OID4VP client, and dito is one entry in this directory,
+ * it is the SIOPv2/OID4VP client, and dito is one entry in this directory,
  * not a hardcoded assumption. DC API and CHAPI were both evaluated and
  * rejected as the selector mechanism (SPEC.md §4.4); this static,
  * bundled list is the deliberately unglamorous v1 substitute (SPEC.md §5.5).
@@ -18,9 +18,9 @@ export type WalletDirectoryEntry = {
   id: string
   /** Shown in the wallet-picker UI. */
   displayName: string
-  /** The OAuth/OID4VP issuer identifier (RFC 8414) -- the base origin
-   * .well-known/oauth-authorization-server is discovered from. */
-  issuer: string
+  /** Where this wallet's authorization screen is: the `SelfIssuedOPAuthorizationEndpoint`
+   * its identities' DID documents publish (SIOPv2). */
+  authorizationEndpoint: string
   /** Suffix a handle typed into the login form must end with, for this
    * wallet's own hosting convention (e.g. ".did.md"). Purely a UI input
    * hint -- the actual trust check is DID resolution, not this string. */
@@ -31,7 +31,7 @@ export type WalletDirectoryEntry = {
 // special-cased anywhere in did-md-oauth.ts beyond being index 0 here --
 // see PLAN4's verification task for the standard this is held to.
 export const WALLET_DIRECTORY: readonly WalletDirectoryEntry[] = [
-  { id: 'dito', displayName: 'dito (did.md)', issuer: 'https://api.did.md', handleSuffix: '.did.md' },
+  { id: 'dito', displayName: 'dito (did.md)', authorizationEndpoint: 'https://app.did.md/authorize', handleSuffix: '.did.md' },
 ]
 
 export const DEFAULT_WALLET: WalletDirectoryEntry = WALLET_DIRECTORY[0]!

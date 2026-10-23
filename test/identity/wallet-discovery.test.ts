@@ -5,7 +5,7 @@ import { resolveWalletFromSuffix } from '../../src/client/identity/wallet/did-md
 import { jcsMultihashBase58, signProof, encodeMultikey } from '../protocol/support/webvh-log-fixture.ts'
 
 // Wallet discovery by did:webvh suffix (atproto-style: resolve the
-// identity's own DID document, read its "UDIWalletIssuer" service entry --
+// identity's own DID document, read its "SelfIssuedOPAuthorizationEndpoint" service entry --
 // the same pattern atproto's #atproto_pds/AtprotoPersonalDataServer entry
 // uses for PDS discovery, applied to wallet discovery instead of data
 // hosting). See ~/did.md/client/did-webvh.ts's buildGenesis, which publishes
@@ -40,22 +40,19 @@ function genesisLog(domain: string, service: Array<{ id: string; type: string; s
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 
-test('resolveWalletFromSuffix reads the UDIWalletIssuer service entry and completes discovery', async () => {
-  const { log } = genesisLog('alice.did.md', [{ id: '#udi-wallet-issuer', type: 'UDIWalletIssuer', serviceEndpoint: 'https://api.did.md' }])
+test('resolveWalletFromSuffix reads the SelfIssuedOPAuthorizationEndpoint service entry and asks nothing else', async () => {
+  const { log } = genesisLog('alice.did.md', [{ id: '#wallet', type: 'SelfIssuedOPAuthorizationEndpoint', serviceEndpoint: 'https://app.did.md/authorize' }])
   const requested: string[] = []
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = input.toString()
     requested.push(url)
     if (url === 'https://alice.did.md/.well-known/did.jsonl') return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n', { status: 200 })
-    if (url === 'https://api.did.md/.well-known/oauth-authorization-server') {
-      return Response.json({ issuer: 'https://api.did.md', authorization_endpoint: 'https://app.did.md/authorize', token_endpoint: 'https://api.did.md/v1/oauth/token', registration_endpoint: 'https://api.did.md/v1/oauth/register' })
-    }
     return new Response('not found', { status: 404 })
   }) as typeof fetch
 
   const entry = await resolveWalletFromSuffix('alice.did.md')
-  expect(entry).toEqual({ id: 'suffix:alice.did.md', displayName: 'alice.did.md', issuer: 'https://api.did.md', handleSuffix: '.alice.did.md' })
-  expect(requested).toEqual(['https://alice.did.md/.well-known/did.jsonl', 'https://api.did.md/.well-known/oauth-authorization-server'])
+  expect(entry).toEqual({ id: 'suffix:alice.did.md', displayName: 'alice.did.md', authorizationEndpoint: 'https://app.did.md/authorize', handleSuffix: '.alice.did.md' })
+  expect(requested).toEqual(['https://alice.did.md/.well-known/did.jsonl'])
 })
 
 test('resolveWalletFromSuffix rejects a domain with no did:webvh identity', async () => {

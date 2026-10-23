@@ -11,7 +11,7 @@
 - **Biset は、メールと DIDComm のデータを利用者の端末側（ブラウザの IndexedDB）に暗号化して保管する通信クライアント**である。
   サーバーに恒久的なメールボックスやメッセージ履歴は無い。
 - **identity は外部（did.md）が発行・ホストする。** biset は did:webvh を解決するクライアントに徹し、公開文書を自分では書かない。
-  利用者は did.md Wallet（SIOPv2／OID4VP）で biset の端末を承認し、biset は DPoP に束縛された端末セッションを持つ（§5）。
+  利用者は did.md Wallet（SIOPv2／OID4VP）で biset の端末を承認し、biset は端末鍵（thumbprint）に束縛された端末セッションを持つ（§5）。
 - **端末集合の唯一の権威は DID Document の `keyAgreement`** である。送信者は全端末の鍵に 1 通で暗号化し（multiplexed encryption）、
   mediator は端末ごとの受信箱に配る。端末を外すことは、DID Document から鍵を消すことと同じ意味になる（§5.6、§9）。
 - **長期の正本は端末の暗号化 Vault（event ＋ 暗号文 object ＋ SegmentKey）**で、UI が読む JMAP 形の projection は
@@ -142,7 +142,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 
 ### 2.2 非目標・未完成
 
-- **オフライン起動**。起動時に did.md（device-refresh）と DID ログへのネットワークアクセスが要る（§12）。
+- **オフライン起動**。起動時に DID ログへのネットワークアクセスが要る（§12）。
 - サーバー側の mailbox、全文検索、履歴 API、添付 archive。
 - 完全な JMAP server。ローカル gateway は UI が使う最小メソッドだけを実装する。
 - ActivityPub の実動 adapter。ただし External Feed の受信口はある（§9.4）。
@@ -158,7 +158,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 │  IndexedDB Vault（ログ層）  ／ did.md Wallet セッション ／ DIDComm      │
 └──┬───────────────┬─────────────────────────┬────────────────────────────┘
    │SIOPv2/OID4VP  │DIDComm v2.1             │File System Access API
-   │(DPoP)         │HTTPS POST ＋ WebSocket  │ローカルの Markdown フォルダ
+   │(device key)   │HTTPS POST ＋ WebSocket  │ローカルの Markdown フォルダ
    │DID 解決(読む) │・1:1 / group chat       │JMAP export/import ファイル
    │               │・Vault Sync（自分の DID 宛て）
    │               │・外部アドレス（didmail の did:web）
@@ -188,7 +188,7 @@ did.md は biset が運用するものではなく、依存する外部サービ
 ## 4. 信頼境界
 
 ### 4.1 クライアントが保持するもの
-- did.md Wallet の端末セッション（DPoP 鍵、封印された device material、Vault 用の端末 ID）
+- did.md Wallet の端末セッション（端末鍵、封印された device material、Vault 用の端末 ID）
 - 端末固有の DIDComm 鍵（X25519、公開鍵が DID Document の `keyAgreement`）と、mediator の端末ラベルを作る秘密（`mediatorDeviceSecret`）
 - Vault の暗号文 object、event、SegmentKey、JMAP projection
 - Vault 内の **generation seed** と、連絡先（`contact.set`。相手の移動先と自分の移動の状態を含む。§7.3）
@@ -223,19 +223,23 @@ import は確認ダイアログを経て、別の identity の export は拒否�
 
 ### 5.2 認証経路（SIOPv2 / OID4VP）
 
-`src/client/identity/wallet/did-md-oauth.ts` が唯一の入口である。DID 編集（端末の鍵と `#didcomm` service）を要求するときだけ、それを
-`authorization_details` に載せる。何も要求しないサインインでは、このパラメータ自体を送らない。
+`src/client/identity/wallet/did-md-oauth.ts` が唯一の入口である。OAuth は使わない（メタデータ・クライアント登録・トークン・DPoP・リフレッシュ・`iss` 応答のどれも無い）。
+biset は **鍵を持たない RP** として、OpenID4VP 1.0 §5.9.3 の `redirect_uri` 形式で wallet に頼む。要求は署名しない。
 
-| ビルド | client の識別 | 認可要求 |
-|---|---|---|
-| **https**（`mail.did.md`） | **RP DID**（設定の `rpDid`、固定の did:webvh、そのオリジンに束縛）。登録の往復は無い | **署名なしの平文パラメータ**（`client_id` ＝ RP DID）。dito が iframe（と作成の最後のページ）の中でだけ受け付け、承認は開いた親ページのオリジンに限る。署名サーバーは無い |
-| **file://** | DCR で得るランダムな `client_xxx`（`registrationAccessToken` を保持） | 通常のクエリ形式（`redirect_uri`、`capability_type`、`alias` など） |
+| 項目 | 値 |
+|---|---|
+| `client_id` | `redirect_uri:<配備のオリジン>/wallet/callback`（https のみ。file:// は対象外） |
+| `response_type` / `response_mode` / `scope` | `vp_token id_token` / `fragment` / `openid` |
+| `nonce`・`state` | 要求ごとのランダム値。`nonce` は応答の検証に使う |
+| `dcql_query` | 求める資格情報（`biset.md/MessengerCapability`） |
+| `transaction_data` | 承認する内容。`device_capability`（端末鍵の thumbprint と capability の scope）、DID 編集があるときだけ `did_document_edit` |
+| `client_metadata` | アプリ名と、設定に `rpDid` があれば `rp_did` |
 
-- 応答は **直接配送**（PLAN7）で、`vp_token`（VC-DM の capability）と `id_token` が fragment（https）、または popup の postMessage／クエリ（file://）で戻る。コード交換の往復は無い。
-- `redirect_uri` は、https では `<配備のオリジン>/wallet/callback`。dito は、これが iframe を開いた親ページのオリジンで、`client_id`（RP DID）のホストと一致するときだけ承認する。
-- **file:// 版は、https 版と別のアプリとして wallet に登録される**（client_id と redirect_uri が別）（§17-5）。
-- 端末セッションは、DPoP 用の ECDSA P-256 鍵（**非抽出**の `CryptoKey`）に束縛される。
+- wallet は、`rp_did` の DID 文書が**この戻り先を `SIOPRedirectTarget` として載せている**ときだけ「確かめられた RP」として扱う（承認画面の名前と、承認記録のカードのまとめ方）。一致しない／無いときは戻り先のホストだけが RP の身元になる。
+- 応答は fragment で戻る。`vp_token` は `{ "capability": [<VP>] }`。VP は capability の VC を包み、Data Integrity Proof（Root 鍵）の `challenge` ＝ `nonce`、`domain` ＝ `client_id`。`id_token` は SIOPv2 §11.1 に従って検証する（`iss` ＝ `sub` ＝ VP の holder、`aud` ＝ `client_id`、`nonce`、`exp`、Root 鍵の署名）。
+- 端末セッションは、ECDSA P-256 鍵（**非抽出**の `CryptoKey`）の thumbprint（`device_jkt`）に束縛される。
 - ログイン時に、Vault 上の端末 ID（`vaultDeviceId`、`urn:uuid:…`）を作ってセッションに保存する。
+- file:// 版のログインは無い（https の配備のみ）。
 
 ### 5.3 capability と端末セッション
 
@@ -246,8 +250,8 @@ import は確認ダイアログを経て、別の identity の export は拒否�
   `authorizationDetails` の照合（DID 編集のエコー）。
 - 要求する scope: `openid profile biset:login biset:device biset:routing biset:messaging biset:vault`。
 - セッションは `biset-did-md-wallet` IndexedDB に保存される。DIDComm の秘密鍵と `mediatorDeviceSecret` は、非抽出の AES 鍵で封印した「device material」に入る。
-- 起動のたびに `device-refresh`（DPoP 付き POST）で capability を取り直し、同じ検証を通す（§12）。
-  **ネットワークエラーでは session は保たれるが、非 2xx 応答や検証の失敗は一律に session を破棄する**（§17-4）。
+- 起動のたびに DID 文書を引き直し、保存した capability の署名鍵がまだ文書に載っていることを確かめる（wallet には何も聞かない）。
+  **ネットワークエラーでは session は保たれるが、検証の失敗は session を破棄する**（§17-4）。期限が来たら wallet で承認し直す。
 
 ### 5.4 DID Document の編集契約（`urn:did-core:document-edit:v1`）
 
@@ -293,14 +297,14 @@ biset は DID Document を直接書かず、**編集の要求を wallet に渡�
 - 外された端末がすでに持っている情報（過去の Vault）は取り戻せない。外した後の新しい通信だけが守られる。
 
 ### 5.7 wallet directory
-`wallet-directory.ts` の静的な配列（現状は dito＝did.md の 1 件）。`resolveWalletFromSuffix` は、ログインボタン横の入力欄（did:web の suffix）から wallet を解決する。
-did-md-oauth.ts は特定の wallet を前提にせず、選択された entry の issuer に対して動く。
+`wallet-directory.ts` の静的な配列（現状は dito＝did.md の 1 件、`authorizationEndpoint` ＝ `https://app.did.md/authorize`）。`resolveWalletFromSuffix` は、ログインボタン横の入力欄（did:webvh の host）から、その DID 文書の `SelfIssuedOPAuthorizationEndpoint` service を読んで wallet を解決する。
+did-md-oauth.ts は特定の wallet を前提にせず、選択された entry の承認画面に対して動く。
 
 ## 6. 鍵と秘密
 
 | 鍵・秘密 | 単位 | 保存 | 公開・伝播 |
 |---|---|---|---|
-| DPoP 鍵（P-256、非抽出） | 端末 | `biset-did-md-wallet` | しない |
+| 端末鍵（P-256、非抽出） | 端末 | `biset-did-md-wallet` | しない |
 | 端末の DIDComm X25519 | 端末 | 同上。**非抽出の AES 鍵で封印** | 公開鍵が DID Document の `keyAgreement` |
 | `mediatorDeviceSecret` | 端末 | 同上 | しない。mediator の端末ラベル `HMAC(secret, DID)` を作る |
 | **generation seed** | identity | Vault（`credential.generation-seed.set`） | Vault Sync で全端末へ。端末を外すと作り直す |
@@ -670,7 +674,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 
 0. 前回のセッションの mediator watch を**無条件に**止める。
 1. wallet の callback を先に消費する（DID の編集で古い capability の snapshot が古くなるため、通常の refresh より先）。失敗はコンソールの警告にとどめ、画面は壊さない。
-2. `restoreDidMdWalletSession`（`device-refresh` ＋ §5.3 の検証。**ネットワークが要る**）。復元できなければ、ログイン画面、または「capability の期限切れ。再接続を」の画面。
+2. `restoreDidMdWalletSession`（DID 文書の引き直し ＋ §5.3 の検証。**ネットワークが要る**）。復元できなければ、ログイン画面、または「capability の期限切れ。再接続を」の画面。
 3. Vault IndexedDB を開く（v15）。actorSeq の採番器、暗号境界、read model、`VaultProjector`、mutation sink を組む。export／import、Markdown ミラーを配線する。
 4. **既存のローカル projection で先に inbox を描画する**（ネットワークを待たない）。
 5. DIDComm の device material を開き、自分の DID Document を解決する。**自端末の鍵が `keyAgreement` に無ければ**、再接続を求めて止まる。
@@ -708,7 +712,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 1. **SegmentKey が IndexedDB に平文（高）**。wallet の material は封印されるが、Vault 側は未完成。
 2. **全端末を失うと履歴は戻らない（高）**。移送は「起動中の兄弟」か「利用者が持つ export」だけ。利用者への警告 UI は無い。
 3. **端末を外しても過去は取り戻せない（中）**。外された端末が持つ過去の Vault は有効なまま。外した後の通信だけが守られる。
-4. **セッションの破棄が厳しすぎる（中）**。device-refresh の非 2xx 応答や、検証の失敗は、一律に session を破棄する。§5.3。
+4. **セッションの破棄が厳しすぎる（中）**。検証の失敗は、一律に session を破棄する。§5.3。
 5. **dedupe の lookup が未接続（中）**。
 6. **端末を外した直後の窓（中、原理的）**。相手が did.md の CDN の古い DID 文書を読む最大 30 秒は、外された端末を正規の端末とみなしうる。
    DID Rotation で移っていた相手については、相手が新しい移動を処理するまで、外された端末は古い Y で読み書きできる（§9.2）。
@@ -838,7 +842,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 | 領域 | 状態 |
 |---|---|
 | did:webvh の解決（`protocol/webvh/`） | ✅ |
-| did.md Wallet login（RP DID（署名なし）、DCR、直接配送、DPoP 端末セッション、VC capability） | ✅ |
+| did.md Wallet login（redirect_uri 形式の RP（署名なし）、直接配送、端末鍵の端末セッション、VC capability） | ✅ |
 | DID Document の編集（merge、removeEndpoints）と、承認後の独立な検証 | ✅ |
 | 端末集合＝`keyAgreement`、multiplexed encryption、端末ごとの受信箱 | ✅ ❓ 本番での複数端末の通し確認は未実施 |
 | 端末を外す（DID 編集で rotation key を取り替え → 新しい seed の Y へ DID Rotation で移り直す） | ✅ ❓ 本番での通し確認は未実施 |

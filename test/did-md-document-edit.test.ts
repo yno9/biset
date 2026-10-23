@@ -103,7 +103,7 @@ describe('every edit Biset can ask for passes the capability schema', () => {
   // already written it, leaving the document edited and the browser signed out.
   const wrapped = (edit: unknown) => ({
     '@context': ['https://www.w3.org/ns/credentials/v2'], id: 'urn:uuid:33333333-3333-4333-8333-333333333333', type: ['VerifiableCredential', 'biset.md/MessengerCapability'],
-    issuer: DID, proof: { type: 'DataIntegrityProof', cryptosuite: 'eddsa-jcs-2022', created: '2026-10-08T00:00:00.000Z', proofPurpose: 'authentication', verificationMethod: `${DID}#key-1`, proofValue: 'z1' }, credentialSubject: { audience: `client_${'a'.repeat(32)}`, authorizationDetails: [edit], deviceJkt: 'A'.repeat(43), expiresAt: '2030-01-01T00:00:00.000Z', issuedAt: '2026-10-08T00:00:00.000Z', scope: ['biset:login'] },
+    issuer: DID, proof: { type: 'DataIntegrityProof', cryptosuite: 'eddsa-jcs-2022', created: '2026-10-08T00:00:00.000Z', proofPurpose: 'authentication', verificationMethod: `${DID}#key-1`, proofValue: 'z1' }, credentialSubject: { audience: 'redirect_uri:https://biset.example/wallet/callback', authorizationDetails: [edit], deviceJkt: 'A'.repeat(43), expiresAt: '2030-01-01T00:00:00.000Z', issuedAt: '2026-10-08T00:00:00.000Z', scope: ['biset:login'] },
   })
   const rotation = rotationKeyEditMethod(new Uint8Array(32).fill(5), 'ifAbsent')
 

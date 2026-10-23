@@ -3,18 +3,14 @@ import { afterEach, describe, expect, test } from 'vitest'
 import {
   clearDidMdDeviceSession,
   clearDidMdPendingAuthorization,
-  clearDidMdRegistration,
   openDidMdBisetDidCommDeviceMaterial,
   readDidMdDeviceSession,
   readDidMdPendingAuthorization,
-  readDidMdRegistration,
   saveDidMdDeviceSession,
   saveDidMdPendingAuthorization,
-  saveDidMdRegistration,
   sealDidMdBisetDidCommDeviceMaterial,
   type DidMdDeviceSession,
   type DidMdPendingAuthorization,
-  type DidMdRegistration,
 } from '../src/client/identity/wallet/did-md-store.ts'
 
 const DATABASE_NAME = 'biset-did-md-wallet'
@@ -48,11 +44,11 @@ async function expectNoSecretInError(action: () => Promise<unknown>, secret: Uin
 async function pendingFixture(): Promise<DidMdPendingAuthorization> {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
   return {
-    v: 2,
-    issuer: 'https://api.did.md',
-    clientId: `client_${'a'.repeat(32)}`,
+    v: 3,
+    wallet: 'https://app.did.md/authorize',
+    clientId: 'redirect_uri:https://biset.example/wallet/callback',
     state: 'state-value',
-    codeVerifier: 'verifier-value',
+    nonce: 'nonce-value',
     did: 'did:web:alice.did.md',
     handle: 'alice.did.md',
     verificationMethod: 'did:web:alice.did.md#key-1',
@@ -63,20 +59,6 @@ async function pendingFixture(): Promise<DidMdPendingAuthorization> {
     vaultDeviceId: 'urn:uuid:11111111-1111-4111-8111-111111111111',
     documentEdit: { type: 'urn:did-core:document-edit:v1', services: [], verificationMethods: [], remove: [] },
     createdAt: '2026-09-05T00:00:00.000Z',
-  }
-}
-
-function registrationFixture(): DidMdRegistration {
-  return {
-    v: 2,
-    issuer: 'https://api.did.md',
-    authorizationEndpoint: 'https://api.did.md/v1/oauth/authorize',
-    tokenEndpoint: 'https://api.did.md/v1/oauth/token',
-    refreshEndpoint: 'https://api.did.md/v1/oauth/device-refresh',
-    registrationEndpoint: 'https://api.did.md/v1/oauth/register',
-    clientId: `client_${'a'.repeat(32)}`,
-    registrationAccessToken: 'r'.repeat(32),
-    redirectUri: 'https://biset.example/wallet/callback',
   }
 }
 
@@ -113,12 +95,11 @@ describe('did.md Biset DIDComm device material sealing', () => {
 })
 
 describe('did.md Wallet IndexedDB storage', () => {
-  test('reads, saves, and clears registration, pending authorization, and session records', async () => {
-    const registration = registrationFixture()
+  test('reads, saves, and clears pending authorization and session records', async () => {
     const pending = await pendingFixture()
     const session: DidMdDeviceSession = {
-      v: 2,
-      issuer: pending.issuer,
+      v: 3,
+      wallet: pending.wallet,
       clientId: pending.clientId,
       did: pending.did,
       handle: pending.handle,
@@ -132,17 +113,13 @@ describe('did.md Wallet IndexedDB storage', () => {
       vaultDeviceId: pending.vaultDeviceId,
     }
 
-    await saveDidMdRegistration(registration)
     await saveDidMdPendingAuthorization(pending)
     await saveDidMdDeviceSession(session)
-    expect(await readDidMdRegistration()).toEqual(registration)
     expect(await readDidMdPendingAuthorization()).toEqual(pending)
     expect(await readDidMdDeviceSession()).toEqual(session)
 
-    await clearDidMdRegistration()
     await clearDidMdPendingAuthorization()
     await clearDidMdDeviceSession()
-    expect(await readDidMdRegistration()).toBeUndefined()
     expect(await readDidMdPendingAuthorization()).toBeUndefined()
     expect(await readDidMdDeviceSession()).toBeUndefined()
   })

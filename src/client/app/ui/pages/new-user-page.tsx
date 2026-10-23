@@ -140,10 +140,6 @@ export function NewUserPage() {
 
   const connect = () => {
     setConnecting(true)
-    // Safari only permits opening a window in the original click handler -- reserve it now, before
-    // the asynchronous suffix resolution below, the same reason redirectToWallet takes an
-    // already-opened popup.
-    const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
     const config = readBisetConfig()
     const typed = suffix.trim()
     void (async () => {
@@ -152,7 +148,7 @@ export function NewUserPage() {
         selectWallet(await resolveWalletFromSuffix(typed))
       }
       setResult({ message: 'Opening did.md Wallet…', error: false })
-      await beginDidMdWalletLogin(config.mediatorUrls, popup, config)
+      await beginDidMdWalletLogin(config.mediatorUrls, config)
     })().catch(error => { setConnecting(false); report(error) })
   }
 

@@ -1,11 +1,11 @@
 /**
- * did.md OAuth public-client integration.
+ * did.md Wallet sign-in, as SIOPv2 / OpenID4VP (no OAuth: no metadata, registration, tokens, DPoP or refresh).
  *
  * It persists no Wallet controller material. The only Biset-owned secrets
  * it keeps are the DIDComm device's (its X25519 key and mediator inbox-label
  * secret), AES-wrapped under a non-extractable browser key.
  */
-import { x25519 } from '@noble/curves/ed25519.js'
+import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { decodeMultikey } from '../../../protocol/webvh/multikey.ts'
 import { parseWebvhDid, sameIdentity } from '../../../protocol/webvh/identifier.ts'
 import { verifyProof, type DataIntegrityProof } from '../../../protocol/webvh/proof.ts'
@@ -21,15 +21,12 @@ import capabilitySchema from './schemas/biset-messenger-capability.schema.json' 
 import { isOnionUrl } from '../../didcomm/mediator-endpoints.ts'
 import { canonical, endpointsAreRemoved, serviceIsPublished } from './did-document-edit-check.ts'
 import {
-  clearDidMdRegistration,
   clearDidMdDeviceSession,
   clearDidMdPendingAuthorization,
   readDidMdDeviceSession,
   readDidMdPendingAuthorization,
-  readDidMdRegistration,
   saveDidMdDeviceSession,
   saveDidMdPendingAuthorization,
-  saveDidMdRegistration,
   sealDidMdBisetDidCommDeviceMaterial,
   openDidMdBisetDidCommDeviceMaterial,
   sealDidMdSecret,
@@ -38,45 +35,28 @@ import {
   type DidMdSealedSecret,
   type DidMdDeviceSession,
   type DidMdPendingAuthorization,
-  type DidMdRegistration,
   type DidCoreDocumentEdit,
   type DidCoreEndpointRemoval,
 } from './did-md-store.ts'
 
 import { DEFAULT_WALLET, type WalletDirectoryEntry } from './wallet-directory.ts'
 import { rotationKeyEditMethod, ROTATION_KEY_FRAGMENT } from '../../didcomm/rotation-key.ts'
-// PLAN4 (~/did.md/PLAN4-wallet-connector.md): the OAuth/OID4VP issuer this
-// module talks to is no longer a fixed constant -- it is whichever wallet
-// directory entry is currently selected (selectWallet/currentWallet
-// below), defaulting to dito so existing single-wallet UX is unchanged.
-// WALLET_ORIGIN was removed entirely: the popup-message origin check
-// (see the window "message" listener below) now derives the expected
-// origin from the active popup's own discovered authorization_endpoint,
-// rather than assuming app.did.md.
+// The wallet this module talks to is whichever wallet directory entry is currently selected
+// (selectWallet/currentWallet), dito by default. Its authorization screen is `authorizationEndpoint`.
 let selectedWallet: WalletDirectoryEntry = DEFAULT_WALLET
 export function selectWallet(entry: WalletDirectoryEntry): void { selectedWallet = entry }
 export function currentWallet(): WalletDirectoryEntry { return selectedWallet }
 const CALLBACK_PATH = '/wallet/callback'
-const REQUESTED_SCOPES = ['openid', 'profile', 'biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
-// Biset's own capability document type (see did.md's
-// PLAN2-capability-ownership.md): did.md no longer names this for us. The
-// legacy 'did.md/DeviceCapability' name is still accepted ON RECEIPT --
-// see the "type" property's enum in schemas/biset-messenger-capability.
-// schema.json, which is the single source of truth for what's accepted --
-// for a did.md Wallet that predates the capability_type request parameter
-// and so falls back to its own old default. This constant is only ever
-// what Biset itself REQUESTS.
+// What the capability is for (the device-capability transaction data's scope); `openid` is the request's own scope.
+const REQUESTED_SCOPES = ['biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
+// Biset's own capability credential type, asked for by the DCQL query.
 const CAPABILITY_TYPE = 'biset.md/MessengerCapability'
-// This deployment's relying-party DID (`rpDid` in __BISET_CONFIG__; its document lists the redirect
-// URI). The https build names itself with it as the request's client_id and signs nothing: the Wallet
-// approves a request only for the page that embeds it. A file:// build has no fixed origin to bind a
-// DID to and stays on the DCR path.
-function rpDid(): string {
+// This deployment's relying-party DID (`rpDid` in __BISET_CONFIG__): sent as client_metadata.rp_did. The wallet believes it
+// only when the DID's own document publishes the redirect URL as a SIOPRedirectTarget; the request itself is not signed.
+function rpDid(): string | undefined {
   const configured = (globalThis as { __BISET_CONFIG__?: { rpDid?: unknown } }).__BISET_CONFIG__?.rpDid
-  if (typeof configured !== 'string') throw new Error('This deployment has no relying-party DID (rpDid in its config)')
-  return configured
+  return typeof configured === 'string' ? configured : undefined
 }
-const hasRpDid = (): boolean => typeof (globalThis as { __BISET_CONFIG__?: { rpDid?: unknown } }).__BISET_CONFIG__?.rpDid === 'string'
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 // The did.md-operated SMTP relay is a separate process, but shares did.md's
 // authority service.  This detail is Root-signed as part of the ordinary
@@ -167,75 +147,6 @@ export function didCommEndpointWithOnion<T extends string | Record<string, unkno
   return [endpoint as Record<string, unknown>, { ...endpoint as Record<string, unknown>, uri: onionUrl }]
 }
 
-type FileWalletPopup = {
-  popup: Window
-  timer: number
-  reject: (reason?: unknown) => void
-  client: DidMdRegistration
-  pending: DidMdPendingAuthorization
-  polling: boolean
-}
-
-let fileWalletPopup: FileWalletPopup | undefined
-
-function finishFileWalletPopup(active: FileWalletPopup, value: Record<string, unknown>) {
-  if (value.state !== active.pending.state || value.iss !== active.client.issuer) return
-  window.clearInterval(active.timer)
-  if (fileWalletPopup === active) fileWalletPopup = undefined
-  active.popup.close()
-  const callback = new URL(redirectUri())
-  // PLAN7: vp_token/id_token replace code -- did.md posts these straight to
-  // window.opener (this popup's whole point: Safari severs window.opener
-  // for a file:// popup in some cases, so did.md's message here is the only
-  // channel; see pollFileWalletCallback's relay for when even that fails).
-  // Carried via this document's own query string (never any server, so the
-  // fragment-vs-query distinction that matters for the https path doesn't
-  // apply here).
-  for (const name of ['vp_token', 'id_token', 'state', 'iss', 'error', 'error_description']) {
-    if (typeof value[name] === 'string') callback.searchParams.set(name, value[name] as string)
-  }
-  // The local document, rather than an HTTPS page, performs this file://
-  // navigation. Chromium therefore does not reject an HTTPS-to-file hop.
-  location.assign(callback.toString())
-}
-
-async function pollFileWalletCallback(active: FileWalletPopup) {
-  if (active.polling || fileWalletPopup !== active) return
-  active.polling = true
-  try {
-    const endpoint = new URL('/v1/oauth/file-callback', active.client.issuer)
-    endpoint.searchParams.set('client_id', active.pending.clientId)
-    endpoint.searchParams.set('state', active.pending.state)
-    const response = await fetch(endpoint, { cache: 'no-store' })
-    if (response.status === 204) return
-    if (!response.ok) throw new Error(`did.md file callback relay failed (${response.status})`)
-    const value = asObject(await response.json(), 'did.md file callback relay')
-    finishFileWalletPopup(active, value)
-  } catch (error) {
-    // The relay is a Safari fallback; transient network errors must not turn
-    // an already-open Wallet approval into a failed authorization.
-    console.warn('did.md Wallet file callback relay polling failed', error)
-  } finally {
-    active.polling = false
-  }
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('message', event => {
-    const active = fileWalletPopup
-    const value = event.data as Record<string, unknown> | undefined
-    // The expected popup origin is derived from THIS popup's own
-    // discovered authorization_endpoint (see registration()/metadata()),
-    // not a fixed dito origin -- any wallet directory entry's popup is
-    // validated against its own endpoint, never another wallet's.
-    const expectedOrigin = new URL(active?.client.authorizationEndpoint ?? 'about:blank').origin
-    if (!active || event.origin !== expectedOrigin || event.source !== active.popup
-      || value?.type !== 'did.md/oauth-file-callback' || value.protocol !== 1
-      || typeof value.state !== 'string' || typeof value.iss !== 'string') return
-    finishFileWalletPopup(active, value)
-  })
-}
-
 export type DidMdActiveSession = {
   did: string
   handle: string
@@ -280,13 +191,6 @@ type DidMdBisetMediator = {
   mediatorOnionUrl?: string
 }
 
-type Metadata = {
-  issuer: string
-  authorization_endpoint: string
-  token_endpoint: string
-  registration_endpoint: string
-}
-
 function base64url(bytes: Uint8Array): string {
   let value = ''
   for (const byte of bytes) value += String.fromCharCode(byte)
@@ -302,7 +206,7 @@ async function sha256Base64url(value: string): Promise<string> {
 }
 
 function p256PublicJwk(value: JsonWebKey): JsonWebKey {
-  if (value.kty !== 'EC' || value.crv !== 'P-256' || typeof value.x !== 'string' || typeof value.y !== 'string') throw new Error('The browser returned an invalid DPoP public key')
+  if (value.kty !== 'EC' || value.crv !== 'P-256' || typeof value.x !== 'string' || typeof value.y !== 'string') throw new Error('The browser returned an invalid device public key')
   return { kty: 'EC', crv: 'P-256', x: value.x, y: value.y }
 }
 
@@ -469,128 +373,33 @@ async function rollbackPendingMediator(pending: DidMdPendingAuthorization): Prom
 }
 
 function redirectUri(): string {
-  if (location.protocol === 'file:') {
-    const callback = new URL(location.href)
-    callback.search = ''
-    callback.hash = ''
-    return callback.toString()
-  }
+  if (location.protocol !== 'https:') throw new Error('Sign-in needs an https page')
   return `${location.origin}${CALLBACK_PATH}`
 }
 
 function isWalletCallback(): boolean {
-  if (location.pathname === CALLBACK_PATH) return true
-  // A packaged file:// build cannot navigate to an origin-root callback
-  // route. Wallet therefore returns to the same local HTML file with the
-  // OAuth parameters appended.
-  return location.protocol === 'file:' && new URL(location.href).searchParams.has('state')
+  return location.pathname === CALLBACK_PATH
 }
 
-async function metadataFor(issuer: string): Promise<Metadata> {
-  const response = await fetch(`${issuer}/.well-known/oauth-authorization-server`, { cache: 'no-store' })
-  if (!response.ok) throw new Error(`did.md authorization-server discovery failed (${response.status})`)
-  const value = asObject(await response.json(), 'authorization-server metadata')
-  if (value.issuer !== issuer || typeof value.authorization_endpoint !== 'string' || typeof value.token_endpoint !== 'string' || typeof value.registration_endpoint !== 'string') throw new Error('did.md authorization-server metadata is invalid')
-  for (const endpoint of [value.authorization_endpoint, value.token_endpoint, value.registration_endpoint]) {
-    const parsed = new URL(endpoint)
-    if (parsed.protocol !== 'https:') throw new Error('did.md authorization-server metadata contains a non-HTTPS endpoint')
-  }
-  return value as Metadata
-}
-async function metadata(): Promise<Metadata> {
-  return metadataFor(selectedWallet.issuer)
-}
+/** The Client Identifier of this page as a relying party with no key of its own (OID4VP 1.0 §5.9.3). */
+const clientIdFor = (callback: string): string => `redirect_uri:${callback}`
 
-// Wallet discovery from a did:webvh suffix the user types (rather than
-// picking from WALLET_DIRECTORY): resolve that identity's own DID document,
-// read its "UDIWalletIssuer" service entry (published by
-// ~/did.md/client/did-webvh.ts's buildGenesis, the same pattern atproto uses
-// for #atproto_pds/AtprotoPersonalDataServer PDS discovery), then run the
-// ordinary OAuth-authorization-server discovery against that issuer. No new
-// registry or protocol -- just the did:webvh resolution biset already does,
-// applied to wallet discovery instead of identity/data hosting.
+// Wallet discovery from a did:webvh suffix the user types: resolve that identity's own DID document and read its
+// "SelfIssuedOPAuthorizationEndpoint" service entry (where its wallet's authorization screen is). Nothing is
+// registered or fetched from the wallet; the DID document is the whole directory.
 export async function resolveWalletFromSuffix(suffix: string): Promise<WalletDirectoryEntry> {
   const domain = suffix.trim().toLowerCase()
   if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) throw new Error('Enter a domain, e.g. alice.did.md.')
   const document = await resolveByDomain(domain)
   if (!document) throw new Error(`${domain} has no did:webvh identity.`)
   const service = Array.isArray(document.service) ? document.service : []
-  const entry = service.find(candidate => candidate?.type === 'UDIWalletIssuer' && typeof candidate.serviceEndpoint === 'string')
+  const entry = service.find(candidate => candidate?.type === 'SelfIssuedOPAuthorizationEndpoint' && typeof candidate.serviceEndpoint === 'string')
   if (!entry || typeof entry.serviceEndpoint !== 'string') throw new Error(`${domain} does not publish a wallet.`)
-  const issuer = entry.serviceEndpoint
-  if (new URL(issuer).protocol !== 'https:') throw new Error(`${domain}'s wallet issuer is invalid.`)
-  await metadataFor(issuer) // fails loudly if this issuer cannot actually be discovered
-  return { id: `suffix:${domain}`, displayName: domain, issuer, handleSuffix: `.${domain}` }
-}
-
-function registrationIsUsable(value: DidMdRegistration | undefined, discovered: Metadata): value is DidMdRegistration {
-  return !!value && value.v === 2 && value.issuer === selectedWallet.issuer
-    && value.authorizationEndpoint === discovered.authorization_endpoint
-    && value.tokenEndpoint === discovered.token_endpoint
-    && value.registrationEndpoint === discovered.registration_endpoint
-    && /^client_[A-Za-z0-9_-]{32,128}$/.test(value.clientId)
-    && typeof value.registrationAccessToken === 'string' && value.registrationAccessToken.length >= 32
-    && value.redirectUri === redirectUri()
-}
-
-async function registration(walletDeviceName = 'Biset'): Promise<DidMdRegistration> {
-  const discovered = await metadata()
-  // An https build needs no DCR round trip at all -- its RP DID is a
-  // fixed constant, so there is nothing to register or cache. Only applies
-  // when biset itself runs at a fixed https origin (see rpDid()).
-  if (location.protocol !== 'file:') {
-    return {
-      v: 2, issuer: discovered.issuer, authorizationEndpoint: discovered.authorization_endpoint,
-      tokenEndpoint: discovered.token_endpoint, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh`,
-      registrationEndpoint: discovered.registration_endpoint, clientId: rpDid(),
-      registrationAccessToken: '', redirectUri: redirectUri(),
-    }
-  }
-  const existing = await readDidMdRegistration()
-  if (registrationIsUsable(existing, discovered)) {
-    const response = await fetch(`${selectedWallet.issuer}/v1/oauth/register/${encodeURIComponent(existing.clientId)}`, {
-      headers: { authorization: `Bearer ${existing.registrationAccessToken}` }, cache: 'no-store',
-    })
-    if (response.ok) {
-      const value = asObject(await response.json(), 'client registration configuration')
-      if (value.client_id === existing.clientId
-        && Array.isArray(value.redirect_uris) && value.redirect_uris.length === 1 && value.redirect_uris[0] === existing.redirectUri
-        && value.scope === REQUESTED_SCOPES.join(' ')
-        && value.token_endpoint_auth_method === 'none') return existing
-    }
-    // A lost/replaced AS database, a manually deleted registration, or a
-    // changed local origin is recoverable.  The old capability remains
-    // harmless because the AS no longer accepts its client_id.
-    await clearDidMdRegistration()
-  }
-  const response = await fetch(discovered.registration_endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      client_name: walletDeviceName, application_type: 'web', redirect_uris: [redirectUri()],
-      grant_types: ['authorization_code'], response_types: ['code'], token_endpoint_auth_method: 'none',
-      scope: REQUESTED_SCOPES.join(' '),
-    }),
-  })
-  if (!response.ok) throw new Error(await response.text())
-  const value = asObject(await response.json(), 'client registration response')
-  if (!/^client_[A-Za-z0-9_-]{32,128}$/.test(String(value.client_id ?? '')) || typeof value.registration_access_token !== 'string' || value.registration_access_token.length < 32 || value.registration_client_uri !== `${selectedWallet.issuer}/v1/oauth/register/${encodeURIComponent(String(value.client_id))}`) throw new Error('did.md client registration response is invalid')
-  const result: DidMdRegistration = {
-    v: 2, issuer: discovered.issuer, authorizationEndpoint: discovered.authorization_endpoint,
-    tokenEndpoint: discovered.token_endpoint, refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh`,
-    registrationEndpoint: discovered.registration_endpoint, clientId: String(value.client_id),
-    registrationAccessToken: value.registration_access_token, redirectUri: redirectUri(),
-  }
-  await saveDidMdRegistration(result)
-  return result
-}
-
-async function createDpop(privateKey: CryptoKey, publicJwk: JsonWebKey, method: string, url: string, nonce?: string): Promise<string> {
-  const header = { typ: 'dpop+jwt', alg: 'ES256', jwk: p256PublicJwk(publicJwk) }
-  const payload = { jti: randomBase64url(24), htm: method, htu: url, iat: Math.floor(Date.now() / 1000), ...(nonce ? { nonce } : {}) }
-  const input = `${base64url(encoder.encode(JSON.stringify(header)))}.${base64url(encoder.encode(JSON.stringify(payload)))}`
-  const signature = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, encoder.encode(input)))
-  return `${input}.${base64url(signature)}`
+  const endpoint = entry.serviceEndpoint
+  let parsed: URL
+  try { parsed = new URL(endpoint) } catch { throw new Error(`${domain}'s wallet endpoint is invalid.`) }
+  if (parsed.protocol !== 'https:') throw new Error(`${domain}'s wallet endpoint is invalid.`)
+  return { id: `suffix:${domain}`, displayName: domain, authorizationEndpoint: endpoint, handleSuffix: `.${domain}` }
 }
 
 /** did.md's Root key: the identity's own authentication key, `#pass-1`. */
@@ -689,40 +498,67 @@ async function capabilityFromResponse(value: unknown, pending: ResolvedPendingAu
   return { capability: vc, expiresAt: subject.expiresAt as string, scope: subject.scope as string[], didCommDevice: detail.didCommDevice }
 }
 
-// PLAN7 (~/did.md/PLAN7-pure-siopv2-direct-delivery.md): did.md delivers
-// vp_token/id_token straight to this RP -- fragment (https) or postMessage
-// (file://), see completeDidMdWalletCallback -- with no api.did.md call in
-// between. `did` comes from the capability VC's own `issuer` (there is no
-// token-endpoint `sub` claim anymore); everything from here on is exactly
-// the independent verification this module always did (resolvedPending
-// resolves the DID itself, capabilityFromResponse verifies the Data
-// Integrity Proof against that resolved key) -- unrelated to, and
-// unweakened by, removing the code+token round trip.
-async function sessionFromVpToken(vpToken: unknown, did: string, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
-  // The OID4VP DCQL response envelope -- { "<query_id>": [<credential>] } --
-  // same fixed query id did.md's server has always used (CAPABILITY_DCQL_QUERY_ID
-  // in server/oauth-server.ts); this RP requests exactly one capability
-  // credential, so unwrapping it here is the RP-side mirror of that
-  // server-side convention.
+// The wallet delivers vp_token/id_token straight to this page (the callback's fragment). `did` is the presentation's holder; the
+// session is built only after the presentation and the id_token are checked against this request and the DID document is read.
+async function sessionFromVpToken(vpToken: unknown, idToken: string, did: string, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
+  // The OID4VP DCQL response envelope -- { "<query_id>": [<presentation>] } -- under the one query id this RP asks with.
   const envelope = asObject(vpToken, 'vp_token')
-  const credentials = envelope.capability
-  if (!Array.isArray(credentials) || credentials.length !== 1) throw new Error('vp_token must contain exactly one capability credential')
-  return sessionFromCapabilityValue(credentials[0], did, pending)
+  const presentations = envelope.capability
+  if (!Array.isArray(presentations) || presentations.length !== 1) throw new Error('vp_token must contain exactly one presentation')
+  const presentation = asObject(presentations[0], 'presentation')
+  const credentials = presentation.verifiableCredential
+  if (!Array.isArray(credentials) || credentials.length !== 1) throw new Error('The presentation must hold exactly one capability credential')
+  return sessionFromCapabilityValue(credentials[0], did, pending, { presented: { presentation, idToken } })
 }
 
-// Shared tail of sessionFromVpToken and restoreDidMdWalletSession: both end
-// up with a single bare capability VC (`value`) and the DID it claims to be
-// issued by, just packaged differently -- the direct-delivery vp_token
-// wraps it in a DCQL envelope (PLAN7), while device-refresh's response body
-// (unchanged by PLAN7, see restoreDidMdWalletSession) carries it flat as
-// `vp_token`. This is where they reconverge.
+const fromBase64url = (value: string): Uint8Array => {
+  if (!/^[A-Za-z0-9_-]*$/.test(value)) throw new Error('Not base64url')
+  return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)), character => character.charCodeAt(0))
+}
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((byte, index) => byte === b[index])
+
+/** What proves this response is for this request and from this identity: the presentation is signed by the
+ * identity's Root key over this request's nonce and Client Identifier (OID4VP §8.6), and the id_token passes
+ * SIOPv2 §11.1 (self-issued: iss = sub = the DID, signed by that DID's key, aud = our Client Identifier, our nonce). */
+function verifyPresented(presented: { presentation: Record<string, unknown>; idToken: string }, pending: ResolvedPendingAuthorization): void {
+  const { presentation, idToken } = presented
+  const types = presentation.type
+  if (!Array.isArray(types) || !types.includes('VerifiablePresentation') || presentation.holder !== pending.did) throw new Error('did.md returned an invalid presentation')
+  const proof = asObject(presentation.proof, 'presentation proof') as unknown as DataIntegrityProof & { challenge?: unknown; domain?: unknown }
+  const { proof: _proof, ...unsigned } = presentation
+  if (proof.proofPurpose !== 'authentication' || proof.verificationMethod !== pending.verificationMethod || proof.challenge !== pending.nonce || proof.domain !== pending.clientId
+    || !verifyProof(unsigned, proof, pending.rootPublicKey)) throw new Error('did.md presentation proof is invalid')
+  const parts = idToken.split('.')
+  if (parts.length !== 3) throw new Error('did.md id_token is malformed')
+  let header: Record<string, unknown>; let claims: Record<string, unknown>; let signature: Uint8Array
+  try {
+    header = asObject(JSON.parse(new TextDecoder().decode(fromBase64url(parts[0]!))), 'id_token header')
+    claims = asObject(JSON.parse(new TextDecoder().decode(fromBase64url(parts[1]!))), 'id_token claims')
+    signature = fromBase64url(parts[2]!)
+  } catch { throw new Error('did.md id_token is malformed') }
+  const now = Math.floor(Date.now() / 1000)
+  if (header.alg !== 'EdDSA' || header.kid !== pending.verificationMethod
+    || claims.iss !== pending.did || claims.sub !== pending.did || claims.aud !== pending.clientId || claims.nonce !== pending.nonce
+    || typeof claims.exp !== 'number' || claims.exp <= now || typeof claims.iat !== 'number' || claims.iat > now + 300) throw new Error('did.md id_token is invalid')
+  let valid = false
+  try { valid = ed25519.verify(signature, encoder.encode(`${parts[0]}.${parts[1]}`), pending.rootPublicKey) } catch { /* invalid */ }
+  if (!valid) throw new Error('did.md id_token signature is invalid')
+}
+
+// Shared tail of sessionFromVpToken and restoreDidMdWalletSession: both end up with a single capability VC (`value`) and the DID
+// it claims to be issued by, and the same checks (a restore has no presentation to check; the DID document is read afresh).
 /** `registerMediator: false` is a restore of a stored session: boot registers this device with the
  * mediator right after, so doing it here too would only repeat the same round trips. */
-async function sessionFromCapabilityValue(value: unknown, did: string, pending: DidMdPendingAuthorization, options: { registerMediator?: boolean } = {}): Promise<DidMdActiveSession> {
+async function sessionFromCapabilityValue(value: unknown, did: string, pending: DidMdPendingAuthorization, options: { registerMediator?: boolean; presented?: { presentation: Record<string, unknown>; idToken: string } } = {}): Promise<DidMdActiveSession> {
   const resolvedPending = await timedStep('    session: resolvedPendingAuthorization', resolvedPendingAuthorization(pending, did))
+  if (options.presented) verifyPresented(options.presented, resolvedPending)
   const capability = await timedStep('    session: capabilityFromResponse', capabilityFromResponse(value, resolvedPending))
   const resolved = await timedStep('    session: resolveByDomain(did)', resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch()))
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
+  // The credential stands only while the DID document still names the key that signed it.
+  const named = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
+  const signer = resolved.verificationMethod?.find(method => named(method.id) === resolvedPending.verificationMethod)
+  if (!resolved.authentication?.some(reference => named(reference) === resolvedPending.verificationMethod) || !signer || !sameBytes(decodeMultikey(signer.publicKeyMultibase), resolvedPending.rootPublicKey)) throw new Error('The DID document no longer names the key that signed this capability')
   // A DID URL may be written relative (`#x`) or absolute (`did:...#x`); both name the same.
   const absolute = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
   const serviceOf = (id: string) => resolved.service?.find(value => absolute(value.id) === absolute(id))
@@ -753,7 +589,7 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   for (const id of resolvedPending.documentEdit?.remove ?? []) if (resolved.service?.some(value => absolute(value.id) === absolute(id)) || resolved.verificationMethod?.some(value => absolute(value.id) === absolute(id))) throw new Error(`Wallet did not remove ${id}`)
   const previousSession = await readDidMdDeviceSession()
   const session: DidMdDeviceSession = {
-    v: 2, issuer: resolvedPending.issuer, clientId: resolvedPending.clientId, did: resolvedPending.did, handle: resolvedPending.handle,
+    v: 3, wallet: resolvedPending.wallet, clientId: resolvedPending.clientId, did: resolvedPending.did, handle: resolvedPending.handle,
     verificationMethod: resolvedPending.verificationMethod, rootPublicKey: resolvedPending.rootPublicKey, deviceJkt: resolvedPending.deviceJkt,
     privateKey: resolvedPending.privateKey, publicJwk: resolvedPending.publicJwk, capability: capability.capability, capabilityExpiresAt: capability.expiresAt,
     vaultDeviceId: resolvedPending.vaultDeviceId,
@@ -786,7 +622,7 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
     ? capabilitySubject.authorizationDetails.find(value => { try { return asObject(value, 'stored authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
     : undefined
   return {
-    v: 2, issuer: session.issuer, clientId: session.clientId, state: '', codeVerifier: '', did: session.did,
+    v: 3, wallet: session.wallet, clientId: session.clientId, state: '', nonce: '', did: session.did,
     handle: session.handle, verificationMethod: session.verificationMethod, rootPublicKey: session.rootPublicKey,
     deviceJkt: session.deviceJkt, privateKey: session.privateKey, publicJwk: session.publicJwk,
     vaultDeviceId: session.vaultDeviceId ?? (() => { throw new Error('This did.md Wallet session predates this Biset version; connect it again.') })(),
@@ -797,66 +633,42 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
   }
 }
 
-/** Saves the pending authorization and builds the Wallet's authorization request URL: plain
- * parameters, nothing signed. It does not navigate. */
-async function walletRequestUrl(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<string> {
+/** What the wallet needs to know about this page as a relying party, and where its authorization screen is. */
+type WalletClient = { authorizationEndpoint: string; clientId: string; redirectUri: string }
+function walletClient(): WalletClient {
+  const callback = redirectUri()
+  return { authorizationEndpoint: selectedWallet.authorizationEndpoint, clientId: clientIdFor(callback), redirectUri: callback }
+}
+
+const base64urlJson = (value: unknown): string => base64url(encoder.encode(JSON.stringify(value)))
+
+/** Saves the pending authorization and builds the Wallet's authorization request URL (SIOPv2 / OpenID4VP,
+ * `client_id=redirect_uri:<callback>`, the request not signed): the credential asked for is named by `dcql_query`, what the
+ * person approves rides in `transaction_data`, and the response (vp_token + id_token) comes back in the callback's fragment.
+ * It does not navigate. */
+async function walletRequestUrl(client: WalletClient, pending: DidMdPendingAuthorization): Promise<string> {
   await saveDidMdPendingAuthorization(pending)
   const request = new URL(client.authorizationEndpoint)
-  // RFC 9396 details are optional: a plain sign-in asks for none, and the
-  // parameter is left out rather than sent empty.
-  const authorizationDetails = pending.documentEdit ? JSON.stringify([pending.documentEdit]) : undefined
-  // PLAN7 (~/did.md/PLAN7-pure-siopv2-direct-delivery.md): no `code`, no
-  // PKCE (nothing to protect from interception once the response is
-  // delivered directly -- see completeDidMdWalletCallback). did.md
-  // delivers the signed capability/id_token straight to redirectUri, by
-  // URL fragment (https) or postMessage (file://); no api.did.md call
-  // happens in between.
+  const transactionData = [
+    base64urlJson({ type: 'device_capability', credential_ids: ['capability'], device_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES }),
+    // Optional: a plain sign-in changes nothing in the DID document.
+    ...(pending.documentEdit ? [base64urlJson({ type: 'did_document_edit', credential_ids: ['capability'], detail: pending.documentEdit })] : []),
+  ]
+  const configured = rpDid()
   const params = new URLSearchParams({
-    client_id: pending.clientId, redirect_uri: client.redirectUri, response_type: 'vp_token id_token', state: pending.state,
+    client_id: pending.clientId, redirect_uri: client.redirectUri, response_type: 'vp_token id_token', response_mode: 'fragment',
+    scope: 'openid', nonce: pending.nonce, state: pending.state,
     ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
-    dpop_jkt: pending.deviceJkt, scope: REQUESTED_SCOPES.join(' '),
-    // Biset owns this capability type's shape (see did.md's
-    // PLAN2-capability-ownership.md) -- the Wallet no longer decides it.
-    // A did.md Wallet that predates this parameter falls back to its own
-    // "did.md/DeviceCapability" default, which is why the check below still
-    // accepts that legacy value too during the transition.
-    capability_type: CAPABILITY_TYPE,
-    // A one-shot UI hint only (dispo ignores it once an identity already
-    // exists in that tab, e.g. every finalize/edit round after login): asks
-    // the did.md Wallet creation screen to start with its Alias toggle on,
-    // since a biset user is expected to want a memorable did.md hostname
-    // rather than the default SCID-derived one. Presence-only -- the value
-    // is never read.
-    alias: '',
-    ...(authorizationDetails ? { authorization_details: authorizationDetails } : {}),
+    dcql_query: JSON.stringify({ credentials: [{ id: 'capability', format: 'ldp_vc', meta: { type_values: [['VerifiableCredential', CAPABILITY_TYPE]] } }] }),
+    transaction_data: JSON.stringify(transactionData),
+    client_metadata: JSON.stringify({ client_name: 'Biset', ...(configured ? { rp_did: configured } : {}) }),
   })
   request.search = params.toString()
   return request.toString()
 }
 
-async function redirectToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization, openedPopup?: Window): Promise<never> {
+async function redirectToWallet(client: WalletClient, pending: DidMdPendingAuthorization): Promise<never> {
   const request = new URL(await walletRequestUrl(client, pending))
-  if (location.protocol === 'file:') {
-    // Safari only permits opening a window in the original click handler.
-    // account-create reserves it before the asynchronous DID verification;
-    // navigate that same harmless about:blank window once the URL is ready.
-    const popup = openedPopup ?? window.open('', 'did-md-wallet')
-    if (!popup) throw new Error('Allow popups to continue with did.md Wallet from a packaged Biset file')
-    popup.location.replace(request.toString())
-    return await new Promise<never>((_resolve, reject) => {
-      const timer = window.setInterval(() => {
-        const active = fileWalletPopup
-        if (active?.popup === popup) void pollFileWalletCallback(active)
-        if (!popup.closed) return
-        window.clearInterval(timer)
-        if (fileWalletPopup?.popup === popup) fileWalletPopup = undefined
-        void rollbackPendingMediator(pending).finally(() => reject(new Error('did.md Wallet popup was closed before authorization completed')))
-      }, 500)
-      const active: FileWalletPopup = { popup, timer, reject, client, pending, polling: false }
-      fileWalletPopup = active
-      void pollFileWalletCallback(active)
-    })
-  }
   location.assign(request.toString())
   // Navigation is asynchronous: the page keeps running until it unloads, so
   // throwing here at once showed a "did not navigate" error right before the
@@ -903,8 +715,8 @@ async function otherDeviceMethodIds(did: string, ownKid: string): Promise<string
  * Best-effort: a mediator that's unconfigured or unreachable right now
  * just means no DIDComm device this round -- it must never block sign-in
  * itself; beginDidMdDocumentEdit publishes the device afterwards. */
-async function newLoginPending(mediatorUrls: readonly string[], config: WalletConfiguration, handle?: string): Promise<{ client: DidMdRegistration, pending: DidMdPendingAuthorization }> {
-  const client = await registration(config.walletDeviceName)
+async function newLoginPending(mediatorUrls: readonly string[], config: WalletConfiguration, handle?: string): Promise<{ client: WalletClient, pending: DidMdPendingAuthorization }> {
+  const client = walletClient()
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']) as CryptoKeyPair
   const publicJwk = p256PublicJwk(await crypto.subtle.exportKey('jwk', pair.publicKey))
   let bisetDidCommDevice: NonNullable<DidMdPendingAuthorization['bisetDidCommDevice']> | undefined
@@ -916,7 +728,7 @@ async function newLoginPending(mediatorUrls: readonly string[], config: WalletCo
   }
   const rotation = bisetDidCommDevice ? await rotationCandidate('ifAbsent') : undefined
   const pending: DidMdPendingAuthorization = {
-    v: 2, issuer: client.issuer, clientId: client.clientId, state: randomBase64url(32), codeVerifier: randomBase64url(48),
+    v: 3, wallet: client.authorizationEndpoint, clientId: client.clientId, state: randomBase64url(32), nonce: randomBase64url(32),
     ...(handle !== undefined ? { handle } : {}),
     deviceJkt: await p256Jkt(publicJwk), privateKey: pair.privateKey, publicJwk, vaultDeviceId: `urn:uuid:${crypto.randomUUID()}`,
     documentEdit: buildDocumentEdit('', config, bisetDidCommDevice, [], [], rotation?.method),
@@ -927,9 +739,9 @@ async function newLoginPending(mediatorUrls: readonly string[], config: WalletCo
   return { client, pending }
 }
 
-export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], openedPopup?: Window, configured: DidMdWalletConfiguration = {}): Promise<never> {
+export async function beginDidMdWalletLogin(mediatorUrls: readonly string[] = [], configured: DidMdWalletConfiguration = {}): Promise<never> {
   const { client, pending } = await newLoginPending(mediatorUrls, walletConfiguration(configured))
-  return redirectToWallet(client, pending, openedPopup)
+  return redirectToWallet(client, pending)
 }
 
 /**
@@ -972,7 +784,7 @@ export function useDidMdWalletApprover(approver: DidMdWalletApprover | undefined
 
 /** Sends the pending authorization to the Wallet: in place when there is an approver (resolving
  * with the new session), otherwise by navigating away (never resolving). */
-async function submitToWallet(client: DidMdRegistration, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
+async function submitToWallet(client: WalletClient, pending: DidMdPendingAuthorization): Promise<DidMdActiveSession> {
   if (!walletApprover) return redirectToWallet(client, pending)
   // The approver gets the request still being prepared (the RP signer is a network round trip), so
   // its dialog can open and the Wallet frame can wake while that runs.
@@ -1011,10 +823,10 @@ export type DidMdDocumentChange =
 export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, configured: DidMdWalletConfiguration = {}): Promise<DidMdActiveSession> {
   const config = walletConfiguration(configured)
   const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || session.v !== 2 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
-  const client = await registration(config.walletDeviceName)
+  if (!session?.vaultDeviceId || session.v !== 3 || Date.parse(session.capabilityExpiresAt) <= Date.now()) throw new Error('Reconnect did.md Wallet before editing the DID document')
+  const client = walletClient()
   const pending = pendingFromSession(session)
-  pending.state = randomBase64url(32); pending.codeVerifier = randomBase64url(48); pending.createdAt = new Date().toISOString()
+  pending.state = randomBase64url(32); pending.nonce = randomBase64url(32); pending.createdAt = new Date().toISOString()
   const previousDevice = session.bisetDidCommDevice
   if (change.kind === 'leaveMediator') {
     if (previousDevice) pending.previousBisetDidCommDevice = previousDevice
@@ -1045,14 +857,14 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
 }
 
 /** The sign-in for the same device under the DID the Wallet moved this identity to (its host changed). */
-async function movedDidLoginPending(newDid: string, config: WalletConfiguration): Promise<{ client: DidMdRegistration, pending: DidMdPendingAuthorization }> {
+async function movedDidLoginPending(newDid: string, config: WalletConfiguration): Promise<{ client: WalletClient, pending: DidMdPendingAuthorization }> {
   const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || session.v !== 2) throw new Error('Reconnect did.md Wallet before changing the address')
+  if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Reconnect did.md Wallet before changing the address')
   if (!sameIdentity(session.did, newDid)) throw new Error('The moved DID is not this account')
-  const client = await registration(config.walletDeviceName)
+  const client = walletClient()
   const { did: _old, ...rest } = pendingFromSession(session)
   const pending: DidMdPendingAuthorization = {
-    ...rest, state: randomBase64url(32), codeVerifier: randomBase64url(48), createdAt: new Date().toISOString(),
+    ...rest, state: randomBase64url(32), nonce: randomBase64url(32), createdAt: new Date().toISOString(),
     handle: didMdHandle(parseWebvhDid(newDid).domain),
   }
   delete pending.documentEdit
@@ -1097,43 +909,25 @@ export async function completeDidMdWalletCallback(delivered?: URLSearchParams): 
   if (!delivered && !isWalletCallback()) return undefined
   const callback = new URL(location.href)
   const pending = await readDidMdPendingAuthorization()
-  if (!pending || pending.v !== 2 || pending.issuer !== selectedWallet.issuer) throw new Error('No matching did.md Wallet authorization is pending')
-  // PLAN7: did.md delivers vp_token/id_token directly -- by URL fragment on
-  // the https path (never sent to any server, unlike a query string), or
-  // via the query string of this same local document on the file:// path
-  // (finishFileWalletPopup's own re-navigation; there is no server on that
-  // path either way, see its own comment). Try the fragment first since a
-  // fragment and a query string can coexist on the same URL.
-  const params = delivered ?? (callback.hash ? new URLSearchParams(callback.hash.slice(1)) : callback.searchParams)
-  const state = params.get('state')
-  const issuer = params.get('iss')
-  const vpToken = params.get('vp_token')
+  if (!pending || pending.v !== 3 || pending.wallet !== selectedWallet.authorizationEndpoint) throw new Error('No matching did.md Wallet authorization is pending')
+  // The response comes in the URL fragment (never sent to any server, unlike a query string).
+  const params = delivered ?? new URLSearchParams(callback.hash.slice(1))
+  const abandon = async (message: string): Promise<never> => { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error(message) }
+  if (params.get('state') !== pending.state) return abandon('did.md Wallet callback state did not match')
   const error = params.get('error')
-  if (state !== pending.state || issuer !== pending.issuer) { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error('did.md Wallet callback state or issuer did not match') }
-  if (error) { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error(params.get('error_description') ?? `did.md Wallet authorization failed: ${error}`) }
-  if (!vpToken) { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error('did.md Wallet callback has no vp_token') }
-  const client = await registration()
-  if (client.clientId !== pending.clientId || client.redirectUri !== redirectUri()) { await clearDidMdPendingAuthorization(); throw new Error('did.md Wallet client registration changed during authorization') }
+  if (error) return abandon(params.get('error_description') ?? `did.md Wallet authorization failed: ${error}`)
+  const vpToken = params.get('vp_token')
+  const idToken = params.get('id_token')
+  if (!vpToken || !idToken) return abandon('did.md Wallet callback has no vp_token or id_token')
+  if (pending.clientId !== clientIdFor(redirectUri())) { await clearDidMdPendingAuthorization(); throw new Error('This page is not the one that asked for the sign-in') }
   try {
-    // id_token is intentionally not read from params: this module has
-    // never derived anything from it (did/handle come from the capability
-    // VC's own issuer, verified independently below) -- see
-    // sessionFromVpToken's own comment.
     let parsedVpToken: unknown
     try { parsedVpToken = JSON.parse(vpToken) } catch { throw new Error('did.md Wallet callback vp_token is invalid') }
-    const credentials = asObject(parsedVpToken, 'vp_token').capability
-    const issuerDid = Array.isArray(credentials) && credentials.length === 1 ? asObject(credentials[0], 'capability credential').issuer : undefined
-    if (typeof issuerDid !== 'string') throw new Error('did.md Wallet callback vp_token is invalid')
-    const active = await sessionFromVpToken(parsedVpToken, issuerDid, pending)
-    // Chromium assigns each file: URL a unique opaque origin and rejects
-    // history.replaceState even when only the query string changes. A
-    // top-level replacement is allowed and also prevents replay on reload.
-    if (delivered) return active
-    if (location.protocol === 'file:') {
-      if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(DID_MD_JUST_CONNECTED_KEY, '1')
-      location.replace(redirectUri())
-    }
-    else history.replaceState(null, '', '/')
+    const presentations = asObject(parsedVpToken, 'vp_token').capability
+    const holder = Array.isArray(presentations) && presentations.length === 1 ? asObject(presentations[0], 'presentation').holder : undefined
+    if (typeof holder !== 'string') throw new Error('did.md Wallet callback vp_token is invalid')
+    const active = await sessionFromVpToken(parsedVpToken, idToken, holder, pending)
+    if (!delivered) history.replaceState(null, '', '/')
     return active
   } catch (error) {
     await rollbackPendingMediator(pending)
@@ -1152,7 +946,7 @@ async function timedStep<T>(label: string, work: Promise<T>): Promise<T> {
  * or its capability has run out. */
 export async function peekDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  if (!session || session.v !== 3 || session.wallet !== selectedWallet.authorizationEndpoint || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
   const subject = (() => { try { return asObject((session.capability as Record<string, unknown>).credentialSubject, 'stored capability subject') } catch { return {} } })()
   return {
     did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt,
@@ -1162,37 +956,19 @@ export async function peekDidMdWalletSession(): Promise<DidMdActiveSession | und
   }
 }
 
+/** A stored session is believed again only after the identity's DID document has been read afresh and still names the
+ * key that signed its capability (sessionFromCapabilityValue); the wallet is not asked anything. */
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
-  if (location.protocol !== 'file:' && !hasRpDid()) return undefined
-  // Over https the client id and the refresh endpoint are constants: no discovery round trip.
-  const client = location.protocol === 'file:'
-    ? await registration()
-    : { clientId: rpDid(), refreshEndpoint: `${selectedWallet.issuer}/v1/oauth/device-refresh` }
-  if (client.clientId !== session.clientId) return undefined
-  const pending = pendingFromSession(session)
-  const response = await timedStep('  restore: device-refresh POST', fetch(client.refreshEndpoint, {
-    method: 'POST', headers: { 'content-type': 'application/json', dpop: await createDpop(session.privateKey, session.publicJwk, 'POST', client.refreshEndpoint) },
-    body: JSON.stringify({ client_id: client.clientId, vp_token: { capability: [session.capability] } }),
-  }))
-  // A server that is down says nothing about the session: it stays, to be refreshed another time.
-  if (response.status >= 500) throw new Error(`did.md is unavailable (${response.status})`)
+  if (!session || session.v !== 3 || session.wallet !== selectedWallet.authorizationEndpoint || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  if (location.protocol !== 'https:' || session.clientId !== clientIdFor(redirectUri())) return undefined
   try {
-    // device-refresh (server/oauth-server.ts's oauthRefresh/oauthIssueToken)
-    // is untouched by PLAN7 -- it still returns the pre-PLAN7 token-response
-    // shape (bare vp_token, not the direct-delivery DCQL envelope), so this
-    // reads that shape directly instead of going through sessionFromVpToken.
-    if (!response.ok) throw new Error('did.md rejected the device refresh request')
-    const value = asObject(await response.json(), 'device refresh response')
-    if (typeof value.access_token !== 'string' || value.token_type !== 'DPoP' || typeof value.sub !== 'string') throw new Error('did.md returned an invalid device refresh response')
-    return await timedStep('  restore: sessionFromCapabilityValue', sessionFromCapabilityValue(value.vp_token, value.sub, pending, { registerMediator: false }))
+    return await timedStep('  restore: sessionFromCapabilityValue', sessionFromCapabilityValue(session.capability, session.did, pendingFromSession(session), { registerMediator: false }))
   } catch (error) {
-    // A stored session that no longer validates (e.g. did.md issued a
-    // capability against a stale DID generation) would otherwise fail this
-    // exact way on every future load. Drop it so the account page comes up
-    // clean and the user is prompted to reconnect, instead of re-raising the
-    // same fatal error forever.
+    // Being offline says nothing about the session: it stays, to be checked another time.
+    if (error instanceof TypeError) throw error
+    // A stored session that no longer validates would otherwise fail this exact way on every load. Drop it so the
+    // account page comes up clean and the person is asked to reconnect.
     await clearDidMdDeviceSession()
     throw error
   }
@@ -1200,7 +976,7 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
 
 export async function didMdWalletReconnectState(): Promise<{ did: string; handle: string; capabilityExpiresAt: string; expired: boolean } | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 2 || session.issuer !== selectedWallet.issuer) return undefined
+  if (!session || session.v !== 3 || session.wallet !== selectedWallet.authorizationEndpoint) return undefined
   return { did: session.did, handle: session.handle, capabilityExpiresAt: session.capabilityExpiresAt, expired: Date.parse(session.capabilityExpiresAt) <= Date.now() }
 }
 
@@ -1211,7 +987,7 @@ export async function disconnectDidMdWallet(): Promise<void> {
 /** This browser's identity as a Vault author. */
 export async function openDidMdWalletVaultDevice(): Promise<DidMdVaultDevice> {
   const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || session.v !== 2) throw new Error('Connect did.md Wallet again to use this Biset device')
+  if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Connect did.md Wallet again to use this Biset device')
   return { did: session.did, deviceId: session.vaultDeviceId }
 }
 
@@ -1221,7 +997,7 @@ export async function openDidMdWalletVaultDevice(): Promise<DidMdVaultDevice> {
 export async function openDidMdWalletBisetDidCommDevice(): Promise<DidMdBisetDidCommDevice | undefined> {
   const session = await readDidMdDeviceSession()
   const stored = session?.bisetDidCommDevice
-  if (!session || session.v !== 2 || !stored) return undefined
+  if (!session || session.v !== 3 || !stored) return undefined
   const privateMaterial = await openDidMdBisetDidCommDeviceMaterial(stored)
   const derivedPublic = x25519.getPublicKey(privateMaterial.x25519PrivateKey)
   if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Biset DIDComm private key does not match its Wallet-authorized public key')

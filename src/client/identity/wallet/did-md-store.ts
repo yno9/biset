@@ -1,30 +1,19 @@
 /**
- * Device-local state for a did.md OAuth public client.
+ * Device-local state for the sign-in with a did.md Wallet (SIOPv2).
  *
- * Access tokens are deliberately excluded.  The DPoP private key is an opaque
+ * No tokens exist. The device private key is an opaque
  * non-extractable CryptoKey held by the browser; this database never contains
  * a did.md mnemonic, Root key, Sign key, or Spare key.
  */
-export type DidMdRegistration = {
-  /** Version 2 pins every endpoint returned by current AS discovery. */
-  v: 2
-  issuer: string
-  authorizationEndpoint: string
-  tokenEndpoint: string
-  refreshEndpoint: string
-  registrationEndpoint: string
-  clientId: string
-  registrationAccessToken: string
-  redirectUri: string
-}
-
 export type DidMdPendingAuthorization = {
-  /** Version 2 uses OAuth authorization_details and a capability audience. */
-  v: 2
-  issuer: string
+  /** Version 3: SIOPv2 (an earlier OAuth-era record is not read). */
+  v: 3
+  /** The authorization endpoint of the wallet this was asked of. */
+  wallet: string
   clientId: string
   state: string
-  codeVerifier: string
+  /** The request's `nonce`: the response's presentation and id_token must carry it. */
+  nonce: string
   /** Unknown for the minimal first-shot authorize request, which sends no
    * login_hint and defers all DID resolution to the callback -- filled in
    * from the token response's `sub` once the Wallet identifies the signer. */
@@ -110,9 +99,10 @@ export type OpenDidMdBisetDidCommDeviceMaterial = {
 }
 
 export type DidMdDeviceSession = {
-  /** Version 2 uses OAuth authorization_details and a capability audience. */
-  v: 2
-  issuer: string
+  /** Version 3: SIOPv2 (an earlier OAuth-era record is not read). */
+  v: 3
+  /** The authorization endpoint of the wallet this was asked of. */
+  wallet: string
   clientId: string
   did: string
   handle: string
@@ -148,12 +138,10 @@ export type DidMdDeviceSession = {
 }
 
 const DB_NAME = 'biset-did-md-wallet'
-const DB_VERSION = 2
-const REGISTRATION_STORE = 'registration'
+const DB_VERSION = 3
 const PENDING_STORE = 'pending'
 const SESSION_STORE = 'session'
 const MATERIAL_KEY_STORE = 'material-keys'
-const REGISTRATION_ID = 'current'
 const PENDING_ID = 'current'
 const SESSION_ID = 'current'
 const MATERIAL_KEY_ID = 'biset-device-material-v1'
@@ -163,7 +151,8 @@ function database(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = () => {
       const db = request.result
-      for (const name of [REGISTRATION_STORE, PENDING_STORE, SESSION_STORE, MATERIAL_KEY_STORE]) {
+      if (db.objectStoreNames.contains('registration')) db.deleteObjectStore('registration')
+      for (const name of [PENDING_STORE, SESSION_STORE, MATERIAL_KEY_STORE]) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name)
       }
     }
@@ -288,18 +277,6 @@ async function transact<T>(storeName: string, mode: IDBTransactionMode, operatio
   } finally {
     db.close()
   }
-}
-
-export async function readDidMdRegistration(): Promise<DidMdRegistration | undefined> {
-  return transact<DidMdRegistration | undefined>(REGISTRATION_STORE, 'readonly', store => store.get(REGISTRATION_ID))
-}
-
-export async function saveDidMdRegistration(value: DidMdRegistration): Promise<void> {
-  await transact<IDBValidKey>(REGISTRATION_STORE, 'readwrite', store => store.put(value, REGISTRATION_ID))
-}
-
-export async function clearDidMdRegistration(): Promise<void> {
-  await transact<undefined>(REGISTRATION_STORE, 'readwrite', store => store.delete(REGISTRATION_ID))
 }
 
 export async function readDidMdPendingAuthorization(): Promise<DidMdPendingAuthorization | undefined> {

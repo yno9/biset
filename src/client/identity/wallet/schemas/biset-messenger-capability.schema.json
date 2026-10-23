@@ -25,7 +25,7 @@
       "prefixItems": [
         { "const": "VerifiableCredential" },
         {
-          "enum": ["biset.md/MessengerCapability", "did.md/DeviceCapability"],
+          "enum": ["biset.md/MessengerCapability"],
           "description": "\"biset.md/MessengerCapability\" is Biset's own name and the only value Biset's own requests ask for (capability_type on the /authorize request). \"did.md/DeviceCapability\" is accepted here too, for a did.md Wallet that predates the capability_type request parameter and so falls back to its own old default -- a transitional compatibility value, not a name Biset chose."
         }
       ]
@@ -42,13 +42,13 @@
       "properties": {
         "audience": {
           "type": "string",
-          "pattern": "^(client_[A-Za-z0-9_-]{32,128}|did:webvh:[A-Za-z0-9]{1,64}:[A-Za-z0-9.%-]{1,253}(:[A-Za-z0-9._~%-]{1,128}){0,8})$",
+          "pattern": "^redirect_uri:https://[^\\s]+$",
           "description": "did.md's OAuth client_id for this Biset registration: either an RFC 7591 Dynamic Client Registration id, or (PLAN6) the did:webvh DID Biset authenticated itself with via JAR when running at https://t.biset.md."
         },
         "deviceJkt": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]{43}$",
-          "description": "RFC 9449 DPoP JWK SHA-256 thumbprint of Biset's device key. Always present: Biset always requests dpop_jkt (see redirectToWallet), so a Biset capability credential is always DPoP-bound."
+          "description": "RFC 7638 JWK SHA-256 thumbprint of Biset's device key. Always present: the `device_capability` transaction data always names it."
         },
         "scope": {
           "type": "array",

@@ -14,6 +14,9 @@ export interface DataIntegrityProof {
   created?: string
   proofPurpose: string
   verificationMethod: string
+  /** Set on a proof that binds a presentation to one request: the verifier's nonce and Client Identifier. */
+  challenge?: string
+  domain?: string
   proofValue: string
 }
 
@@ -30,7 +33,7 @@ function hashConfigAndDoc(config: ProofConfig, document: object): Uint8Array {
 
 export function buildProof(
   document: object,
-  opts: { verificationMethod: string; proofPurpose?: string; created?: string; privateKey: Uint8Array },
+  opts: { verificationMethod: string; proofPurpose?: string; created?: string; challenge?: string; domain?: string; privateKey: Uint8Array },
 ): DataIntegrityProof {
   const config: ProofConfig = {
     type: 'DataIntegrityProof',
@@ -42,6 +45,8 @@ export function buildProof(
     // Object.keys() and get JCS-canonicalized as null-ish, corrupting the
     // signed bytes relative to a proof that genuinely omits `created`.
     ...(opts.created ? { created: opts.created } : {}),
+    ...(opts.challenge ? { challenge: opts.challenge } : {}),
+    ...(opts.domain ? { domain: opts.domain } : {}),
   }
   const signingInput = hashConfigAndDoc(config, document)
   const signature = ed25519.sign(signingInput, opts.privateKey)

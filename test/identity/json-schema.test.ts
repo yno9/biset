@@ -13,7 +13,7 @@ function validCapabilityCredential(overrides: { type?: string; topLevel?: Record
     type: ['VerifiableCredential', overrides.type ?? 'biset.md/MessengerCapability'],
     issuer: 'did:webvh:abc:alice.did.md',
     credentialSubject: {
-      audience: 'client_abcdefghijklmnopqrstuvwxyzABCDEF',
+      audience: 'redirect_uri:https://biset.example/wallet/callback',
       deviceJkt: 'A'.repeat(43),
       scope: ['biset:device', 'biset:vault'],
       issuedAt: '2026-09-05T00:00:00.000Z',
@@ -36,21 +36,14 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential(), 'credential')).not.toThrow()
   })
 
-  test('the legacy did.md/DeviceCapability type is still accepted (transition compatibility)', () => {
-    expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ type: 'did.md/DeviceCapability' }), 'credential')).not.toThrow()
-  })
-
   test('an unrecognized type is rejected', () => {
     expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ type: 'acme.example/SomethingElse' }), 'credential')).toThrow(/expected one of/)
   })
 
-  // PLAN6 (~/did.md/PLAN6-rp-did-authentication.md): found live -- a
-  // did:webvh-authenticated audience (JAR/client_id_scheme=did, biset's own
-  // RP DID) was rejected here even after did.md's server-side checks all
-  // passed, because this schema's audience pattern only ever allowed a DCR
-  // client_XXXX id.
-  test('a did:webvh audience (JAR/client_id_scheme=did) is accepted alongside a DCR client_id', () => {
-    expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience: 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md' } }), 'credential')).not.toThrow()
+  test('only a redirect_uri Client Identifier is an audience', () => {
+    for (const audience of ['client_abcdefghijklmnopqrstuvwxyzABCDEF', 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md', 'redirect_uri:http://biset.example/wallet/callback']) {
+      expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience } }), 'credential')).toThrow()
+    }
   })
 
   test('a missing required subject field is rejected', () => {

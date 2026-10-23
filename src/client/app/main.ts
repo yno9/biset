@@ -1172,8 +1172,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
         handle: reconnect.handle, deviceJkt: '', capabilityExpiresAt: reconnect.capabilityExpiresAt, reconnectRequired: true,
         onReconnect: async () => {
           const config = readBisetConfig()
-          const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
-          return beginDidMdWalletLogin(config.mediatorUrls, popup, config)
+          return beginDidMdWalletLogin(config.mediatorUrls, config)
         },
         onDisconnect: async () => { await disconnectWalletAndLocalData(); await bootClient() },
       },
