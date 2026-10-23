@@ -11,7 +11,9 @@
 // and its document, not the WebFinger reply, is what a message is encrypted
 // to.
 
-const TIMEOUT_MS = 5000
+// A circuit through Tor takes seconds longer than a direct connection: a page served at an onion address waits for it.
+const onionPage = (): boolean => typeof location !== 'undefined' && location.hostname.endsWith('.onion')
+const timeoutMs = (): number => onionPage() ? 30_000 : 5000
 
 /** A mail address: `local@domain`, with a dotted domain. */
 export function isMailAddress(value: string): boolean {
@@ -30,7 +32,7 @@ function didOfJrd(value: unknown): string | undefined {
 async function webFinger(host: string, address: string, fetchImpl: typeof fetch): Promise<string | undefined> {
   const url = `https://${host}/.well-known/webfinger?resource=${encodeURIComponent(`acct:${address}`)}`
   try {
-    const response = await fetchImpl(url, { headers: { accept: 'application/jrd+json, application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    const response = await fetchImpl(url, { headers: { accept: 'application/jrd+json, application/json' }, signal: AbortSignal.timeout(timeoutMs()) })
     if (!response.ok) return undefined
     return didOfJrd(await response.json())
   } catch {
