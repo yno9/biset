@@ -155,7 +155,7 @@ function OnionBar() {
   return (
     <div id="cmd-acc-onion">
       <OnionIcon size={16} />
-      <button type="button" onClick={() => { navigator.clipboard?.writeText(onion).then(() => getAccountConfig()?.showMessage?.('Onion URL copied')).catch(() => {}) }}>Copy Onion URL</button>
+      <button type="button" onClick={() => { navigator.clipboard?.writeText(onion).then(() => getAccountConfig()?.showMessage?.('Onion URL copied')).catch(() => {}) }}>Onion URL</button>
     </div>
   )
 }
