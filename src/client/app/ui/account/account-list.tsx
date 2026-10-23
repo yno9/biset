@@ -161,20 +161,20 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
             {status ? <span style={{ fontSize: 12, flexShrink: 1, minWidth: 0, color: didComm.error ? '#ff3b30' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span> : null}
           </div>
         </div>
-        {/* Edit the server, enable Tor: an icon each, on the right (each opens a card). Logged out, the one thing to do is log in. */}
+        {/* Enable Tor, then edit the server (the pencil of the alias change): an icon each, on the right, each opening a card. Logged out, the one thing to do is log in. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
           {loggedOut ? (
             wallet.onEnableMessaging ? <button type="button" className="acc-text-btn" onClick={() => { void wallet.onEnableMessaging?.().catch(report) }}>Log in</button> : null
           ) : (
             <>
-              {wallet.onEditMediator ? (
-                <button type="button" className="acc-icon-btn" aria-label="Edit server" data-tip="Edit server" onClick={editServer}>
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></svg>
-                </button>
-              ) : null}
               {wallet.onEnableTor ? (
                 <button type="button" className="acc-icon-btn" aria-label="Enable Tor" data-tip="Enable Tor" onClick={enableTor}>
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2.5c0 2-1 3.2-2.2 4.4C6.2 8.6 4 11.6 4 15a8 7.5 0 0 0 16 0c0-3.4-2.2-6.4-5.8-8.1C13 5.7 12 4.5 12 2.5Z" /><path d="M12 7c-2 2-3 5-3 8s1 5 3 6c2-1 3-3 3-6s-1-6-3-8Z" /></svg>
+                </button>
+              ) : null}
+              {wallet.onEditMediator ? (
+                <button type="button" className="acc-icon-btn" aria-label="Edit server" data-tip="Edit server" onClick={editServer}>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
                 </button>
               ) : null}
             </>
