@@ -127,7 +127,7 @@ test('config tab: the vault toggle reflects and flips the markdown vault', async
 test('account: the identity card shows the DID, then the name the DID document gives (on the alias line, as there is no display name)', async () => {
   accountConfig.set(account())
   const { container } = render(<AccountPage />)
-  expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe(DID)
+  expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe(DID.split(':')[2]) // the SCID alone (a click copies the whole DID)
   // no picture: a generated avatar (boringavatars.com) drawn from the name, not an initial
   expect(container.querySelector('#cmd-acc-identity-avatar .avatar-generated svg')).not.toBeNull()
   await waitFor(() => expect(container.querySelector('#cmd-acc-identity-alias-row .acc-identity-alias')!.textContent).toBe('Alice'))

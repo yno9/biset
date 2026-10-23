@@ -50,7 +50,7 @@ export function ellipsizeScid(scid: string, chars: number): string {
   return chars >= scid.length ? scid : `${scid.slice(0, Math.max(1, chars - 1))}…`
 }
 
-/** `did:webvh:` + SCID + `:alias.did.md` on one line: when the card is narrow the SCID gives way (ellipsis), the alias never does. CSS
+/** The SCID on one line: when the card is narrow it gives way (ellipsis). CSS
  * cannot cut a line at a whole character (the rest of a cell shows as a gap before the ellipsis's neighbour), so the width the SCID may
  * have is measured, in characters, from the room the card leaves. */
 function DidText({ did }: { did: string }) {
@@ -68,7 +68,7 @@ function DidText({ did }: { did: string }) {
       context.font = getComputedStyle(element).font
       const cell = context.measureText('0').width
       const around = row.getBoundingClientRect().width - text.getBoundingClientRect().width // the icon, the gap, the padding
-      // `did:webvh:` and `:alias.did.md`, by their own widths (`text` itself may be narrower than what is in it)
+      // anything else on the line beside the SCID, by its own width (`text` itself may be narrower than what is in it)
       const fixed = (element.previousElementSibling?.getBoundingClientRect().width ?? 0) + (element.nextElementSibling?.getBoundingClientRect().width ?? 0)
       setChars(cell ? Math.floor((column.clientWidth - around - fixed - 1) / cell) : Infinity)
     }
@@ -77,14 +77,9 @@ function DidText({ did }: { did: string }) {
     observer.observe(column)
     return () => observer.disconnect()
   }, [did])
-  if (parts.length < 4) return <span className="acc-did-scid" ref={scid}>{did}</span>
-  return (
-    <>
-      <span className="acc-did-fixed">{parts.slice(0, 2).join(':')}:</span>
-      <span className="acc-did-scid" ref={scid}>{ellipsizeScid(parts[2]!, chars)}</span>
-      <span className="acc-did-fixed">:{parts.slice(3).join(':')}</span>
-    </>
-  )
+  // Only the SCID is shown (what the DID's `did:webvh:` and `:alias.did.md` leave out is in the tooltip, and is what a click copies);
+  // a DID that is not a did:webvh is shown as it is.
+  return <span className="acc-did-scid" ref={scid}>{parts.length < 4 ? did : ellipsizeScid(parts[2]!, chars)}</span>
 }
 
 function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; showMessage: (text: string) => void; onReconnect?: () => void }) {

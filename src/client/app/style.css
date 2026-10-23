@@ -2089,8 +2089,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   min-width: 0;
   white-space: nowrap;
 }
-/* One line: the SCID is cut to whole characters by DidText (account-list.tsx), the rest keeps its width. */
-.acc-did-fixed, .acc-did-scid { flex: none; }
+/* One line: the SCID, cut to whole characters by DidText (account-list.tsx). */
+.acc-did-scid { flex: none; }
 .acc-pgp-row {
   display: flex;
   align-items: center;

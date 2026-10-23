@@ -63,7 +63,7 @@ test('the Identity host card names where the wallet is, with or without a mediat
   set({ ...next, wallet: { ...next.wallet! } })
   const text = container.querySelector('#cmd-acc-identity-host-card')!.textContent!
   expect(text.startsWith('Identity host:alice.did.md')).toBe(true) // the host on the first line,
-  expect(container.querySelector('#cmd-acc-identity-host-card #cmd-acc-identity-did')!.textContent).toBe(REAL_DID) // the DID on the second
+  expect(container.querySelector('#cmd-acc-identity-host-card #cmd-acc-identity-did')!.textContent).toBe(REAL_DID.split(':')[2]) // the SCID alone on the second
   const { didComm: _, ...withoutMediator } = next.wallet!
   set({ ...next, wallet: { ...withoutMediator } })
   expect(container.querySelector('#cmd-acc-identity-host-card')).not.toBeNull()
