@@ -232,7 +232,10 @@ function defaultLog(level: 'info' | 'error', message: string, fields: Record<str
 
 function corsHeaders(origin: string): Headers {
   return new Headers({
-    'access-control-allow-origin': origin,
+    // A page that cannot name its origin sends `null` (a file:// build, or a Tor Browser page at an onion address, whose
+    // Origin it hides) and the browser then checks the response against its real origin, so only `*` is accepted. Nothing
+    // here depends on credentials: a request is authenticated by the DIDComm message itself.
+    'access-control-allow-origin': origin === 'null' ? '*' : origin,
     'access-control-allow-methods': 'GET, POST, OPTIONS',
     'access-control-allow-headers': 'Content-Type',
     'access-control-max-age': '600',
