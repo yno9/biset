@@ -88,10 +88,10 @@ function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; show
               style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a> : null}
           </div>
           {/* Clicking the DID text copies it. */}
-          <div id="cmd-acc-identity-did-row" style={{ marginLeft: 16 }}
+          <div id="cmd-acc-identity-did-row"
             onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => showMessage('DID copied')).catch(() => {}) }}>
-            <span id="cmd-acc-identity-did" data-tip={did}><DidText did={did} /></span>
             <svg id="cmd-acc-identity-copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+            <span id="cmd-acc-identity-did" data-tip={did}><DidText did={did} /></span>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, minHeight: LINE }}>
