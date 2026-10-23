@@ -6,7 +6,7 @@
 // mediator's HTTP surface is faked as a fetch that dispatches straight into
 // the in-process handler, so this is a real protocol round trip with no
 // network.
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { fetchMediatorInfo, requestMediation, updateRecipient, queryRecipients } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { discoverMaxReceiveBytes } from '../src/protocol/didcomm/discover-features.ts'
@@ -413,12 +413,21 @@ describe('device limit', () => {
 })
 
 describe('which undeliverable copies are permanent', () => {
-  test('a sender key its DID does not list is permanent; a sender that cannot be resolved right now is not', async () => {
+  test('a sender key its DID does not list is permanent after a few minutes; a sender that cannot be resolved right now is not', async () => {
     const alice = generatePeerIdentity()
     const bob = generatePeerIdentity()
     const jwe = packAuthcrypt(utf8(JSON.stringify(buildPlaintext('https://didcomm.org/basicmessage/2.0/message', { content: 'x' }, alice.did, bob.did))), { kid: alice.xKid, privateKey: alice.xPriv }, [{ kid: bob.xKid, publicKey: bob.xPub }])
     const own = { did: bob.did, xKid: bob.xKid, xPriv: bob.xPriv }
-    await expect(unpackQueuedMessage(jwe, 'q1', own, async kid => { throw new SenderKeyNotPublishedError(kid) })).rejects.toBeInstanceOf(PermanentDeliveryError)
+    // A key not listed yet may be one the sender published a moment ago: the message stays queued for a few minutes, then is dropped.
+    const unlisted = async (kid: string): Promise<Uint8Array> => { throw new SenderKeyNotPublishedError(kid) }
+    vi.useFakeTimers()
+    try {
+      expect(await unpackQueuedMessage(jwe, 'q1', own, unlisted)).toBeUndefined()
+      vi.advanceTimersByTime(4 * 60_000)
+      expect(await unpackQueuedMessage(jwe, 'q1', own, unlisted)).toBeUndefined()
+      vi.advanceTimersByTime(2 * 60_000)
+      await expect(unpackQueuedMessage(jwe, 'q1', own, unlisted)).rejects.toBeInstanceOf(PermanentDeliveryError)
+    } finally { vi.useRealTimers() }
     expect(await unpackQueuedMessage(jwe, 'q2', own, async () => { throw new Error('fetch failed') })).toBeUndefined()
     expect((await unpackQueuedMessage(jwe, 'q3', own, async () => alice.xPub))?.senderKid).toBe(alice.xKid)
   })

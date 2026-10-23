@@ -81,6 +81,12 @@ export function queuedMessageOf(attachment: { data?: { base64?: unknown; json?: 
  * resolve); throws PermanentDeliveryError when it never can be: malformed,
  * not for this key, or from a kid its DID does not list
  * (SenderKeyNotPublishedError -- a removed device). */
+// A queued message from a key its sender's DID does not list yet: the sender may have published that key a moment ago (a device
+// just added or replaced) and a copy of the document read since may still be the old one. It stays queued, and is tried again, for
+// this long after it was first seen; after that the key is taken as not being one (a removed device's).
+const KEY_PUBLICATION_GRACE_MS = 5 * 60_000
+const firstSeenUnlisted = new Map<string, number>()
+
 export async function unpackQueuedMessage(
   packedJwe: unknown, ackId: string, own: DidCommSender, resolveSenderKey: ResolveSenderKey,
   resolveSigningKey: SigningKeyResolver = signingKeyResolver(defaultFetch()),
@@ -129,6 +135,15 @@ export async function unpackQueuedMessage(
       if (resolverFailure !== undefined && !(resolverFailure instanceof SenderKeyNotPublishedError)) {
         console.warn(`[didcomm] could not resolve the sender of ${ackId} yet; it stays queued:`, resolverFailure instanceof Error ? resolverFailure.message : resolverFailure)
         return undefined
+      }
+      if (error instanceof SenderKeyNotPublishedError || resolverFailure instanceof SenderKeyNotPublishedError) {
+        const first = firstSeenUnlisted.get(ackId) ?? Date.now()
+        firstSeenUnlisted.set(ackId, first)
+        if (Date.now() - first < KEY_PUBLICATION_GRACE_MS) {
+          console.warn(`[didcomm] the sender's key of ${ackId} is not published yet; it stays queued for a while:`, error instanceof Error ? error.message : error)
+          return undefined
+        }
+        firstSeenUnlisted.delete(ackId)
       }
       throw new PermanentDeliveryError(`queued message ${ackId} can never be opened: ${error instanceof Error ? error.message : String(error)}`)
     }
