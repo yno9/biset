@@ -816,7 +816,7 @@ select {
 /* Account/config pages: same edge-to-edge treatment as compose (no centered
      max-width column, no card side padding). */
 .cmd-thread-card:has(.wide-page) {
-  padding: 0 0 40px;
+  padding: 0 0 20px;
 }
 .cmd-thread-card .cmd-page-content.wide-page,
 .cmd-page-content.wide-page {
