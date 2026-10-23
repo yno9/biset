@@ -1,7 +1,8 @@
 // What the rest of the app calls to drive the mail UI: show it, and refresh what it lists.
 import type { LocalJmapEmail, LocalJmapReadModel, LocalJmapSnapshot } from '../../store/projection/gateway.ts'
 import { contactAvatar, contactDisplayName, publicDidOf } from '../../store/projection/contacts.ts'
-import { setContactAvatars, setContactNames } from './did-display.ts'
+import { setContactAvatars, setContactDids, setContactNames } from './did-display.ts'
+import { identityKey } from '../../../protocol/webvh/identifier.ts'
 import type { OpenedMail } from '../../pgp/open.ts'
 import { armorOfStoredBody } from '../../pgp/stored.ts'
 import { emailToMessageView } from './message/message-view.ts'
@@ -47,15 +48,18 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
     const snapshot = await readModel.snapshot()
     // The contact list's names, for everything below that names a person.
     const names = new Map<string, string>()
+    const dids = new Map<string, string>()
     for (const card of snapshot.contactCards) {
       const did = publicDidOf(card), name = contactDisplayName(card)
-      if (did && name) names.set(did, name)
+      if (did) dids.set(identityKey(did), did)
+      if (did && name) { names.set(did, name); names.set(identityKey(did), name) }
     }
     setContactNames(names)
+    setContactDids(dids)
     const avatars = new Map<string, string>()
     for (const card of snapshot.contactCards) {
       const did = publicDidOf(card), picture = contactAvatar(card)
-      if (did && picture) avatars.set(did, picture)
+      if (did && picture) { avatars.set(did, picture); avatars.set(identityKey(did), picture) }
     }
     setContactAvatars(avatars)
     const views: ProcessedMessage[] = []

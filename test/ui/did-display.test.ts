@@ -10,3 +10,37 @@ test('a did:webvh of this system is its address, anything else stays as it is', 
   expect(labelForDid('did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:alice.did.md')).toBe('alice@did.md')
   expect(labelForDid('bob@x.test')).toBe('bob@x.test')
 })
+
+// What a screen shows for an identity key (`did:webvh:<SCID>`, no host): the name, else the address, never the key.
+import { setContactDids, setContactNames, displayName, avatarOf, setContactAvatars } from '../../src/client/app/ui/did-display.ts'
+import { accountConfig } from '../../src/client/app/ui/account/state.ts'
+import { identityKey } from '../../src/protocol/webvh/identifier.ts'
+
+const SCID = 'QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi'
+const ALICE = `did:webvh:${SCID}:alice.did.md`
+
+test('an identity key shows the contact\'s name, else the address the contact\'s DID stands for', () => {
+  const key = identityKey(ALICE)
+  setContactNames(new Map())
+  setContactDids(new Map([[key, ALICE]]))
+  expect(displayName(key)).toBe('alice@did.md')
+  setContactNames(new Map([[key, 'Alice']]))
+  expect(displayName(key)).toBe('Alice')
+  expect(displayName(ALICE)).toBe('Alice') // the same person under her full DID: the name is found by key too
+  setContactNames(new Map())
+  setContactDids(new Map())
+})
+
+test('this identity\'s own key shows the address of its own DID, even with no contact card', () => {
+  accountConfig.set({ did: ALICE } as never)
+  expect(displayName(identityKey(ALICE))).toBe('alice@did.md')
+  accountConfig.set(undefined)
+})
+
+test('a mail bridge DID shows its mail address, and a picture is found by key', () => {
+  expect(displayName('did:web:did.md:gmail.com:n')).toBe('n@gmail.com')
+  setContactAvatars(new Map([[identityKey(ALICE), 'data:image/png;base64,AA']]))
+  expect(avatarOf(ALICE)).toBe('data:image/png;base64,AA')
+  expect(avatarOf(identityKey(ALICE))).toBe('data:image/png;base64,AA')
+  setContactAvatars(new Map())
+})
