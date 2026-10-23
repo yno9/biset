@@ -11,7 +11,6 @@
 // handle a foreign did:webvh's own path convention).
 import { identityKey, parseWebvhDid, sameIdentity, scidOf } from '../../../protocol/webvh/identifier.ts'
 import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
-import { defaultDisplayName } from './account/default-name.ts'
 
 /** Elided display form -- `did:webvh:t.biset.md` for a did:webvh, the raw
  * string unchanged for anything else (a bare email, or a DID method this
@@ -76,12 +75,6 @@ const isIdentityKey = (did: string): boolean => scidOf(did) !== undefined && did
 let ownDid: string | undefined
 export function setOwnDid(did: string | undefined): void { ownDid = did }
 
-/** This identity's own display name where it has not set one (default-name.ts): worked out from its SCID, so it is always a name. */
-export function ownDefaultName(): string | undefined {
-  const scid = ownDid && scidOf(ownDid)
-  return scid ? defaultDisplayName(scid) : undefined
-}
-
 /** The full DID an identity key stands for, as far as it is known: a contact's, or this identity's own. */
 function didOfKey(key: string): string | undefined {
   return (ownDid && sameIdentity(ownDid, key) ? ownDid : undefined) ?? contactDids.get(key)
@@ -90,7 +83,6 @@ function didOfKey(key: string): string | undefined {
 export function displayName(did: string): string {
   const named = contactNames.get(did) ?? contactNames.get(identityKey(did))
   if (named) return named
-  if (ownDid && sameIdentity(ownDid, did)) return ownDefaultName() ?? labelForDid(ownDid)
   return labelForDid(isIdentityKey(did) ? didOfKey(did) ?? did : did)
 }
 

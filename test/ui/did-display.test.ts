@@ -36,15 +36,15 @@ test('a card that names its person by the key itself (this identity\'s own card)
   setOwnDid(ALICE)
   setContactNames(new Map())
   setContactDids(new Map([[key, key]])) // the own card's public DID is the key: no host, no help
-  expect(displayName(key)).toBe(defaultDisplayName(SCID))
+  expect(displayName(key)).toBe('alice@did.md')
   setOwnDid(undefined)
   expect(displayName(key)).toBe(key)
   setContactDids(new Map())
 })
 
-test('this identity\'s own key shows its default name even with no contact card', () => {
+test('this identity\'s own key shows the address of its own DID, even with no contact card', () => {
   setOwnDid(ALICE)
-  expect(displayName(identityKey(ALICE))).toBe(defaultDisplayName(SCID))
+  expect(displayName(identityKey(ALICE))).toBe('alice@did.md')
   setOwnDid(undefined)
   expect(displayName(identityKey(ALICE))).toBe(identityKey(ALICE)) // nobody knows it: the raw string, as before
 })
@@ -57,27 +57,19 @@ test('a mail bridge DID shows its mail address, and a picture is found by key', 
   setContactAvatars(new Map())
 })
 
-import { defaultDisplayName } from '../../src/client/app/ui/account/default-name.ts'
-import { ownDefaultName } from '../../src/client/app/ui/did-display.ts'
+import { randomDisplayName } from '../../src/client/app/ui/account/default-name.ts'
 
-test('a default display name is two English words, the same for the same SCID, and differs across SCIDs', () => {
-  const name = defaultDisplayName(SCID)
-  expect(name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/)
-  expect(defaultDisplayName(SCID)).toBe(name)
-  const names = new Set(Array.from({ length: 200 }, (_, index) => defaultDisplayName(`Qm${index}x`)))
-  expect(names.size).toBeGreaterThan(150)
+test('a random display name is two capitalised English words, and it varies', () => {
+  const names = Array.from({ length: 300 }, () => randomDisplayName())
+  for (const name of names) expect(name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/)
+  expect(new Set(names).size).toBeGreaterThan(200)
 })
 
-test('this identity without a chosen name is shown by its default name, wherever its key or DID is shown', () => {
+test('this identity\'s own card name is what its key and its DID show', () => {
   setOwnDid(ALICE)
-  setContactNames(new Map())
-  setContactDids(new Map())
-  const name = defaultDisplayName(SCID)
-  expect(ownDefaultName()).toBe(name)
-  expect(displayName(identityKey(ALICE))).toBe(name)
-  expect(displayName(ALICE)).toBe(name)
-  setContactNames(new Map([[identityKey(ALICE), 'Alice']]))
-  expect(displayName(ALICE)).toBe('Alice') // a name the identity chose wins
+  setContactNames(new Map([[identityKey(ALICE), 'Quiet Heron']]))
+  expect(displayName(identityKey(ALICE))).toBe('Quiet Heron')
+  expect(displayName(ALICE)).toBe('Quiet Heron')
   setContactNames(new Map())
   setOwnDid(undefined)
 })
