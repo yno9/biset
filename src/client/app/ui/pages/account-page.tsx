@@ -10,6 +10,7 @@ import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
 import { ConfigPanel } from './config-page.tsx'
 import { randomDisplayName } from '../account/default-name.ts'
+import { useOwnProfile } from '../account/use-own-profile.ts'
 import { requestDisplayName } from '../account/display-name-dialog.tsx'
 import { DeltaChatIcon } from '../account/deltachat-icon.tsx'
 import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
@@ -80,7 +81,6 @@ function IdentityCard({ did }: { did: string }) {
   const label = parseWebvhDid(did).domain
   const accountState = useStore(accountConfig)
   const [name, setName] = useState(label)
-  const [own, setOwn] = useState<{ name?: string; avatar?: string }>({})
 
   // The card is a view of the signed did:webvh document: a self-asserted name overrides the bare
   // domain label once it resolves, in the background so the card shows something at once.
@@ -92,14 +92,7 @@ function IdentityCard({ did }: { did: string }) {
 
   // The identity's own name and picture, from its card; looked at again when they change.
   const profile = accountState?.profile
-  useEffect(() => {
-    if (!profile) return
-    let current = true
-    const load = () => { void profile.current().then(found => { if (current) setOwn(found) }).catch(() => {}) }
-    load()
-    window.addEventListener(PROFILE_CHANGED, load)
-    return () => { current = false; window.removeEventListener(PROFILE_CHANGED, load) }
-  }, [profile])
+  const own = useOwnProfile(profile)
 
   return (
     <div className="cmd-page-section" id="cmd-acc-identity-section">

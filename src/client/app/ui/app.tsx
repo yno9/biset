@@ -10,6 +10,7 @@ import { ApproveDialog } from './approve-dialog.tsx'
 import { DisplayNameDialog } from './account/display-name-dialog.tsx'
 import { AvatarCropDialog } from './account/avatar-crop.tsx'
 import { HamburgerMenu } from './hamburger-menu.tsx'
+import { Favicon } from './favicon.tsx'
 import { LeftPane } from './left-pane.tsx'
 import { RightCol } from './right-col.tsx'
 import { ScrollButtons } from './scroll-buttons.tsx'
@@ -26,6 +27,7 @@ function App() {
   return (
     <>
       <SysMsg />
+      <Favicon />
       <HamburgerMenu />
       <DropdownMenu />
       <Tooltip />
