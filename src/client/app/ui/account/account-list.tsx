@@ -25,7 +25,7 @@ export function AccountList() {
   const showMessage = (text: string) => config.showMessage?.(text)
   return (
     <>
-      {wallet.host && config.did ? <IdentityHostCard did={config.did} host={wallet.host} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
+      {config.did ? <IdentityHostCard did={config.did} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
       {wallet.didComm ? <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} /> : null}
       {config.rotationKey ? <DidCommKeyNotice rotationKey={config.rotationKey} showMessage={showMessage} /> : null}
     </>
@@ -44,7 +44,7 @@ type Resolution = 'checking' | 'ok' | 'error'
  * load, looks anew. */
 const resolutions = new Map<string, Resolution>()
 
-function IdentityHostCard({ did, host, onReconnect }: { did: string; host: string; onReconnect?: () => void }) {
+function IdentityHostCard({ did, onReconnect }: { did: string; onReconnect?: () => void }) {
   const [resolved, setResolved] = useState<Resolution>(() => resolutions.get(did) ?? 'checking')
   useEffect(() => {
     const known = resolutions.get(did)
@@ -56,6 +56,8 @@ function IdentityHostCard({ did, host, onReconnect }: { did: string; host: strin
     return () => { current = false }
   }, [did])
   const logUrl = (() => { try { return didToHttpsUrl(did) } catch { return undefined } })()
+  // The host that has the DID's log (`did.jsonl`): the one the DID names.
+  const host = (() => { try { return logUrl ? new URL(logUrl).host : undefined } catch { return undefined } })()
   const dotColor = resolved === 'ok' ? '#34c759' : resolved === 'error' ? '#ff3b30' : '#ff9f0a'
   return (
     <div className="acc-card-wrap" id="cmd-acc-identity-host-card">
@@ -65,8 +67,8 @@ function IdentityHostCard({ did, host, onReconnect }: { did: string; host: strin
             style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
           <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
           <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
-          <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
-            style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a>
+          {host ? <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
+            style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a> : null}
         </div>
         {onReconnect ? <button type="button" onClick={onReconnect}
           style={{ flexShrink: 0, padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Reconnect</button> : null}

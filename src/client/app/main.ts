@@ -38,7 +38,6 @@ import { savedPage } from './ui/state.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover, requestAliasChange } from './ui/approve-dialog.tsx'
 import { ditoEmbedOrigin } from '../identity/wallet/dito-embed.ts'
-import { walletHost } from '../identity/wallet/wallet-directory.ts'
 import { mountApp } from './ui/app.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
@@ -297,7 +296,6 @@ async function configureWalletAccountIfPresent(
       ...(importMessages ? { onImportMessages: importMessages } : {}),
       wallet: {
         handle: active.handle,
-        host: walletHost(currentWallet()),
         deviceJkt: active.deviceJkt,
         capabilityExpiresAt: active.capabilityExpiresAt,
         deviceKid: active.deviceKid,
@@ -1171,7 +1169,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
     configureAccountPage({
       did: reconnect.did,
       wallet: {
-        handle: reconnect.handle, host: walletHost(currentWallet()), deviceJkt: '', capabilityExpiresAt: reconnect.capabilityExpiresAt, reconnectRequired: true,
+        handle: reconnect.handle, deviceJkt: '', capabilityExpiresAt: reconnect.capabilityExpiresAt, reconnectRequired: true,
         onReconnect: async () => {
           const config = readBisetConfig()
           const popup = location.protocol === 'file:' ? window.open('', 'did-md-wallet') ?? undefined : undefined
