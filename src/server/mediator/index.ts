@@ -28,6 +28,7 @@ const deployment = await createMediatorDeployment({
   live,
   admin: store => createMediatorAdminApi({ store }),
   publicUrl,
+  ...(process.env.MEDIATOR_ONION_URL ? { onionUrl: process.env.MEDIATOR_ONION_URL } : {}),
   databasePath,
   // 8790 is the legacy biset-core port in the current deployment.
   port: envInteger('PORT', 8791, 1, 65_535),

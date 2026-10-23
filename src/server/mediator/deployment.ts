@@ -12,6 +12,8 @@ import { peerMediatorIdentity, webMediatorIdentity } from './identity.ts'
 
 export interface MediatorDeploymentOptions {
   publicUrl: string
+  /** The mediator's Tor entrance (an http .onion URL), published beside `publicUrl` in its DID document. */
+  onionUrl?: string
   databasePath: string
   port: number
   hostname?: string
@@ -69,7 +71,7 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
   // A did:web is https by definition: a mediator on any other URL (a local
   // test, a Tor entrance only) is just its did:peer.
   const peerIdentity = store.loadIdentity(options.publicUrl)
-  const mediator = new URL(options.publicUrl).protocol === 'https:' ? webMediatorIdentity(peerIdentity, options.publicUrl) : peerMediatorIdentity(peerIdentity)
+  const mediator = new URL(options.publicUrl).protocol === 'https:' ? webMediatorIdentity(peerIdentity, options.publicUrl, options.onionUrl) : peerMediatorIdentity(peerIdentity)
 
   let shuttingDown = false
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes

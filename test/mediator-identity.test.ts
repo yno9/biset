@@ -6,6 +6,7 @@ import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { resolveDidWeb } from '../src/protocol/didcomm/did-web.ts'
 import { keyAgreementRecipients } from '../src/protocol/didcomm/webvh-route.ts'
 import { expandEndpoint } from '../src/protocol/didcomm/mediator-endpoint.ts'
+import { selectDidCommEndpoint } from '../src/protocol/didcomm/service-endpoint.ts'
 import { fetchMediatorInfo } from '../src/protocol/didcomm/mediator-transport.ts'
 import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../src/protocol/didcomm/message.ts'
@@ -101,5 +102,32 @@ describe('both names of the mediator\'s key are accepted', () => {
     const bare = peerMediatorIdentity(peerIdentity)
     expect(bare.did).toBe(peerIdentity.did)
     expect(bare.aliasKids).toEqual([])
+  })
+})
+
+describe('the mediator\'s Tor entrance', () => {
+  const ONION = `http://${'a'.repeat(56)}.onion`
+  const identity = (onion?: string) => {
+    const store = SqliteMediatorStore.open(':memory:')
+    return webMediatorIdentity(store.loadIdentity('https://mediator.test.example'), 'https://mediator.test.example', onion)
+  }
+
+  test('is published beside the clearnet URL, clearnet first, when one is configured', () => {
+    const endpoint = identity(ONION).doc.service[0]!.serviceEndpoint
+    expect(endpoint).toEqual([{ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] }, { uri: ONION, accept: ['didcomm/v2'] }])
+  })
+
+  test('without one the document is what it always was', () => {
+    expect(identity().doc.service[0]!.serviceEndpoint).toEqual({ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] })
+  })
+
+  test('only an http .onion URL is accepted', () => {
+    expect(() => identity('https://evil.example')).toThrow('.onion')
+  })
+
+  test('a sender on Tor dials the onion entry, any other the clearnet one', () => {
+    const endpoint = identity(ONION).doc.service[0]!.serviceEndpoint
+    expect(selectDidCommEndpoint(endpoint)?.uri).toBe('https://mediator.test.example')
+    expect(selectDidCommEndpoint(endpoint, true)?.uri).toBe(ONION)
   })
 })

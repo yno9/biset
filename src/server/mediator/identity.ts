@@ -46,8 +46,11 @@ export function peerMediatorIdentity(peer: PeerIdentity): MediatorIdentity {
 }
 
 /** The same keys, named by the did:web of `publicUrl`; `peer` is their did:peer. */
-export function webMediatorIdentity(peer: PeerIdentity, publicUrl: string): MediatorIdentity {
+export function webMediatorIdentity(peer: PeerIdentity, publicUrl: string, onionUrl?: string): MediatorIdentity {
   const did = didWebForUrl(publicUrl)
+  const clearnet = new URL(publicUrl).origin + new URL(publicUrl).pathname.replace(/\/$/, '')
+  const onion = onionUrl && onionUrl.replace(/\/$/, '')
+  if (onion && !/^http:\/\/[a-z2-7]{56}\.onion(\/[^\s]*)?$/.test(onion)) throw new TypeError('MEDIATOR_ONION_URL must be an http .onion URL')
   const xKid = `${did}#key-1`
   const edKid = `${did}#key-2`
   const doc = {
@@ -61,7 +64,9 @@ export function webMediatorIdentity(peer: PeerIdentity, publicUrl: string): Medi
     keyAgreement: ['#key-1'],
     authentication: ['#key-2'],
     assertionMethod: ['#key-2'],
-    service: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: { uri: new URL(publicUrl).origin + new URL(publicUrl).pathname.replace(/\/$/, ''), accept: ['didcomm/v2'] } }],
+    // Its Tor entrance, when it has one, beside the clearnet URL (PLAN-tor.md D-4): a sender dials the clearnet entry, or the onion
+    // one when it is itself on Tor. Never onion alone.
+    service: [{ id: '#didcomm', type: 'DIDCommMessaging', serviceEndpoint: onionUrl ? [{ uri: clearnet, accept: ['didcomm/v2'] }, { uri: onion!, accept: ['didcomm/v2'] }] : { uri: clearnet, accept: ['didcomm/v2'] } }],
   }
   return { did, xKid, edKid, xPub: peer.xPub, edPub: peer.edPub, xPriv: peer.xPriv, edPriv: peer.edPriv, doc, aliasKids: [peer.xKid], peerKid: peer.xKid }
 }
