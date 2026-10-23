@@ -17,7 +17,8 @@
     "knip": "knip",
     "check": "pnpm typecheck && pnpm knip && pnpm reachability --quiet && pnpm test",
     "reachability": "node scripts/reachability.mjs",
-    "build:app": "vite build",
+    "sync:embed-card": "[ -f ../dito/public/embed-card.css ] && cp ../dito/public/embed-card.css src/client/app/embed-card.css || true",
+    "build:app": "pnpm sync:embed-card && vite build",
     "build:sw": "esbuild src/client/app/sw.ts --bundle --outfile=dist/sw.js --platform=browser --format=iife --target=es2022 --minify-syntax --minify-whitespace"
   },
   "devDependencies": {

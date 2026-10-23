@@ -1,0 +1,33 @@
+/* The look of a card over a page: dito's own screens in the frame over biset (approve, change alias) and
+   biset's own cards (display name) are drawn from this one file. dito keeps it; biset copies it at build
+   time (biset: pnpm sync:embed-card), so the two cannot drift apart. Change a value here, not in either
+   place's own CSS.
+
+   The values are custom properties on :root, for the rules that are already written (#embed-approve in
+   styles.css) to use; the .ec-* classes are the same look, for a card that has no rules of its own. */
+:root {
+  --ec-box-radius: 12px;
+  --ec-pad: 20px;
+  --ec-gap: 10px;
+  --ec-title-size: 18px;
+  --ec-label-size: 13px;
+  --ec-hint-size: 12px;
+  --ec-radius: 8px;
+  --ec-input-bg: color-mix(in srgb, CanvasText 6%, transparent);
+  --ec-input-pad: 12px 16px;
+  --ec-button-bg: CanvasText;
+  --ec-button-fg: Canvas;
+  --ec-button-pad: 12px 18px;
+  --ec-button-radius: 999px;
+  --ec-error: #d33;
+}
+/* The box (a <dialog>) that holds a card. */
+.ec-dialog { margin: auto; padding: 0; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: var(--ec-box-radius); width: min(420px, 92vw); background: Canvas; color: CanvasText; overflow: hidden; }
+.ec-card { display: flex; flex-direction: column; gap: var(--ec-gap); padding: var(--ec-pad); font: 15px/1.5 system-ui, sans-serif; color: inherit; }
+.ec-title { margin: 0; font-size: var(--ec-title-size); font-weight: 600; }
+.ec-label { font-size: var(--ec-label-size); opacity: 0.7; }
+.ec-input { padding: var(--ec-input-pad); border: 0; border-radius: var(--ec-radius); background: var(--ec-input-bg); color: inherit; font: inherit; outline: none; }
+.ec-hint { font-size: var(--ec-hint-size); opacity: 0.6; }
+.ec-error { min-height: 1.5em; color: var(--ec-error); font-size: var(--ec-label-size); }
+.ec-button { margin-top: 6px; padding: var(--ec-button-pad); border: 0; border-radius: var(--ec-button-radius); background: var(--ec-button-bg); color: var(--ec-button-fg); font: inherit; cursor: pointer; }
+.ec-button:disabled { opacity: 0.5; }

@@ -1,6 +1,7 @@
 // The whole mail UI: the left pane and right column inside #app (shown once there is an identity),
 // the menu and the scroll buttons beside it, the system toast.
 import { useEffect } from 'react'
+import '../embed-card.css'
 import { useStore } from '../react/store.ts'
 import { mountIsland } from '../react/island.tsx'
 import { DropdownMenu } from './account/menu.tsx'

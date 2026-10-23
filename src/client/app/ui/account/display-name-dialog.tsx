@@ -1,5 +1,5 @@
-// Asks for the display name in a card over the page, drawn like the alias change's (approve-dialog.tsx): the same box, a click
-// outside it or Esc closes it. Resolves with the text typed (empty: the caller makes a new random name), or `null` when closed.
+// Asks for the display name in a card over the page, drawn like the alias change's (approve-dialog.tsx), both from embed-card.css
+// (copied from dito at build time): the same box, a click outside it or Esc closes it. Resolves with the text typed (empty: the caller makes a new random name), or `null` when closed.
 import { useEffect, useRef } from 'react'
 import { createStore, useStore } from '../../react/store.ts'
 
@@ -46,13 +46,12 @@ export function DisplayNameDialog() {
   }, [open])
 
   return (
-    <dialog ref={dialog} id="display-name-dialog" style={{ margin: 'auto', padding: 0, border: '1px solid color-mix(in srgb,CanvasText 20%,transparent)', borderRadius: 12, width: 'min(420px,92vw)', background: 'Canvas', color: 'CanvasText', overflow: 'hidden' }}>
-      <form style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 20 }}>
-        <label htmlFor="display-name-input" style={{ fontSize: 14, fontWeight: 600 }}>Display name</label>
-        <input ref={input} id="display-name-input" type="text" autoComplete="off" spellCheck={false} maxLength={200}
-          style={{ padding: '12px 16px', border: 0, borderRadius: 8, background: 'color-mix(in srgb,CanvasText 6%,transparent)', color: 'inherit', font: 'inherit', outline: 'none' }} />
-        <div style={{ fontSize: 12, opacity: 0.6 }}>Shown to the people you write to. Empty makes a new random one.</div>
-        <button type="submit" style={{ marginTop: 6, padding: '12px 18px', border: 0, borderRadius: 999, background: 'CanvasText', color: 'Canvas', font: 'inherit', cursor: 'pointer' }}>Save</button>
+    <dialog ref={dialog} id="display-name-dialog" className="ec-dialog">
+      <form className="ec-card">
+        <label htmlFor="display-name-input" className="ec-title">Display name</label>
+        <input ref={input} id="display-name-input" className="ec-input" type="text" autoComplete="off" spellCheck={false} maxLength={200} />
+        <div className="ec-hint">Shown to the people you write to. Empty makes a new random one.</div>
+        <button type="submit" className="ec-button">Save</button>
       </form>
     </dialog>
   )

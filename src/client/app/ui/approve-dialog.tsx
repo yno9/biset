@@ -116,7 +116,7 @@ export function ApproveDialog() {
 
   if (!origin) return null
   return (
-    <dialog ref={dialog} style={{ margin: 'auto', padding: 0, border: '1px solid color-mix(in srgb,CanvasText 20%,transparent)', borderRadius: 12, width: 'min(420px,92vw)', background: 'Canvas', color: 'CanvasText', overflow: 'hidden' }}>
+    <dialog ref={dialog} className="ec-dialog">
       <iframe ref={frame} title="did.md Wallet" style={{ display: 'block', width: '100%', height: 240, border: 0, colorScheme: 'normal' }} />
     </dialog>
   )
