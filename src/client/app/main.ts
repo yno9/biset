@@ -27,6 +27,7 @@ import {
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { markSeenDone, setMarkSeenHandler } from './ui/seen.ts'
+import { setOwnDid } from './ui/did-display.ts'
 import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler, showApp, showSysMsg } from './ui/shell.ts'
 import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
@@ -361,6 +362,7 @@ async function configureWalletAccountIfPresent(
     // What every local store and every address of this identity in stored data is keyed by: stable across an
     // alias change (the DID's host), unlike `device.did`, which is for talking to others.
     const identityId = identityKey(device.did)
+    setOwnDid(device.did)
     const vaultStore = await timed('IndexedDbVaultStore.open', IndexedDbVaultStore.open())
     let vaultSync: VaultSyncClient | undefined
     let deviceEvents = await timed('readVaultEvents', vaultStore.readVaultEvents(identityId))

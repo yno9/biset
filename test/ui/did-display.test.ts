@@ -13,7 +13,7 @@ test('a did:webvh of this system is its address, anything else stays as it is', 
 
 // What a screen shows for an identity key (`did:webvh:<SCID>`, no host): the name, else the address, never the key.
 import { setContactDids, setContactNames, displayName, avatarOf, setContactAvatars } from '../../src/client/app/ui/did-display.ts'
-import { accountConfig } from '../../src/client/app/ui/account/state.ts'
+import { setOwnDid } from '../../src/client/app/ui/did-display.ts'
 import { identityKey } from '../../src/protocol/webvh/identifier.ts'
 
 const SCID = 'QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi'
@@ -32,9 +32,10 @@ test('an identity key shows the contact\'s name, else the address the contact\'s
 })
 
 test('this identity\'s own key shows the address of its own DID, even with no contact card', () => {
-  accountConfig.set({ did: ALICE } as never)
+  setOwnDid(ALICE)
   expect(displayName(identityKey(ALICE))).toBe('alice@did.md')
-  accountConfig.set(undefined)
+  setOwnDid(undefined)
+  expect(displayName(identityKey(ALICE))).toBe(identityKey(ALICE)) // nobody knows it: the raw string, as before
 })
 
 test('a mail bridge DID shows its mail address, and a picture is found by key', () => {

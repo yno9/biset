@@ -11,7 +11,6 @@
 // handle a foreign did:webvh's own path convention).
 import { identityKey, parseWebvhDid, sameIdentity, scidOf } from '../../../protocol/webvh/identifier.ts'
 import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
-import { getAccountConfig } from './account/state.ts'
 
 /** Elided display form -- `did:webvh:t.biset.md` for a did:webvh, the raw
  * string unchanged for anything else (a bare email, or a DID method this
@@ -67,10 +66,14 @@ export function setContactDids(dids: ReadonlyMap<string, string>): void { contac
 /** A did:webvh with no host, the form identityKey makes: it names an identity, not a place. */
 const isIdentityKey = (did: string): boolean => scidOf(did) !== undefined && did.split(':').length === 3
 
+// This identity's own DID, set when the app starts (before any message is drawn: a screen that read it from the account page's
+// state would draw the first messages before that state exists, and not draw them again).
+let ownDid: string | undefined
+export function setOwnDid(did: string | undefined): void { ownDid = did }
+
 /** The full DID an identity key stands for, as far as it is known: a contact's, or this identity's own. */
 function didOfKey(key: string): string | undefined {
-  const own = getAccountConfig()?.did
-  return contactDids.get(key) ?? (own && sameIdentity(own, key) ? own : undefined)
+  return contactDids.get(key) ?? (ownDid && sameIdentity(ownDid, key) ? ownDid : undefined)
 }
 
 export function displayName(did: string): string {
