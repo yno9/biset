@@ -10,7 +10,7 @@ import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { armorOfStoredBody } from '../../src/client/pgp/stored.ts'
-import { AUTOCRYPT_CONTACT_PROPERTY, autocryptKeyId, currentAutocryptKey } from '../../src/client/store/projection/contacts.ts'
+import { AUTOCRYPT_CONTACT_PROPERTY, autocryptKeyId, contactDisplayName, currentAutocryptKey } from '../../src/client/store/projection/contacts.ts'
 
 const identityId = 'did:webvh:abc123:alice.test.example'
 const recipientKid = `${identityId}#k_devicehash`
@@ -102,5 +102,17 @@ describe('a bridged mail with an Autocrypt key', () => {
       expect(texts.some(entry => entry === text)).toBe(true)
       expect(texts.some(entry => entry.includes('X-Biset-Encrypted'))).toBe(false)
     }
+  })
+})
+
+describe('the name a DID tells in its own message', () => {
+  test('is kept on the sender\'s card as signed by it', async () => {
+    const [card] = (await projector().verifyAndProject(envelope({ content: 'hi', fromName: 'Keen Llama' }))).projection.contactCards
+    expect(contactDisplayName(card!)).toBe('Keen Llama')
+  })
+
+  test('a bridged mail\'s name still needs a DMARC pass', async () => {
+    const [card] = (await projector().verifyAndProject(envelope({ content: 'hi', fromName: 'Mallory', auth: { dmarc: 'fail' } }))).projection.contactCards
+    expect(card && contactDisplayName(card)).toBeUndefined()
   })
 })

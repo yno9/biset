@@ -26,6 +26,8 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
   encrypted?: { armored: string }
   /** This is the first message to an address that has not written to us -- the user chose to write first (didmail PROTOCOL.md §7.1). */
   introduction?: boolean
+  /** This identity's display name, told to the recipient (a biset extension; the receiver keeps it on the sender's contact card). */
+  fromName?: string
 }
 
 /** Sends a chat message to `toDid`. `opts.id` keeps a retried message's
@@ -38,6 +40,7 @@ export async function sendDidCommMessage(toDid: string, content: string, opts: C
     content: encrypted ? '' : content, sentAt, ...(opts.subject ? { subject: opts.subject } : {}), ...(opts.autocrypt ? { autocrypt: opts.autocrypt } : {}),
     ...(encrypted ? { encryption: 'openpgp' } : {}),
     ...(opts.introduction ? { introduction: true } : {}),
+    ...(opts.fromName ? { fromName: opts.fromName } : {}),
   }, {
     ...opts, createdTime: Math.floor(Date.parse(sentAt) / 1000),
     ...(encrypted ? { attachments: [{ id: 'pgp', filename: 'encrypted.asc', media_type: 'application/octet-stream', data: { base64: bytesToBase64url(new TextEncoder().encode(encrypted.armored)) } }] } : {}),

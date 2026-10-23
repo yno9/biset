@@ -774,6 +774,7 @@ async function configureWalletAccountIfPresent(
           readModel,
           mutationSink,
           route: publicDid => rotationManager.route(publicDid),
+          fromName: async () => (await ownProfile()).name,
           // To a mail address: this identity's OpenPGP key, which the bridge puts in an Autocrypt header.
           autocrypt: async toDid => ownAutocryptFor(toDid, ownMailAddress ? await pgp?.current().then(key => key && { address: ownMailAddress, privateKey: key.privateKey }) : undefined),
           // To a mail address whose key we hold and who asked for encryption: the message goes as an OpenPGP-encrypted mail.

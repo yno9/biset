@@ -349,6 +349,13 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
         const write = contactNamePatch(card?.id ?? didContactPatch(senderDid).cardId, card, body.fromName, 'mail')
         if (write) keyWrites.push(write)
       }
+      // A DID's own message (no bridge in between) carries the name its owner chose: kept on its card as signed by it
+      // (the message is authenticated by the sender's key), below a name a person wrote by hand.
+      if (body.fromName && !body.auth) {
+        const card = contactCardForDid(snapshot.contactCards, senderDid)
+        const write = contactNamePatch(card?.id ?? didContactPatch(senderDid).cardId, card, body.fromName, 'signed')
+        if (write) keyWrites.push(write)
+      }
       // The sender's OpenPGP key from the mail's Autocrypt header (didmail PROTOCOL.md §5.5), written to its
       // card -- only when the bridge saw the mail pass DMARC and the key is for the address the DID stands for.
       if (body.autocrypt && body.auth?.dmarc === 'pass' && body.autocrypt.addr.toLowerCase() === mailAddressOfBridgeDid(senderDid)?.toLowerCase()) {
