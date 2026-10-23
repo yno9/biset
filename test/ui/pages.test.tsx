@@ -173,6 +173,16 @@ test('account: the display name is asked for in a card; Esc or a click outside c
   fireEvent.click(card())
   await waitFor(() => expect(card().open).toBe(false))
   expect(setName).not.toHaveBeenCalled()
+  // the field opens with a new random name, and the button on its right makes another
+  fireEvent.click(screen.getByText('Set display name'))
+  await waitFor(() => expect(card().open).toBe(true))
+  const first = input().value
+  expect(first).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/)
+  const seen = new Set([first])
+  for (let index = 0; index < 20; index += 1) { fireEvent.click(container.querySelector('#display-name-reload')!); expect(input().value).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/); seen.add(input().value) }
+  expect(seen.size).toBeGreaterThan(1)
+  fireEvent.click(card())
+  await waitFor(() => expect(card().open).toBe(false))
   // Save sets the typed name
   fireEvent.click(screen.getByText('Set display name'))
   await waitFor(() => expect(card().open).toBe(true))

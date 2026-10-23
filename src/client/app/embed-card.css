@@ -31,3 +31,8 @@
 .ec-error { min-height: 1.5em; color: var(--ec-error); font-size: var(--ec-label-size); }
 .ec-button { margin-top: 6px; padding: var(--ec-button-pad); border: 0; border-radius: var(--ec-button-radius); background: var(--ec-button-bg); color: var(--ec-button-fg); font: inherit; cursor: pointer; }
 .ec-button:disabled { opacity: 0.5; }
+/* A field with a button on its right (the display name's new-random-name), in the same grey box. */
+.ec-field { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; border-radius: var(--ec-radius); background: var(--ec-input-bg); }
+.ec-field > input { flex: 1; min-width: 0; padding: 12px 0; border: 0; background: transparent; color: inherit; font: inherit; outline: none; }
+.ec-field-action { flex: none; display: flex; padding: 6px; border: 0; border-radius: var(--ec-radius); background: none; color: inherit; opacity: 0.6; cursor: pointer; }
+.ec-field-action:hover { opacity: 1; }
