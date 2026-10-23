@@ -6,6 +6,7 @@ import { mountIsland } from '../react/island.tsx'
 import { DropdownMenu } from './account/menu.tsx'
 import { Tooltip } from './account/tooltip.tsx'
 import { ApproveDialog } from './approve-dialog.tsx'
+import { DisplayNameDialog } from './account/display-name-dialog.tsx'
 import { AvatarCropDialog } from './account/avatar-crop.tsx'
 import { HamburgerMenu } from './hamburger-menu.tsx'
 import { LeftPane } from './left-pane.tsx'
@@ -28,6 +29,7 @@ function App() {
       <DropdownMenu />
       <Tooltip />
       <ApproveDialog />
+      <DisplayNameDialog />
       <AvatarCropDialog />
       <div id="app" className={classes} style={{ display: appShown ? 'flex' : 'none' }} data-menu-page={page === 'thread' ? undefined : `/${page}`}>
         <LeftPane />

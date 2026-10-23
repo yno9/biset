@@ -54,7 +54,7 @@ export function ApproveDialog() {
 
   const start = (): Warm => {
     const slot: Warm = { ready: undefined as never, dispose: () => {} }
-    slot.ready = mountDito(frame.current!, origin!, 'approve', { resized: height => slot.onResize?.(height) })
+    slot.ready = mountDito(frame.current!, origin!, 'approve', { resized: height => slot.onResize?.(height), escape: () => { if (dialog.current?.open) dialog.current.close() } })
       .then(embed => { slot.dispose = embed.dispose; return embed })
     slot.ready.catch(() => {}) // reported to the approval that uses it
     warm.current = slot

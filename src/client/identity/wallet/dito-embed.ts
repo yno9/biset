@@ -46,6 +46,8 @@ export interface DitoEmbedHandlers {
   login?(handle: string): void
   /** The frame laid its screen out (it reports its height): there is something to show. */
   resized?(height: number): void
+  /** Esc was pressed inside the frame (a keypress in a frame never reaches the page that holds it). */
+  escape?(): void
   error?(message: string): void
 }
 
@@ -138,6 +140,7 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
         else if (data.event === 'existing' && typeof data.did === 'string') handlers.existing?.(data.did)
         else if (data.event === 'save-page') handlers.savePage?.()
         else if (data.event === 'unloaded') handlers.unloaded?.()
+        else if (data.event === 'escape') handlers.escape?.()
         else if (data.event === 'login' && typeof data.handle === 'string') handlers.login?.(data.handle)
         else if (data.event === 'error') handlers.error?.(typeof data.message === 'string' ? data.message : 'Wallet error')
       }

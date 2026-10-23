@@ -10,6 +10,7 @@ import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
 import { ConfigPanel } from './config-page.tsx'
 import { randomDisplayName } from '../account/default-name.ts'
+import { requestDisplayName } from '../account/display-name-dialog.tsx'
 import { DeltaChatIcon } from '../account/deltachat-icon.tsx'
 import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
@@ -23,9 +24,10 @@ const errorText = (error: unknown): string => error instanceof Error ? error.mes
 function changeDisplayName(current?: string): void {
   const profile = getAccountConfig()?.profile
   if (!profile) return
-  const name = window.prompt('Display name (shown to the people you write to; empty makes a new random one)', current ?? '')
-  if (name === null) return
-  void profile.setName(name.trim() || randomDisplayName()).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
+  void requestDisplayName(current ?? '').then(name => {
+    if (name === null) return
+    return profile.setName(name.trim() || randomDisplayName()).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED)))
+  }).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
 }
 
 type FileAction = { label: string; short: string; danger?: boolean; onClick: () => void }

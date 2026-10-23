@@ -13,6 +13,7 @@ vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async ()
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 import { AccountPage } from '../../src/client/app/ui/pages/account-page.tsx'
 import { ComposePage, configureComposePage } from '../../src/client/app/ui/pages/compose-page.tsx'
+import { DisplayNameDialog } from '../../src/client/app/ui/account/display-name-dialog.tsx'
 import { ConfigPanel, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
 import { setPage, uiPage } from '../../src/client/app/ui/state.ts'
 
@@ -153,21 +154,43 @@ test('account: the identity card has no menu button and no clickable DID panel',
   expect(container.querySelector('#cmd-acc-identity-expanded')).toBeNull()
 })
 
-test('account: without a display name the name line offers to set one, and with one it is gone', async () => {
-  const prompt = vi.spyOn(window, 'prompt').mockReturnValue('Alice')
+test('account: the display name is asked for in a card; Esc or a click outside closes it, Save sets it', async () => {
   const setName = vi.fn(async () => {})
   const profile = { current: async () => ({}), setName, setAvatar: async () => {} }
   accountConfig.set(account({ profile }))
-  const { container } = render(<AccountPage />)
+  const { container } = render(<><AccountPage /><DisplayNameDialog /></>)
+  const card = () => container.querySelector('dialog#display-name-dialog') as HTMLDialogElement
+  const input = () => container.querySelector('#display-name-input') as HTMLInputElement
   fireEvent.click(await screen.findByText('Set display name'))
-  expect(prompt).toHaveBeenCalled()
+  await waitFor(() => expect(card().open).toBe(true))
+  // Esc (the dialog's own close) answers nothing
+  card().close()
+  await waitFor(() => expect(card().open).toBe(false))
+  expect(setName).not.toHaveBeenCalled()
+  // a click on the backdrop (the dialog itself) closes it too
+  fireEvent.click(screen.getByText('Set display name'))
+  await waitFor(() => expect(card().open).toBe(true))
+  fireEvent.click(card())
+  await waitFor(() => expect(card().open).toBe(false))
+  expect(setName).not.toHaveBeenCalled()
+  // Save sets the typed name
+  fireEvent.click(screen.getByText('Set display name'))
+  await waitFor(() => expect(card().open).toBe(true))
+  fireEvent.change(input(), { target: { value: 'Alice' } })
+  fireEvent.submit(input().closest('form')!)
   await waitFor(() => expect(setName).toHaveBeenCalledWith('Alice'))
+  await waitFor(() => expect(card().open).toBe(false))
+  // empty makes a random one
+  fireEvent.click(screen.getByText('Set display name'))
+  await waitFor(() => expect(card().open).toBe(true))
+  fireEvent.change(input(), { target: { value: '' } })
+  fireEvent.submit(input().closest('form')!)
+  await waitFor(() => expect(setName).toHaveBeenLastCalledWith(expect.stringMatching(/^[A-Z][a-z]+ [A-Z][a-z]+$/)))
   cleanup()
   accountConfig.set(account({ profile: { ...profile, current: async () => ({ name: 'Alice' }) } }))
   const named = render(<AccountPage />)
   await waitFor(() => expect(named.container.querySelector('.acc-display-name')!.textContent).toBe('Alice'))
   expect(screen.queryByText('Set display name')).toBeNull()
-  void container
 })
 
 test('account: the Delta Chat row at the foot joins an invite and copies this identity\'s link', async () => {
