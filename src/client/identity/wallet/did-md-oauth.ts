@@ -373,8 +373,19 @@ async function rollbackPendingMediator(pending: DidMdPendingAuthorization): Prom
 }
 
 function redirectUri(): string {
-  if (location.protocol !== 'https:') throw new Error('Sign-in needs an https page')
+  // https, or the Tor hidden service this app is also served at (an onion address carries no TLS).
+  if (location.protocol !== 'https:' && !isOnionPage()) throw new Error('Sign-in needs an https page')
   return `${location.origin}${CALLBACK_PATH}`
+}
+
+const isOnionPage = (): boolean => location.protocol === 'http:' && location.hostname.endsWith('.onion')
+
+/** Where the selected wallet's authorization screen is reached from this page: over Tor, the default wallet is the
+ * one served at its onion address (`ditoOnionUrl` in the config), since a hidden service page cannot count on clearnet. */
+function walletEndpoint(): string {
+  const onion = (globalThis as { __BISET_CONFIG__?: { ditoOnionUrl?: unknown } }).__BISET_CONFIG__?.ditoOnionUrl
+  if (isOnionPage() && selectedWallet === DEFAULT_WALLET && typeof onion === 'string' && onion) return `${onion.replace(/\/$/, '')}/authorize`
+  return selectedWallet.authorizationEndpoint
 }
 
 function isWalletCallback(): boolean {
@@ -637,7 +648,7 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
 type WalletClient = { authorizationEndpoint: string; clientId: string; redirectUri: string }
 function walletClient(): WalletClient {
   const callback = redirectUri()
-  return { authorizationEndpoint: selectedWallet.authorizationEndpoint, clientId: clientIdFor(callback), redirectUri: callback }
+  return { authorizationEndpoint: walletEndpoint(), clientId: clientIdFor(callback), redirectUri: callback }
 }
 
 const base64urlJson = (value: unknown): string => base64url(encoder.encode(JSON.stringify(value)))
@@ -909,7 +920,7 @@ export async function completeDidMdWalletCallback(delivered?: URLSearchParams): 
   if (!delivered && !isWalletCallback()) return undefined
   const callback = new URL(location.href)
   const pending = await readDidMdPendingAuthorization()
-  if (!pending || pending.v !== 3 || pending.wallet !== selectedWallet.authorizationEndpoint) throw new Error('No matching did.md Wallet authorization is pending')
+  if (!pending || pending.v !== 3 || pending.wallet !== walletEndpoint()) throw new Error('No matching did.md Wallet authorization is pending')
   // The response comes in the URL fragment (never sent to any server, unlike a query string).
   const params = delivered ?? new URLSearchParams(callback.hash.slice(1))
   const abandon = async (message: string): Promise<never> => { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error(message) }
@@ -946,7 +957,7 @@ async function timedStep<T>(label: string, work: Promise<T>): Promise<T> {
  * or its capability has run out. */
 export async function peekDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 3 || session.wallet !== selectedWallet.authorizationEndpoint || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  if (!session || session.v !== 3 || session.wallet !== walletEndpoint() || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
   const subject = (() => { try { return asObject((session.capability as Record<string, unknown>).credentialSubject, 'stored capability subject') } catch { return {} } })()
   return {
     did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt,
@@ -960,8 +971,8 @@ export async function peekDidMdWalletSession(): Promise<DidMdActiveSession | und
  * key that signed its capability (sessionFromCapabilityValue); the wallet is not asked anything. */
 export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 3 || session.wallet !== selectedWallet.authorizationEndpoint || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
-  if (location.protocol !== 'https:' || session.clientId !== clientIdFor(redirectUri())) return undefined
+  if (!session || session.v !== 3 || session.wallet !== walletEndpoint() || Date.parse(session.capabilityExpiresAt) <= Date.now()) return undefined
+  if ((location.protocol !== 'https:' && !isOnionPage()) || session.clientId !== clientIdFor(redirectUri())) return undefined
   try {
     return await timedStep('  restore: sessionFromCapabilityValue', sessionFromCapabilityValue(session.capability, session.did, pendingFromSession(session), { registerMediator: false }))
   } catch (error) {
@@ -976,7 +987,7 @@ export async function restoreDidMdWalletSession(): Promise<DidMdActiveSession | 
 
 export async function didMdWalletReconnectState(): Promise<{ did: string; handle: string; capabilityExpiresAt: string; expired: boolean } | undefined> {
   const session = await readDidMdDeviceSession()
-  if (!session || session.v !== 3 || session.wallet !== selectedWallet.authorizationEndpoint) return undefined
+  if (!session || session.v !== 3 || session.wallet !== walletEndpoint()) return undefined
   return { did: session.did, handle: session.handle, capabilityExpiresAt: session.capabilityExpiresAt, expired: Date.parse(session.capabilityExpiresAt) <= Date.now() }
 }
 

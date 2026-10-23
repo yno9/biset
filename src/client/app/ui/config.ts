@@ -11,6 +11,8 @@ declare const __BISET_CONFIG__: {
   mediatorOnionUrls?: string[]
   /** The address this app itself is served at over Tor (an onion URL), or unset when it is not: the account page offers to copy it. */
   appOnionUrl?: string
+  /** The wallet (dito) served as a Tor hidden service, used by the app when it is itself opened at its onion address. */
+  ditoOnionUrl?: string
   mimiSelfBaseUrl?: string
   /** Hosts whose WebFinger answers any mail address with a DID (a didmail
    * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
