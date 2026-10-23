@@ -1871,34 +1871,30 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   background: var(--accent, currentColor);
   transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-/* Delta Chat's row, centred at the foot of the account page. */
-/* On the account page the row is at the very bottom: the page's boxes grow to fill the column, and the row's
-   auto top margin takes the space between the tabs and itself. */
-#right-pane:has(#cmd-acc-deltachat) { display: flex; flex-direction: column; }
-#right-pane:has(#cmd-acc-deltachat) > #active-thread { flex: 1 0 auto; display: flex; flex-direction: column; }
-#active-thread:has(#cmd-acc-deltachat) > .cmd-thread-card { flex: 1 0 auto; display: flex; flex-direction: column; }
-.cmd-thread-card:has(#cmd-acc-deltachat) > .cmd-page-content { flex: 1 0 auto; display: flex; flex-direction: column; }
-#cmd-acc-deltachat {
+/* The foot of the account page, one centred row (Delta Chat, and the onion address when there is one). It is at the very bottom:
+   the page's boxes grow to fill the column, and the row's auto top margin takes the space between the tabs and itself. */
+#right-pane:has(#cmd-acc-foot) { display: flex; flex-direction: column; }
+#right-pane:has(#cmd-acc-foot) > #active-thread { flex: 1 0 auto; display: flex; flex-direction: column; }
+#active-thread:has(#cmd-acc-foot) > .cmd-thread-card { flex: 1 0 auto; display: flex; flex-direction: column; }
+.cmd-thread-card:has(#cmd-acc-foot) > .cmd-page-content { flex: 1 0 auto; display: flex; flex-direction: column; }
+#cmd-acc-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 8px 28px;
   margin: auto 0 8px;
   padding-top: 28px;
   color: var(--text-dim);
   font-size: 13px;
 }
-/* Under it, when the app is served over Tor: the onion address to copy. */
+#cmd-acc-deltachat,
 #cmd-acc-onion {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  margin: 0 0 8px;
-  color: var(--text-dim);
-  font-size: 13px;
 }
-#cmd-acc-onion button {
+#cmd-acc-foot button {
   padding: 2px 4px;
   border: 0;
   background: none;
@@ -1907,19 +1903,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   cursor: pointer;
   transition: color 0.12s;
 }
-#cmd-acc-onion button:hover {
-  color: var(--text);
-}
-#cmd-acc-deltachat button {
-  padding: 2px 4px;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  transition: color 0.12s;
-}
-#cmd-acc-deltachat button:hover {
+#cmd-acc-foot button:hover {
   color: var(--text);
 }
 #cmd-acc-files {

@@ -132,30 +132,30 @@ function FilesPanel() {
   )
 }
 
-/** Delta Chat, at the foot of the page: join someone's invite, or copy this identity's own invite link. */
-function DeltaChatBar() {
+/** The foot of the page, one centred row: Delta Chat (join someone's invite, or copy this identity's own invite link), and, when this app is
+ * also served over Tor, its onion address to copy (the page's own, by the deployment's config). */
+function FootRow() {
   const config = useStore(accountConfig)
   const pgp = config?.pgp
-  if (!pgp) return null
+  const onion = readBisetConfig().appOnionUrl
+  if (!pgp && !onion) return null
   const showMessage = (text: string) => config?.showMessage?.(text)
   return (
-    <div id="cmd-acc-deltachat">
-      <DeltaChatIcon />
-      <button type="button" onClick={() => joinDeltaChatInvite(pgp, showMessage)}>Join</button>
-      <span aria-hidden="true">|</span>
-      <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Invite</button>
-    </div>
-  )
-}
-
-/** Under the Delta Chat row, when this app is also served over Tor: the onion address to copy (the page's own, by the deployment's config). */
-function OnionBar() {
-  const onion = readBisetConfig().appOnionUrl
-  if (!onion) return null
-  return (
-    <div id="cmd-acc-onion">
-      <OnionIcon size={16} />
-      <button type="button" onClick={() => { navigator.clipboard?.writeText(onion).then(() => getAccountConfig()?.showMessage?.('Onion URL copied')).catch(() => {}) }}>Onion URL</button>
+    <div id="cmd-acc-foot">
+      {pgp ? (
+        <span id="cmd-acc-deltachat">
+          <DeltaChatIcon />
+          <button type="button" onClick={() => joinDeltaChatInvite(pgp, showMessage)}>Join</button>
+          <span aria-hidden="true">|</span>
+          <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Invite</button>
+        </span>
+      ) : null}
+      {onion ? (
+        <span id="cmd-acc-onion">
+          <OnionIcon size={16} />
+          <button type="button" onClick={() => { navigator.clipboard?.writeText(onion).then(() => showMessage('Onion URL copied')).catch(() => {}) }}>Onion URL</button>
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -208,8 +208,7 @@ export function AccountPage() {
         <div className="cmd-page-content wide-page">
           <IdentityCard did={config.did} />
           <AccountTabs />
-          <DeltaChatBar />
-          <OnionBar />
+          <FootRow />
           <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" data-tip="Compose" onClick={() => setPage('compose')}>
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
           </button>

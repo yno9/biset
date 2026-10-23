@@ -234,7 +234,7 @@ test('account: the Delta Chat row at the foot joins an invite and copies this id
   await waitFor(() => expect(joinInvite).toHaveBeenCalledWith('https://i.delta.chat/#ABC'))
 })
 
-test('account: Onion URL is under the Delta Chat row when the app is served over Tor, and absent otherwise', async () => {
+test('account: Onion URL is in the Delta Chat row when the app is served over Tor, and absent otherwise', async () => {
   const writeText = vi.fn(async () => {})
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
   accountConfig.set(account())
@@ -247,7 +247,8 @@ test('account: Onion URL is under the Delta Chat row when the app is served over
     accountConfig.set(account({ pgp }))
     const { container } = render(<AccountPage />)
     const onion = container.querySelector('#cmd-acc-onion')!
-    expect(onion.previousElementSibling!.id).toBe('cmd-acc-deltachat') // the row under the Delta Chat one
+    expect(onion.previousElementSibling!.id).toBe('cmd-acc-deltachat') // beside the Delta Chat group,
+    expect(onion.parentElement!.id).toBe('cmd-acc-foot') // in the same one row
     fireEvent.click(screen.getByText('Onion URL'))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('http://abc.onion'))
     await waitFor(() => expect(messages).toContain('Onion URL copied'))
