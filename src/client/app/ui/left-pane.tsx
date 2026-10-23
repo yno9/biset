@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import { avatarOf, displayName } from './did-display.ts'
+import { GeneratedAvatar } from './generated-avatar.tsx'
 import { avatarColor, previewText } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { showComposePage, hideAccountPage, hideComposePage } from './pages/index.ts'
@@ -84,7 +85,7 @@ function Row({ row, label, avatarSubject, avatarImage, unread, current, focusedI
           hoverFired.current = true
           onNavigate({ kind: 'inbox', key: row.key })
         }}>
-        <div className="lp-avatar" style={{ background: avatarColor(avatarSubject) }}>{avatarImage ? <img className="lp-avatar-img" src={avatarImage} alt="" /> : avatarSubject.charAt(0).toUpperCase()}{unread ? <div className="unread-dot" /> : null}</div>
+        <div className="lp-avatar" style={{ background: avatarColor(avatarSubject) }}>{avatarImage ? <img className="lp-avatar-img" src={avatarImage} alt="" /> : <GeneratedAvatar name={avatarSubject} />}{unread ? <div className="unread-dot" /> : null}</div>
         <div className="lp-info">
           <div className="lp-name">{label}</div>
           <div className="lp-preview">{previewText(latest.body)}</div>

@@ -221,7 +221,7 @@ test('a contact\'s picture fills the avatar of its row and of its messages; with
   setMessages([message({ from: bob, from_name: 'Bob', subject: 'Lunch', thread_id: 'L1', ts: T0 })])
   const { container } = app(<LeftPane />)
   expect(container.querySelector('.lp-avatar-img')).toBeNull()
-  expect(container.querySelector('.lp-avatar')!.textContent).toBe('B')
+  expect(container.querySelector('.lp-avatar .avatar-generated svg')).not.toBeNull()
   setContactAvatars(new Map([[bob, 'data:image/png;base64,AAAA']]))
   const withPicture = app(<LeftPane />)
   expect(withPicture.container.querySelector('.lp-avatar-img')!.getAttribute('src')).toBe('data:image/png;base64,AAAA')

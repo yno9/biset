@@ -1194,6 +1194,17 @@ select {
   pointer-events: auto;
 }
 
+/* A generated avatar (generated-avatar.tsx) fills its round box, as a picture does. */
+.avatar-generated {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.avatar-generated > svg {
+  display: block;
+}
 .lp-avatar-img,
 .t-avatar-img {
   position: absolute;

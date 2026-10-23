@@ -128,7 +128,8 @@ test('account: the identity card shows the DID, then the name the DID document g
   accountConfig.set(account())
   const { container } = render(<AccountPage />)
   expect(container.querySelector('#cmd-acc-identity-did')!.textContent).toBe(DID)
-  expect(container.querySelector('#cmd-acc-identity-avatar')!.textContent).toBe('A')
+  // no picture: a generated avatar (boringavatars.com) drawn from the name, not an initial
+  expect(container.querySelector('#cmd-acc-identity-avatar .avatar-generated svg')).not.toBeNull()
   await waitFor(() => expect(container.querySelector('#cmd-acc-identity-name')!.textContent).toBe('Alice'))
   expect(container.querySelector('#cmd-acc-capability-expiry')).toBeNull() // the identity card shows no expiry date any more
 })

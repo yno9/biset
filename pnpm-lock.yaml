@@ -178,6 +178,9 @@ importers:
       '@scure/base':
         specifier: ^2.2.0
         version: 2.4.0
+      boring-avatars:
+        specifier: 2.0.4
+        version: 2.0.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       openpgp:
         specifier: ^6.3.2
         version: 6.3.2
@@ -1199,6 +1202,12 @@ packages:
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
+
+  boring-avatars@2.0.4:
+    resolution: {integrity: sha512-xhZO/w/6aFmRfkaWohcl2NfyIy87gK5SBbys8kctZeTGF1Apjpv/10pfUuv+YEfVPkESU/h2Y6tt/Dwp+bIZPw==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   braces@3.0.3:
     resolution: {integrity: sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==}
@@ -2306,6 +2315,11 @@ snapshots:
       dequal: 2.0.3
 
   assertion-error@2.0.1: {}
+
+  boring-avatars@2.0.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+    dependencies:
+      react: 19.3.1
+      react-dom: 19.3.1(react@19.3.1)
 
   braces@3.0.3:
     dependencies:
