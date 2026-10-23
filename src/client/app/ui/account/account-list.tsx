@@ -25,7 +25,7 @@ export function AccountList() {
   const showMessage = (text: string) => config.showMessage?.(text)
   return (
     <>
-      {config.did ? <IdentityHostCard did={config.did} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
+      {config.did ? <IdentityHostCard did={config.did} showMessage={showMessage} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
       {wallet.didComm ? <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} /> : null}
       {config.rotationKey ? <DidCommKeyNotice rotationKey={config.rotationKey} showMessage={showMessage} /> : null}
     </>
@@ -44,7 +44,21 @@ type Resolution = 'checking' | 'ok' | 'error'
  * load, looks anew. */
 const resolutions = new Map<string, Resolution>()
 
-function IdentityHostCard({ did, onReconnect }: { did: string; onReconnect?: () => void }) {
+/** `did:webvh:` + SCID + `:alias.did.md` on one line: when the card is narrow the SCID gives way (ellipsis), the
+ * alias never does. */
+function DidText({ did }: { did: string }) {
+  const parts = did.split(':')
+  if (parts.length < 4) return <span className="acc-did-scid">{did}</span>
+  return (
+    <>
+      <span className="acc-did-fixed">{parts.slice(0, 2).join(':')}:</span>
+      <span className="acc-did-scid">{parts[2]}</span>
+      <span className="acc-did-fixed">:{parts.slice(3).join(':')}</span>
+    </>
+  )
+}
+
+function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; showMessage: (text: string) => void; onReconnect?: () => void }) {
   const [resolved, setResolved] = useState<Resolution>(() => resolutions.get(did) ?? 'checking')
   useEffect(() => {
     const known = resolutions.get(did)
@@ -59,23 +73,35 @@ function IdentityHostCard({ did, onReconnect }: { did: string; onReconnect?: () 
   // The host that has the DID's log (`did.jsonl`): the one the DID names.
   const host = (() => { try { return logUrl ? new URL(logUrl).host : undefined } catch { return undefined } })()
   const dotColor = resolved === 'ok' ? '#34c759' : resolved === 'error' ? '#ff3b30' : '#ff9f0a'
+  // Both lines of the first row and the buttons on its right are one line high, so the buttons stay on the first line when the DID is the second.
+  const LINE = 26
   return (
     <div className="acc-card-wrap" id="cmd-acc-identity-host-card">
-      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'center', padding: '10px 12px' }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span role="status" aria-label={resolved === 'ok' ? 'DID resolves' : resolved === 'error' ? 'DID does not resolve' : 'Resolving the DID'} data-state={resolved}
-            style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
-          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
-          <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
-          {host ? <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
-            style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a> : null}
+      <div className="cmd-page-row" style={{ gap: 12, alignItems: 'flex-start', padding: '10px 12px' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: LINE }}>
+            <span role="status" aria-label={resolved === 'ok' ? 'DID resolves' : resolved === 'error' ? 'DID does not resolve' : 'Resolving the DID'} data-state={resolved}
+              style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
+            <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
+            {host ? <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
+              style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a> : null}
+          </div>
+          {/* Clicking the DID text copies it. */}
+          <div id="cmd-acc-identity-did-row" style={{ marginLeft: 16 }}
+            onClick={event => { event.stopPropagation(); navigator.clipboard?.writeText(did).then(() => showMessage('DID copied')).catch(() => {}) }}>
+            <span id="cmd-acc-identity-did" data-tip={did}><DidText did={did} /></span>
+            <svg id="cmd-acc-identity-copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          </div>
         </div>
-        {onReconnect ? <button type="button" onClick={onReconnect}
-          style={{ flexShrink: 0, padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Reconnect</button> : null}
-        {logUrl ? <a href={logUrl} target="_blank" rel="noopener noreferrer" aria-label="Open the DID log" data-tip="Open the DID log (did.jsonl)"
-          style={{ flexShrink: 0, color: 'var(--text-dim)', padding: 4, display: 'flex' }}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>
-        </a> : null}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, minHeight: LINE }}>
+          {onReconnect ? <button type="button" onClick={onReconnect}
+            style={{ padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Reconnect</button> : null}
+          {logUrl ? <a href={logUrl} target="_blank" rel="noopener noreferrer" aria-label="Open the DID log" data-tip="Open the DID log (did.jsonl)"
+            style={{ color: 'var(--text-dim)', padding: 4, display: 'flex' }}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>
+          </a> : null}
+        </div>
       </div>
     </div>
   )
