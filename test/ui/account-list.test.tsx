@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ id: 'did:webvh:SCID:alice.did.md' })) }))
 
 import { AccountList, KeysPanel, ellipsizeScid } from '../../src/client/app/ui/account/account-list.tsx'
-import { DropdownMenu } from '../../src/client/app/ui/account/menu.tsx'
+import { TextCardDialog } from '../../src/client/app/ui/account/text-card-dialog.tsx'
 import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 
@@ -178,22 +178,42 @@ test('a new device roster from the vault shows in the Keys tab', () => {
   expect(container.textContent).toContain('No devices available')
 })
 
-test('the mediator menu edits the server', () => {
+test('the mediator card has an icon for editing the server and one for Tor; each opens a card, and there is no menu and no Log out', async () => {
   const next = config()
-  const { container } = render(<><AccountList /><DropdownMenu /></>)
+  const { container } = render(<><AccountList /><TextCardDialog /></>)
   set(next)
-  vi.spyOn(window, 'prompt').mockReturnValue('https://other.example/')
-  fireEvent.click(container.querySelector('[aria-label="Mediator menu"]')!)
-  fireEvent.click(screen.getByText('Edit server'))
-  expect(next.wallet!.onEditMediator).toHaveBeenCalledWith('https://other.example/')
+  expect(container.querySelector('[aria-label="Mediator menu"]')).toBeNull()
+  expect(screen.queryByText('Log out')).toBeNull()
+  const card = () => container.querySelector('dialog#text-card-dialog') as HTMLDialogElement
+  const field = () => container.querySelector('#text-card-input') as HTMLInputElement
+  // Edit server: a card holding the address, saved
+  fireEvent.click(container.querySelector('[aria-label="Edit server"]')!)
+  await waitFor(() => expect(card().open).toBe(true))
+  expect(field().value).toBe('https://mediator.biset.md/')
+  fireEvent.change(field(), { target: { value: 'https://other.example/' } })
+  fireEvent.submit(field().closest('form')!)
+  await waitFor(() => expect(next.wallet!.onEditMediator).toHaveBeenCalledWith('https://other.example/'))
+  await waitFor(() => expect(card().open).toBe(false))
+  // closing the card (Esc) changes nothing
+  fireEvent.click(container.querySelector('[aria-label="Enable Tor"]')!)
+  await waitFor(() => expect(card().open).toBe(true))
+  card().close()
+  await waitFor(() => expect(card().open).toBe(false))
+  expect(next.wallet!.onEnableTor).not.toHaveBeenCalled()
+  // Enable Tor: the onion address, saved
+  fireEvent.click(container.querySelector('[aria-label="Enable Tor"]')!)
+  await waitFor(() => expect(card().open).toBe(true))
+  fireEvent.change(field(), { target: { value: 'http://abc.onion' } })
+  fireEvent.submit(field().closest('form')!)
+  await waitFor(() => expect(next.wallet!.onEnableTor).toHaveBeenCalledWith('http://abc.onion'))
 })
 
-test('logged out, the menu has one item: Log in', () => {
+test('logged out, the card has one thing to do: Log in (no server or Tor icons)', () => {
   const next = config({}, { loggedOut: true })
-  const { container } = render(<><AccountList /><DropdownMenu /></>)
+  const { container } = render(<AccountList />)
   set(next)
-  fireEvent.click(container.querySelector('[aria-label="Mediator menu"]')!)
-  expect(screen.queryByText('Edit server')).toBeNull()
+  expect(container.querySelector('[aria-label="Edit server"]')).toBeNull()
+  expect(container.querySelector('[aria-label="Enable Tor"]')).toBeNull()
   fireEvent.click(screen.getByText('Log in'))
   expect(next.wallet!.onEnableMessaging).toHaveBeenCalled()
 })

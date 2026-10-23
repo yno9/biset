@@ -4,10 +4,9 @@ import { useEffect } from 'react'
 import '../embed-card.css'
 import { useStore } from '../react/store.ts'
 import { mountIsland } from '../react/island.tsx'
-import { DropdownMenu } from './account/menu.tsx'
 import { Tooltip } from './account/tooltip.tsx'
 import { ApproveDialog } from './approve-dialog.tsx'
-import { DisplayNameDialog } from './account/display-name-dialog.tsx'
+import { TextCardDialog } from './account/text-card-dialog.tsx'
 import { AvatarCropDialog } from './account/avatar-crop.tsx'
 import { HamburgerMenu } from './hamburger-menu.tsx'
 import { Favicon } from './favicon.tsx'
@@ -29,10 +28,9 @@ function App() {
       <SysMsg />
       <Favicon />
       <HamburgerMenu />
-      <DropdownMenu />
       <Tooltip />
       <ApproveDialog />
-      <DisplayNameDialog />
+      <TextCardDialog />
       <AvatarCropDialog />
       <div id="app" className={classes} style={{ display: appShown ? 'flex' : 'none' }} data-menu-page={page === 'thread' ? undefined : `/${page}`}>
         <LeftPane />

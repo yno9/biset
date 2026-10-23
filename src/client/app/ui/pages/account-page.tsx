@@ -23,10 +23,10 @@ import { NewUserPage } from './new-user-page.tsx'
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
 /** Asks for the display name: a click on the name in the card, or the menu's "Set display name" while there is none. */
-function changeDisplayName(current?: string): void {
+function changeDisplayName(): void {
   const profile = getAccountConfig()?.profile
   if (!profile) return
-  void requestDisplayName(current ?? '').then(name => {
+  void requestDisplayName().then(name => {
     if (name === null) return
     return profile.setName(name.trim() || randomDisplayName()).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED)))
   }).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
@@ -108,7 +108,7 @@ function IdentityCard({ did }: { did: string }) {
           {/* Two lines: the display name, and under it the alias (the mail address). Without a name the alias is the one line, and takes the name's look. */}
           {own.name ? (
             <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name"><span className="acc-display-name" role={profile ? 'button' : undefined} data-tip={profile ? 'Change display name' : undefined}
-              onClick={profile ? event => { event.stopPropagation(); changeDisplayName(own.name) } : undefined}>{own.name}</span></span></div>
+              onClick={profile ? event => { event.stopPropagation(); changeDisplayName() } : undefined}>{own.name}</span></span></div>
           ) : null}
           <div id="cmd-acc-identity-alias-row"><span className={own.name ? 'acc-identity-alias' : 'acc-identity-alias as-name'}><AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span>
             {profile && !own.name ? <button type="button" className="acc-name-add" onClick={event => { event.stopPropagation(); changeDisplayName() }}>Set display name</button> : null}

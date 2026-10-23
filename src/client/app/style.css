@@ -1922,6 +1922,27 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .acc-file-btn.danger {
   color: #c0392b;
 }
+/* A card's icon buttons (the mediator's: edit the server, enable Tor) and its text button (log in). */
+.acc-icon-btn,
+.acc-text-btn {
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+.acc-text-btn { padding: 4px 10px; }
+.acc-icon-btn:hover,
+.acc-text-btn:hover {
+  color: var(--text);
+  background: rgba(128, 128, 128, 0.11);
+}
 .acc-nav-empty {
   padding: 24px 12px;
   color: var(--text-dim);
@@ -4113,32 +4134,6 @@ html.pwa-standalone #app {
 .conv-member-add:hover, .conv-member-leave:hover { border-color: var(--border, #d0d0d0); color: inherit }
 .conv-member-leave { opacity: .55 }
 
-/* ---- dropdown menu (ui/account/menu.tsx) ---- */
-.dropdown-menu {
-  position: fixed;
-  width: 180px;
-  background: var(--bg);
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  z-index: 10000;
-  padding: 4px;
-  font-size: 15.5px;
-}
-.dropdown-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--text);
-  font-size: 15.5px;
-}
-.dropdown-item:hover { background: rgba(128, 128, 128, 0.12); }
-.dropdown-item.danger { color: #ff3b30; }
 
 /* The tooltip for [data-tip] elements (account/tooltip.tsx). */
 .tip {

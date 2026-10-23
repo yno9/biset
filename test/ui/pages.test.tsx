@@ -13,7 +13,7 @@ vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async ()
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 import { AccountPage } from '../../src/client/app/ui/pages/account-page.tsx'
 import { ComposePage, configureComposePage } from '../../src/client/app/ui/pages/compose-page.tsx'
-import { DisplayNameDialog } from '../../src/client/app/ui/account/display-name-dialog.tsx'
+import { TextCardDialog } from '../../src/client/app/ui/account/text-card-dialog.tsx'
 import { ConfigPanel, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
 import { setPage, uiPage } from '../../src/client/app/ui/state.ts'
 
@@ -159,9 +159,9 @@ test('account: the display name is asked for in a card; Esc or a click outside c
   const setName = vi.fn(async () => {})
   const profile = { current: async () => ({}), setName, setAvatar: async () => {} }
   accountConfig.set(account({ profile }))
-  const { container } = render(<><AccountPage /><DisplayNameDialog /></>)
-  const card = () => container.querySelector('dialog#display-name-dialog') as HTMLDialogElement
-  const input = () => container.querySelector('#display-name-input') as HTMLInputElement
+  const { container } = render(<><AccountPage /><TextCardDialog /></>)
+  const card = () => container.querySelector('dialog#text-card-dialog') as HTMLDialogElement
+  const input = () => container.querySelector('#text-card-input') as HTMLInputElement
   fireEvent.click(await screen.findByText('Set display name'))
   await waitFor(() => expect(card().open).toBe(true))
   // Esc (the dialog's own close) answers nothing
@@ -180,7 +180,7 @@ test('account: the display name is asked for in a card; Esc or a click outside c
   const first = input().value
   expect(first).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/)
   const seen = new Set([first])
-  for (let index = 0; index < 20; index += 1) { fireEvent.click(container.querySelector('#display-name-reload')!); expect(input().value).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/); seen.add(input().value) }
+  for (let index = 0; index < 20; index += 1) { fireEvent.click(container.querySelector('#text-card-reload')!); expect(input().value).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/); seen.add(input().value) }
   expect(seen.size).toBeGreaterThan(1)
   fireEvent.click(card())
   await waitFor(() => expect(card().open).toBe(false))

@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
 import { didToHttpsUrl } from '../../../../protocol/webvh/identifier.ts'
 import { resolve } from '../../../../protocol/webvh/resolver.ts'
-import { openDropdownMenu, type MenuItem } from './menu.tsx'
+import { requestText } from './text-card-dialog.tsx'
 import { PgpKeyRow } from './pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from './state.ts'
 
@@ -132,35 +132,18 @@ function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; show
 }
 
 function MediatorCard({ config, wallet, didComm, showMessage }: { config: AccountPageConfig; wallet: Wallet; didComm: DidComm; showMessage: (text: string) => void }) {
-  const menuButton = useRef<HTMLButtonElement>(null)
   const loggedOut = didComm.loggedOut === true
   const report = (error: unknown) => showMessage(errorText(error))
 
-  const menuItems = (): MenuItem[] => loggedOut ? [
-    { label: 'Log in', onClick: () => { void wallet.onEnableMessaging?.().catch(report) } },
-  ] : [
-    {
-      label: 'Edit server', onClick: () => {
-        const url = window.prompt('DIDComm mediator URL', didComm.mediatorUrl)
-        // The same URL republishes the endpoint as configured now; no change of URL needed.
-        if (!url) return
-        void wallet.onEditMediator?.(url).catch(report)
-      },
-    },
-    {
-      label: 'Enable Tor', onClick: () => {
-        const onionUrl = window.prompt('DIDComm mediator Onion URL', didComm.onionUrl ?? '')?.trim()
-        if (!onionUrl) return
-        void wallet.onEnableTor?.(onionUrl).catch(report)
-      },
-    },
-    {
-      label: 'Log out', danger: true, onClick: () => {
-        if (!confirm(`Unregister this browser from ${coordinatorHost(didComm.mediatorUrl)}? DIDComm messages will stop delivering here until you register again.`)) return
-        void wallet.onLogOutMediator?.().catch(report)
-      },
-    },
-  ]
+  // The same URL republishes the endpoint as configured now; no change of URL needed.
+  const editServer = () => {
+    void requestText({ title: 'DIDComm mediator', value: didComm.mediatorUrl, placeholder: 'https://', hint: 'The address of the mediator your messages arrive through.' })
+      .then(url => { if (url?.trim()) return wallet.onEditMediator?.(url.trim()) }).catch(report)
+  }
+  const enableTor = () => {
+    void requestText({ title: 'Onion address', value: didComm.onionUrl ?? '', placeholder: 'http://….onion', hint: 'The mediator\'s Tor address, published beside its usual one.', button: 'Enable Tor' })
+      .then(onion => { if (onion?.trim()) return wallet.onEnableTor?.(onion.trim()) }).catch(report)
+  }
 
   const status = didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : ''
   const dotColor = didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : didComm.connecting ? '#ff9f0a' : '#34c759'
@@ -178,12 +161,25 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
             {status ? <span style={{ fontSize: 12, flexShrink: 1, minWidth: 0, color: didComm.error ? '#ff3b30' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span> : null}
           </div>
         </div>
-        {/* Same "⋮" affordance as the identity heading's own menu button. */}
-        <button ref={menuButton} type="button" aria-label="Mediator menu"
-          style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 4 }}
-          onClick={event => { event.stopPropagation(); openDropdownMenu(menuButton.current!, menuItems()) }}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" /></svg>
-        </button>
+        {/* Edit the server, enable Tor: an icon each, on the right (each opens a card). Logged out, the one thing to do is log in. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+          {loggedOut ? (
+            wallet.onEnableMessaging ? <button type="button" className="acc-text-btn" onClick={() => { void wallet.onEnableMessaging?.().catch(report) }}>Log in</button> : null
+          ) : (
+            <>
+              {wallet.onEditMediator ? (
+                <button type="button" className="acc-icon-btn" aria-label="Edit server" data-tip="Edit server" onClick={editServer}>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></svg>
+                </button>
+              ) : null}
+              {wallet.onEnableTor ? (
+                <button type="button" className="acc-icon-btn" aria-label="Enable Tor" data-tip="Enable Tor" onClick={enableTor}>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 2.5c0 2-1 3.2-2.2 4.4C6.2 8.6 4 11.6 4 15a8 7.5 0 0 0 16 0c0-3.4-2.2-6.4-5.8-8.1C13 5.7 12 4.5 12 2.5Z" /><path d="M12 7c-2 2-3 5-3 8s1 5 3 6c2-1 3-3 3-6s-1-6-3-8Z" /></svg>
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
