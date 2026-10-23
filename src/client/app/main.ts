@@ -27,7 +27,7 @@ import {
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { markSeenDone, setMarkSeenHandler } from './ui/seen.ts'
-import { setOwnDid } from './ui/did-display.ts'
+import { ownDefaultName, setOwnDid } from './ui/did-display.ts'
 import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler, showApp, showSysMsg } from './ui/shell.ts'
 import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
@@ -541,14 +541,14 @@ async function configureWalletAccountIfPresent(
       return before !== key.fingerprint
     }
     profileCard = {
-      async current() { const card = await ownCard(); return { ...(card && contactDisplayName(card) ? { name: contactDisplayName(card)! } : {}), ...(card && contactAvatar(card) ? { avatar: contactAvatar(card)! } : {}) } },
+      async current() { const card = await ownCard(); return { ...(card && contactDisplayName(card) ? { name: contactDisplayName(card)! } : ownDefaultName() ? { name: ownDefaultName()! } : {}), ...(card && contactAvatar(card) ? { avatar: contactAvatar(card)! } : {}) } },
       setName: name => writeOwnCard((cardId, card) => ownNamePatch(cardId, card, name)),
       setAvatar: avatar => writeOwnCard((cardId, card) => ownAvatarPatch(cardId, card, avatar)),
     }
     /** What this identity says about itself in what it signs: its name and picture (the base64 of the image), from its card. */
     const ownProfile = async (): Promise<OwnProfile & { avatarHash?: string }> => {
       const card = await ownCard()
-      const name = card && contactDisplayName(card), avatar = card && contactAvatar(card)
+      const name = (card && contactDisplayName(card)) ?? ownDefaultName(), avatar = card && contactAvatar(card)
       const base64 = avatar?.slice(avatar.indexOf(',') + 1)
       return { ...(name ? { name } : {}), ...(base64 ? { avatarBase64: base64, avatarHash: bytesToBase64url(sha256Bytes(new TextEncoder().encode(avatar!))).slice(0, 16) } : {}) }
     }

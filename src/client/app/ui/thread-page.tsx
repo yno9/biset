@@ -25,7 +25,7 @@ function Message({ message: { msg, bodyText } }: { message: ProcessedMessage }) 
   const sender = rawSender.startsWith('did:') ? displayName(rawSender) : rawSender
   return (
     <div className="t-msg" data-message-id={msg.message_id}>
-      <div className="t-avatar" style={{ background: avatarColor(msg.from || sender) }}>{avatarOf(msg.from) ? <img className="t-avatar-img" src={avatarOf(msg.from)} alt="" /> : sender.charAt(0).toUpperCase()}</div>
+      <div className="t-avatar" style={{ background: avatarColor(sender) }}>{avatarOf(msg.from) ? <img className="t-avatar-img" src={avatarOf(msg.from)} alt="" /> : sender.charAt(0).toUpperCase()}</div>
       <div className="t-meta">
         <div className="t-hdr">
           <span className="t-sender">{sender}</span>

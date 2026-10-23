@@ -22,7 +22,7 @@ const errorText = (error: unknown): string => error instanceof Error ? error.mes
 function changeDisplayName(current?: string): void {
   const profile = getAccountConfig()?.profile
   if (!profile) return
-  const name = window.prompt('Display name (shown to the people you write to; empty removes it)', current ?? '')
+  const name = window.prompt('Display name (shown to the people you write to; empty goes back to the name made for you)', current ?? '')
   if (name === null) return
   void profile.setName(name.trim() || null).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => getAccountConfig()?.showMessage?.(errorText(error)))
 }
@@ -118,7 +118,7 @@ function IdentityCard({ did }: { did: string }) {
     <div className="cmd-page-section" id="cmd-acc-identity-section">
       <div id="cmd-acc-identity-fields">
         <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? (own.avatar ? 'Change profile picture' : 'Set profile picture') : undefined}
-          style={{ background: avatarColor(label), ...(profile ? { cursor: 'pointer' } : {}) }}
+          style={{ background: avatarColor(own.name?.trim() || label), ...(profile ? { cursor: 'pointer' } : {}) }}
           // The picture is set where it is shown: a click on it asks for an image (not the card opening).
           onClick={profile ? event => {
             event.stopPropagation()
