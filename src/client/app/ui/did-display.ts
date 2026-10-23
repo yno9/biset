@@ -61,7 +61,11 @@ export function setContactNames(names: ReadonlyMap<string, string>): void { cont
 
 // The DIDs the contact cards name (by identity key): the host-less key has no address in it; the DID it stands for does.
 let contactDids: ReadonlyMap<string, string> = new Map()
-export function setContactDids(dids: ReadonlyMap<string, string>): void { contactDids = dids }
+// A card can itself name its person by the key (this identity's own card does: `didContactPatch(identityId)`); such a DID has no
+// host, so it tells nothing and is left out: only a DID with a host can stand in for the key.
+export function setContactDids(dids: ReadonlyMap<string, string>): void {
+  contactDids = new Map([...dids].filter(([, did]) => !isIdentityKey(did)))
+}
 
 /** A did:webvh with no host, the form identityKey makes: it names an identity, not a place. */
 const isIdentityKey = (did: string): boolean => scidOf(did) !== undefined && did.split(':').length === 3
@@ -73,7 +77,7 @@ export function setOwnDid(did: string | undefined): void { ownDid = did }
 
 /** The full DID an identity key stands for, as far as it is known: a contact's, or this identity's own. */
 function didOfKey(key: string): string | undefined {
-  return contactDids.get(key) ?? (ownDid && sameIdentity(ownDid, key) ? ownDid : undefined)
+  return (ownDid && sameIdentity(ownDid, key) ? ownDid : undefined) ?? contactDids.get(key)
 }
 
 export function displayName(did: string): string {

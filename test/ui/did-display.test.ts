@@ -31,6 +31,17 @@ test('an identity key shows the contact\'s name, else the address the contact\'s
   setContactDids(new Map())
 })
 
+test('a card that names its person by the key itself (this identity\'s own card) does not hide the address', () => {
+  const key = identityKey(ALICE)
+  setOwnDid(ALICE)
+  setContactNames(new Map())
+  setContactDids(new Map([[key, key]])) // the own card's public DID is the key: no host, no help
+  expect(displayName(key)).toBe('alice@did.md')
+  setOwnDid(undefined)
+  expect(displayName(key)).toBe(key)
+  setContactDids(new Map())
+})
+
 test('this identity\'s own key shows the address of its own DID, even with no contact card', () => {
   setOwnDid(ALICE)
   expect(displayName(identityKey(ALICE))).toBe('alice@did.md')
