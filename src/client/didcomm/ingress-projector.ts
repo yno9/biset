@@ -19,7 +19,7 @@ import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
 import { storedEncryptedBody } from '../pgp/stored.ts'
-import { bridgeDidOfAddress, bridgeHostOf, mailAddressOfBridgeDid } from '../pgp/autocrypt.ts'
+import { mailAddressOfBridgeDid } from '../pgp/autocrypt.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/message.ts'
@@ -33,9 +33,6 @@ export interface OwnDidCommKey { kid: string; x25519PrivateKey: Uint8Array }
 
 export interface DidCommIngressProjectorOptions {
   identityId: IdentityId
-  /** The mail bridges this client uses (the hosts of its `mailGateways`). A delivery failure one of them reports is filed in the conversation
-   * with the address it could not deliver to, next to the message it is about, and not in the bridge's own conversation. */
-  bridgeHosts?: readonly string[]
   actorDeviceId: DeviceId
   /** This device's key for the JWE's addressed recipient kid. Unknown kids
    * fail closed. */
@@ -371,7 +368,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
         email: {
           id: dedupeId,
           // A thread is named by an id: compared case-insensitively (DIDComm v2.1).
-          threadId: group ? didcommGroupAddress((msg.thid ?? msg.id).toLowerCase()) : didCommThreadId(this.options.identityId, failedDeliveryOf(msg, senderDid, this.options.bridgeHosts) ?? senderDid),
+          threadId: group ? didcommGroupAddress((msg.thid ?? msg.id).toLowerCase()) : didCommThreadId(this.options.identityId, senderDid),
           mailboxIds: { inbox: true },
           keywords: {},
           receivedAt: createdAt,
@@ -412,21 +409,6 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     })
     return { ...commit, checkpointId: commit.projection.state }
   }
-}
-
-/**
- * A delivery failure a mail bridge reports (didmail PROTOCOL.md §7.2): a message from the bridge's own address whose body says what
- * went wrong (`problem: { code, address, messageId }`). It is about a message this identity sent to `address`, whose conversation is with
- * the bridge DID of that address: so the DID returned is that one, and the notice lands there, below the message it is about, rather
- * than in the bridge's own conversation where nobody would look. Only a bridge this client uses can say so (an authenticated sender
- * on one of `bridgeHosts`); anything else is an ordinary message in its sender's conversation.
- */
-function failedDeliveryOf(msg: DidCommPlaintext, senderDid: string, bridgeHosts: readonly string[] | undefined): string | undefined {
-  const host = bridgeHostOf(senderDid)
-  if (!host || !bridgeHosts?.some(known => known.toLowerCase() === host.toLowerCase())) return undefined
-  const problem = ((msg.body ?? {}) as { problem?: { address?: unknown; messageId?: unknown } }).problem
-  if (typeof problem?.address !== 'string' || typeof problem.messageId !== 'string') return undefined
-  return bridgeDidOfAddress(host, problem.address)
 }
 
 /** What a control record keeps of a problem-report: its code, the text it

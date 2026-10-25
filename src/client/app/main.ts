@@ -757,7 +757,6 @@ async function configureWalletAccountIfPresent(
         // message arrives at this device's own key in the DID document.
         const walletDidCommProjector = new DidCommIngressProjector({
           identityId: identityId,
-          bridgeHosts: readBisetConfig().mailGateways,
           actorDeviceId: device.deviceId,
           resolveOwnKey: kid => rotationManager.ownKey(kid),
           resolveSenderKey: resolveAnyDidCommSenderKey,
