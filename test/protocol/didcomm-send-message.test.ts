@@ -115,6 +115,20 @@ describe('sendDidCommMessage', () => {
     })
   })
 
+  test('addressed by a did:web that points to the recipient\'s did:vh, the message goes to the did:vh (its keys, its `to`), the did:web was only the way to find it', async () => {
+    const to = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
+    const web = 'did:web:test.example'
+    const shadow = { ...JSON.parse(JSON.stringify(to.log[0]!.state).split(to.did).join(web)), alsoKnownAs: [`${to.did}?src=https://test.example`] }
+    const captured: { body?: string; url?: string } = {}
+    const inner = testFetch({ log: to.log, postCapture: captured })
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => String(input).split('?')[0] === 'https://test.example/.well-known/did.json' ? Response.json(shadow) : inner(input, init)) as typeof fetch
+    const result = await sendDidCommMessage(web, 'hi', { fromKid: senderKid, x25519PrivateKey: senderX, fetch: fetchImpl })
+    expect(result.ok).toBe(true)
+    const jwe = parseJwe(JSON.parse(captured.body!))
+    const { plaintext } = await unpackAuthcrypt(jwe!, { kid: to.kid, privateKey: recipientX }, async () => x25519.getPublicKey(senderX))
+    expect(JSON.parse(new TextDecoder().decode(plaintext)).to).toEqual([to.did])
+  })
+
   test('a queued message keeps its id and time; a group message carries its thread and every participant in `to`', () => {
     const to = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
     const captured: { body?: string; url?: string } = {}

@@ -22,8 +22,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { b64url, b64urlToBytes } from './crypto.ts'
 import { authenticationMethodOf, authenticationSigningKey, JWS_ALGORITHMS, SignatureError, verifyJwsSignature, type JwsAlgorithm, type SigningKey } from './jws.ts'
 import type { LogEntry } from '../vh/log.ts'
-import { fetchDidLog } from '../did-resolve.ts'
-import { resolveDidWeb } from './did-web.ts'
+import { fetchDidLog, resolveTrustedDid } from '../did-resolve.ts'
 import { decodePeerDid2 } from './peer.ts'
 
 export interface FromPriorClaims {
@@ -187,9 +186,9 @@ export function fromPriorKeyResolver(fetchImpl: typeof fetch = fetch): FromPrior
   return async (iss, kid) => {
     if (iss.startsWith('did:peer:2.')) return signingKeyOf(decodePeerDid2(iss) as unknown as DocumentMethods, kid)
     if (iss.startsWith('did:web:')) {
-      const document = await resolveDidWeb(iss, fetchImpl)
-      if (!document) throw new Error(`from_prior: ${iss} does not resolve`)
-      return signingKeyOf(document as DocumentMethods, kid)
+      const trusted = await resolveTrustedDid(iss, { fetch: fetchImpl })
+      if (!trusted) throw new Error(`from_prior: ${iss} does not resolve`)
+      return signingKeyOf(trusted.document as unknown as DocumentMethods, trusted.did === iss ? kid : `${trusted.did}${kid.slice(iss.length)}`)
     }
     if (!iss.startsWith('did:vh:')) throw new FromPriorError(`unsupported DID method for iss ${iss}`)
     const found = await fetchDidLog(iss, { fetch: fetchImpl })

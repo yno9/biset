@@ -3,14 +3,16 @@
 // shadow, derived from the log; didmail's bridges are did:web too). Callers that only need "the document of this DID" call this
 // and do not branch on the method themselves.
 import type { DidDocument } from './vh/document.ts'
-import { resolveDidWeb } from './didcomm/did-web.ts'
+import { resolveDidWeb, type DidWebDocument } from './didcomm/did-web.ts'
+import { isVhDid } from './vh/identifier.ts'
 import { fetchVhResolution, type VhLogSources } from './vh/fetch.ts'
 import type { LogEntry } from './vh/log.ts'
-import { didWebCandidates, didWebDocumentUrl, verifiedAddress } from './vh/didweb.ts'
+import { checkDidWebShadow, didWebCandidates, didWebDocumentUrl, verifiedAddress } from './vh/didweb.ts'
 import type { VersionMemory } from './freshness.ts'
 
 export interface DidResolveContext {
   fetch?: typeof fetch
+  links?: DidLinks
   /** Where to look for the log of a did:vh. */
   vh?: Omit<VhLogSources, 'fetch'>
   /** Refuses an old or forked log. */
@@ -25,6 +27,15 @@ export interface DidResolution {
   /** The web hosts a did:vh is known by (`alice.did.md`): from the contact's addresses and `alsoKnownAs`. */
   locationsOf?: (did: string) => readonly string[]
   memory?: VersionMemory
+  /** Which did:vh a did:web was found to be the shadow of (see `resolveTrustedDid`). */
+  links?: DidLinks
+}
+
+/** The did:web DIDs known to be shadows of a did:vh, remembered between loads: once a did:web is tied to a did:vh, only the did:vh
+ * is believed about it, even if the did:vh later stops naming the did:web. */
+export interface DidLinks {
+  get(webDid: string): string | undefined
+  set(webDid: string, vhDid: string): void
 }
 
 let configured: DidResolution = {}
@@ -80,4 +91,71 @@ export async function verifiedVhAddress(did: string, context: DidResolveContext 
     if (address) return address
   }
   return undefined
+}
+
+/** What to believe about a DID someone is reached at: the DID whose document counts, and that document. */
+export interface TrustedDid {
+  /** The DID to address, sign for and verify against: the did:vh of a did:web that is its shadow, else the DID itself. */
+  did: string
+  document: DidDocument | DidWebDocument
+  /** True when `did` is a did:vh reached through a did:web that points to it. */
+  linked: boolean
+}
+
+/** The did:vh a did:web document points to in `alsoKnownAs` (`did:vh:<SCID>` or `did:vh:<SCID>?src=…`), the hosts to look for its log
+ * at (the did:web's own host, and the host a `src` names), or undefined when it points to none. Two different did:vh DIDs are refused. */
+function vhPointerOf(webDid: string, document: DidWebDocument): { did: string; hosts: string[] } | undefined {
+  const found = new Map<string, string[]>()
+  const plain = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/
+  const own = /^did:web:([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/.exec(webDid)?.[1]
+  for (const alias of Array.isArray(document.alsoKnownAs) ? document.alsoKnownAs : []) {
+    if (typeof alias !== 'string' || !alias.startsWith('did:vh:')) continue
+    const [did = '', query] = alias.split('?', 2)
+    if (!isVhDid(did)) continue
+    const hosts = found.get(did) ?? (own ? [own] : [])
+    try {
+      const src = query ? new URLSearchParams(query).get('src') : null
+      const url = src ? new URL(src) : undefined
+      if (url && url.protocol === 'https:' && !url.port && (url.pathname === '/' || url.pathname === '') && plain.test(url.hostname)) hosts.push(url.hostname)
+    } catch { /* an unreadable src names no host */ }
+    found.set(did, hosts)
+  }
+  if (found.size > 1) throw new Error(`${webDid} points to more than one did:vh`)
+  const [first] = found
+  return first ? { did: first[0], hosts: [...new Set(first[1])] } : undefined
+}
+
+/**
+ * Whom to believe when someone is addressed by a did:web.
+ *  - Already known to be the shadow of a did:vh (`links`): only that did:vh counts, from its own log. The did:web is not asked at all,
+ *    so a host that changes its document, or a did:vh that stops naming the did:web, does not end the relationship.
+ *  - Its document points to a did:vh: that did:vh's log is fetched and verified, it must name the did:web, and the did:web document
+ *    must be exactly what the log derives. Then it is remembered, and only the did:vh counts from here on. If any of that fails, the
+ *    DID is refused: it does not fall back to the did:web document.
+ *  - Its document points to none (a mail bridge, a mediator): the did:web document is believed as it is.
+ * A did:vh (or anything else) is its own answer. null when nothing resolves.
+ */
+export async function resolveTrustedDid(did: string, context: DidResolveContext = {}): Promise<TrustedDid | null> {
+  if (!did.startsWith('did:web:')) {
+    const document = await resolveDidDocument(did, context)
+    return document ? { did, document, linked: false } : null
+  }
+  const links = context.links ?? configured.links
+  const pinned = links?.get(did)
+  if (pinned) {
+    const document = await resolveDidDocument(pinned, context)
+    if (!document) throw new Error(`${did} is the shadow of ${pinned}, which does not resolve`)
+    return { did: pinned, document, linked: true }
+  }
+  const web = await resolveDidWeb(did, context.fetch ?? fetch)
+  if (!web) return null
+  const pointer = vhPointerOf(did, web)
+  if (!pointer) return { did, document: web, linked: false }
+  for (const host of pointer.hosts) rememberVhLocation(pointer.did, host)
+  const found = await fetchDidLog(pointer.did, context)
+  if (!found?.document) throw new Error(`${did} points to ${pointer.did}, whose log was not found`)
+  const check = checkDidWebShadow(found.document as unknown as Record<string, unknown>, did, web)
+  if (!check.ok) throw new Error(`${did} points to ${pointer.did}, which does not confirm it: ${check.reason}`)
+  ;(context.links ?? configured.links)?.set(did, pointer.did)
+  return { did: pointer.did, document: found.document, linked: true }
 }

@@ -6,7 +6,8 @@
 // UI code (tsconfig.mediator.json's own header explains why: proving a
 // deploy unit stays free of Vault/UI coupling is the whole point of the
 // DOM-less check). send-message.ts builds chat messages on it.
-import { resolveDidDocument } from '../../protocol/did-resolve.ts'
+import { resolveDidDocument, resolveTrustedDid } from '../../protocol/did-resolve.ts'
+import type { DidDocument } from '../../protocol/vh/document.ts'
 import { didCommAccepted, didCommPost, packAuthcrypt, recipientsForSender, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { wrapForwardHops, type ForwardHop } from '../../protocol/didcomm/forward-wrap.ts'
@@ -15,7 +16,7 @@ import { decodePeerDid2, peerKeyAgreementRecipients } from '../../protocol/didco
 import { didCommRouteFromDocument } from '../../protocol/didcomm/doc-route.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { isTorEnvironment } from './mediator-endpoints.ts'
-import { resolveDidWeb, didWebDidCommRoute } from '../../protocol/didcomm/did-web.ts'
+import { didWebDidCommRoute, type DidWebDocument } from '../../protocol/didcomm/did-web.ts'
 
 /** A did:peer:2 counterpart -- a mediator, or another device/bot addressed
  * directly by its did:peer rather than a did:vh identity (e.g. a service
@@ -34,6 +35,9 @@ function isDidPeer(did: string): boolean {
 interface FrontDoorRoute {
   /** Every keyAgreement key of the recipient DID -- one per device. */
   recipients: X25519Recipient[]
+  /** The DID the message is for: the recipient's did:vh when it was addressed by a did:web that points to one (the did:web was only
+   * the way to find it), else the DID it was addressed by. */
+  did: string
   /** Where to POST: the recipient's own endpoint, or its mediator's. */
   endpointUri: string
   /** The mediators to wrap Forwards for, outermost first; none means deliver directly. */
@@ -51,6 +55,7 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
   const preferOnion = isTorEnvironment()
   let recipients: X25519Recipient[]
   let endpoint: { uri: string; routingKeys: string[] }
+  let canonical = toDid
 
   if (isDidPeer(toDid)) {
     const doc = decodePeerDid2(toDid)
@@ -60,11 +65,21 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
     recipients = peerKeyAgreementRecipients(doc)
     endpoint = { uri: published.uri, routingKeys: published.routing_keys ?? [] }
   } else if (toDid.startsWith('did:web:')) {
-    const doc = await resolveDidWeb(toDid, fetchImpl)
-    if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
-    const route = didWebDidCommRoute(doc)
-    recipients = route.recipients
-    endpoint = { uri: route.uri, routingKeys: route.routingKeys }
+    // A did:web that points to a did:vh is only the way to find it: from there on the did:vh is the recipient (resolveTrustedDid).
+    const trusted = await resolveTrustedDid(toDid, { fetch: fetchImpl })
+    if (!trusted) throw new Error(`${toDid} does not resolve to a published identity`)
+    canonical = trusted.did
+    if (trusted.linked) {
+      const route = didCommRouteFromDocument(trusted.document as DidDocument, { preferOnion })
+      if (!route.endpoint?.uri) throw new Error(`${trusted.did} has no DIDComm service endpoint published`)
+      if (route.recipients.length === 0) throw new Error(`${trusted.did} has no keyAgreement key published -- they need to enable DIDComm first`)
+      recipients = route.recipients
+      endpoint = { uri: route.endpoint.uri, routingKeys: route.endpoint.routingKeys ?? [] }
+    } else {
+      const route = didWebDidCommRoute(trusted.document as DidWebDocument)
+      recipients = route.recipients
+      endpoint = { uri: route.uri, routingKeys: route.routingKeys }
+    }
   } else {
     const doc = await resolveDidDocument(toDid, { fetch: fetchImpl })
     if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
@@ -77,7 +92,7 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
   }
 
   const expanded = await expandEndpoint(endpoint, fetchImpl, { preferOnion })
-  return { recipients, endpointUri: expanded.url, hops: expanded.hops }
+  return { recipients, did: canonical, endpointUri: expanded.url, hops: expanded.hops }
 }
 
 export type DidCommSendResult = { ok: true } | { ok: false; error: string }
@@ -119,7 +134,7 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 
-  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], opts.audience ?? toDid, { id: opts.id, createdTime: opts.createdTime, thid: opts.thid, attachments: opts.attachments, fromPrior: opts.fromPrior })
+  const plaintext = buildPlaintext(type, body, opts.fromKid.split('#', 1)[0], opts.audience ?? route.did, { id: opts.id, createdTime: opts.createdTime, thid: opts.thid, attachments: opts.attachments, fromPrior: opts.fromPrior })
   const plaintextBytes = new TextEncoder().encode(JSON.stringify(plaintext))
   const sender = { kid: opts.fromKid, privateKey: opts.x25519PrivateKey }
 
