@@ -570,6 +570,8 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   const resolvedPending = await timedStep('    session: resolvedPendingAuthorization', resolvedPendingAuthorization(pending, did))
   if (options.presented) verifyPresented(options.presented, resolvedPending)
   const capability = await timedStep('    session: capabilityFromResponse', capabilityFromResponse(value, resolvedPending))
+  // The identity is published at its handle: that is where its log is looked for (a did:vh names no host).
+  rememberVhLocation(resolvedPending.did, resolvedPending.handle)
   const resolved = await timedStep('    session: resolveDidDocument(did)', resolveDidDocument(resolvedPending.did, { fetch: freshFetch() }))
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
   // The credential stands only while the DID document still names the key that signed it.
@@ -1006,6 +1008,7 @@ export async function disconnectDidMdWallet(): Promise<void> {
 export async function openDidMdWalletVaultDevice(): Promise<DidMdVaultDevice> {
   const session = await readDidMdDeviceSession()
   if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Connect did.md Wallet again to use this Biset device')
+  rememberVhLocation(session.did, session.handle)
   return { did: session.did, handle: session.handle, deviceId: session.vaultDeviceId }
 }
 
