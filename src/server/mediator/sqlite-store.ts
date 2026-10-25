@@ -203,11 +203,11 @@ export class SqliteMediatorStore {
     return row ? Number(row.updated_at) : undefined
   }
 
-  /** The did:webvh DIDs that hold at least one inbox -- the ones whose keys
+  /** The did:webvh and did:vh DIDs that hold at least one inbox -- the ones whose keys
    * have to be checked again from time to time, so a device removed from its
    * DID loses its inbox. */
   webvhRecipientDids(): string[] {
-    return this.database.query<{ recipient_did: string }, []>("SELECT DISTINCT recipient_did FROM inboxes WHERE recipient_did LIKE 'did:webvh:%'").all().map(row => row.recipient_did)
+    return this.database.query<{ recipient_did: string }, []>("SELECT DISTINCT recipient_did FROM inboxes WHERE recipient_did LIKE 'did:webvh:%' OR recipient_did LIKE 'did:vh:%'").all().map(row => row.recipient_did)
   }
 
   /** The X25519 key (hex) the latest held state lists for this kid. */

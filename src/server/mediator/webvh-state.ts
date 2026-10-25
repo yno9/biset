@@ -18,6 +18,8 @@ import { signingKeyOfMethod, type SigningKey } from '../../protocol/didcomm/jws.
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { parseLog, entryVersionNumber } from '../../protocol/webvh/log.ts'
 import { resolveEntries } from '../../protocol/webvh/resolver.ts'
+import { resolveVhEntries } from '../../protocol/vh/resolver.ts'
+import { isVhDid } from '../../protocol/vh/identifier.ts'
 import { didToHttpsUrl } from '../../protocol/webvh/identifier.ts'
 import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import type { WebvhDidDocument } from '../../protocol/webvh/document.ts'
@@ -83,6 +85,28 @@ export function webvhStateFromLog(jsonl: string): WebvhState {
   const doc = resolveEntries(did, entries)
   if (!doc || doc.id !== did) throw new Error('the log does not resolve to its own DID')
   return { did: doc.id, versionNumber: entryVersionNumber(entries[entries.length - 1]!.versionId), keys: keyAgreementKeys(doc), authentication: authenticationKeys(doc) }
+}
+
+/** Verifies a did:vh log (JSONL) and reads its keyAgreement state. Throws if the log is not valid or the DID is deactivated.
+ * A did:vh DID names no place, so the DID is the one every entry says (the resolver checks all of them agree and match the SCID). */
+export function vhStateFromLog(jsonl: string): WebvhState {
+  const entries = parseLog(jsonl)
+  const did = (entries[0]?.state as { id?: unknown } | undefined)?.id
+  if (typeof did !== 'string' || !isVhDid(did)) throw new Error('the log does not name a did:vh')
+  const resolved = resolveVhEntries(did, entries)
+  if (!resolved.doc) throw new Error('the did:vh is deactivated')
+  return { did: resolved.did, versionNumber: resolved.latestVersionNumber, keys: keyAgreementKeys(resolved.doc), authentication: authenticationKeys(resolved.doc) }
+}
+
+/** A DID whose state is read from a verifiable log: a did:webvh or a did:vh. */
+export function isLogDid(did: string): boolean {
+  return did.startsWith('did:webvh:') || did.startsWith('did:vh:')
+}
+
+/** Verifies a log of either method and reads its state; the method is what the first entry's DID says. */
+export function didStateFromLog(jsonl: string): WebvhState {
+  const first = parseLog(jsonl)[0]?.state as { id?: unknown } | undefined
+  return typeof first?.id === 'string' && first.id.startsWith('did:vh:') ? vhStateFromLog(jsonl) : webvhStateFromLog(jsonl)
 }
 
 /** A host NAME the mediator may dial for a DID's log. The DID -- so the host --
@@ -171,41 +195,11 @@ async function systemLookup(hostname: string): Promise<string[]> {
  * with a log that predates a key added moments ago (the host serves public
  * reads with `s-maxage=30` and does not purge on write). */
 export function createNetworkWebvhResolver(options: NetworkResolverOptions = {}): WebvhStateResolver {
-  const fetchImpl = options.fetch ?? fetch
-  const timeoutMs = options.timeoutMs ?? 5000
-  const maxLogBytes = options.maxLogBytes ?? 1024 * 1024
-  const allowHost = options.allowHost ?? isPublicHostname
-  const lookup = options.lookup === null ? undefined : options.lookup ?? systemLookup
-
   return async did => {
     let url: URL
     try { url = new URL(didToHttpsUrl(did)) } catch { return null }
-    if (url.protocol !== 'https:' || url.port !== '' || !allowHost(url.hostname)) return null
-    if (lookup) {
-      let addresses: string[]
-      try { addresses = await lookup(url.hostname.replace(/\.+$/, '')) } catch (error) {
-        const code = (error as { code?: string }).code
-        if (code === 'ENOTFOUND' || code === 'ENODATA') return null
-        throw new WebvhUnavailable(`could not look up ${url.hostname}: ${error instanceof Error ? error.message : String(error)}`)
-      }
-      if (addresses.length === 0 || !addresses.every(isPublicAddress)) return null
-    }
-    url.searchParams.set('_', `${Date.now()}${Math.random().toString(36).slice(2, 8)}`)
-
-    let response: Response
-    try {
-      response = await fetchImpl(url, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/jsonl, text/plain, */*' } })
-    } catch (error) {
-      throw new WebvhUnavailable(`could not fetch the log of ${did}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    if (response.status === 404 || response.status === 410) return null
-    if (!response.ok) throw new WebvhUnavailable(`the log of ${did} answered HTTP ${response.status}`)
-    if (Number(response.headers.get('content-length') ?? 0) > maxLogBytes) return null
-    let text: string
-    try { text = await response.text() } catch (error) {
-      throw new WebvhUnavailable(`could not read the log of ${did}: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    if (text.length > maxLogBytes) return null
+    const text = await guardedLogText(url, did, options)
+    if (text === null) return null
     try {
       const state = webvhStateFromLog(text)
       // Only the DID that was asked about: a log that names another DID says nothing about it.
@@ -214,4 +208,88 @@ export function createNetworkWebvhResolver(options: NetworkResolverOptions = {})
       return null
     }
   }
+}
+
+/**
+ * The text of the log at `url`, or null when there is none to read (not a public https host, not found, too large). The same
+ * guards for every DID method: https only, a public host (the name AND everything it resolves to), no redirects, a time and
+ * size limit (one fetch can still be pointed elsewhere if DNS changes between the check and the connection -- the mediator
+ * should have no route to private networks regardless), and a unique query string so the host's CDN cannot answer with a log
+ * that predates a key added moments ago (the host serves public reads with `s-maxage=30` and does not purge on write).
+ * Throws `WebvhUnavailable` when the host could not be asked.
+ */
+async function guardedLogText(url: URL, did: string, options: NetworkResolverOptions): Promise<string | null> {
+  const fetchImpl = options.fetch ?? fetch
+  const timeoutMs = options.timeoutMs ?? 5000
+  const maxLogBytes = options.maxLogBytes ?? 1024 * 1024
+  const allowHost = options.allowHost ?? isPublicHostname
+  const lookup = options.lookup === null ? undefined : options.lookup ?? systemLookup
+  if (url.protocol !== 'https:' || url.port !== '' || !allowHost(url.hostname)) return null
+  if (lookup) {
+    let addresses: string[]
+    try { addresses = await lookup(url.hostname.replace(/\.+$/, '')) } catch (error) {
+      const code = (error as { code?: string }).code
+      if (code === 'ENOTFOUND' || code === 'ENODATA') return null
+      throw new WebvhUnavailable(`could not look up ${url.hostname}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (addresses.length === 0 || !addresses.every(isPublicAddress)) return null
+  }
+  url.searchParams.set('_', `${Date.now()}${Math.random().toString(36).slice(2, 8)}`)
+
+  let response: Response
+  try {
+    response = await fetchImpl(url, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/jsonl, text/plain, */*' } })
+  } catch (error) {
+    throw new WebvhUnavailable(`could not fetch the log of ${did}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (response.status === 404 || response.status === 410) return null
+  if (!response.ok) throw new WebvhUnavailable(`the log of ${did} answered HTTP ${response.status}`)
+  if (Number(response.headers.get('content-length') ?? 0) > maxLogBytes) return null
+  let text: string
+  try { text = await response.text() } catch (error) {
+    throw new WebvhUnavailable(`could not read the log of ${did}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  return text.length > maxLogBytes ? null : text
+}
+
+export interface VhResolverOptions extends NetworkResolverOptions {
+  /**
+   * Origins that serve `GET /log?scid=` (a did.md identity host does, under any name). A did:vh DID names no place, so these
+   * are where its log is looked for: chosen by the operator, never by the DID or a message. The first that has the log wins;
+   * a log that does not verify is not a reason to ask the next.
+   */
+  watchers: string[]
+}
+
+/** Resolves a did:vh by asking the operator's watchers for its log by SCID (same guards as the did:webvh resolver). */
+export function createVhWatcherResolver(options: VhResolverOptions): WebvhStateResolver {
+  return async did => {
+    if (!isVhDid(did)) return null
+    const scid = did.slice('did:vh:'.length)
+    let unavailable: WebvhUnavailable | undefined
+    for (const watcher of options.watchers) {
+      let url: URL
+      try { url = new URL(`/log?scid=${scid}`, watcher) } catch { continue }
+      let text: string | null
+      try { text = await guardedLogText(url, did, options) } catch (error) {
+        if (error instanceof WebvhUnavailable) { unavailable = error; continue }
+        throw error
+      }
+      if (text === null) continue
+      try {
+        const state = vhStateFromLog(text)
+        return state.did === did ? state : null
+      } catch {
+        return null
+      }
+    }
+    // Not found anywhere it could be asked: unknown. But a watcher that could not be asked is "retry later", not "no such DID".
+    if (unavailable) throw unavailable
+    return null
+  }
+}
+
+/** One resolver for the DIDs the mediator reads logs of: did:webvh by the DID's own host, did:vh by the operator's watchers (if any). */
+export function createDidStateResolver(resolvers: { webvh: WebvhStateResolver; vh?: WebvhStateResolver }): WebvhStateResolver {
+  return did => did.startsWith('did:vh:') ? (resolvers.vh ? resolvers.vh(did) : Promise.resolve(null)) : resolvers.webvh(did)
 }

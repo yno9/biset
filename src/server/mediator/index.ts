@@ -53,6 +53,9 @@ const deployment = await createMediatorDeployment({
   relayUpstreamUrl: process.env.MEDIATOR_RELAY_UPSTREAM_URL,
   // MEDIATOR_WEBVH_RESOLVE=0: dial out to nothing; only pushed did:webvh logs are known.
   webvh: { resolve: process.env.MEDIATOR_WEBVH_RESOLVE !== '0', refreshSeconds: envInteger('MEDIATOR_WEBVH_REFRESH_SECONDS', 300, 10, 24 * 60 * 60) },
+  // MEDIATOR_VH_WATCHERS=https://did.md: origins that serve GET /log?scid= (a did.md identity host does, under any name). A did:vh DID names
+  // no place, so this is where its log is looked for; unset, this mediator does not know a did:vh's keys.
+  vh: { watchers: (process.env.MEDIATOR_VH_WATCHERS ?? '').split(',').map(value => value.trim()).filter(Boolean) },
 })
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

@@ -52,7 +52,7 @@ import {
 import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { defaultDeviceLabel } from '../../protocol/didcomm/mediator-device.ts'
 import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
-import { webvhStateFromLog, WebvhUnavailable, type WebvhStateResolver } from './webvh-state.ts'
+import { didStateFromLog, isLogDid, WebvhUnavailable, type WebvhStateResolver } from './webvh-state.ts'
 import { peerMediatorIdentity, type MediatorIdentity } from './identity.ts'
 import { authenticationSigningKey, DIDCOMM_SIGNED_MEDIA_TYPE, signDidCommMessage, SignatureError, type SigningKey } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload } from '../../protocol/didcomm/open.ts'
@@ -169,7 +169,7 @@ export function createMediator({
   webvhFreshMs = 5 * 60_000, webvhRetryMs = 10_000, webvhStaleMs = 60 * 60_000, now = Date.now, registration,
 }: MediatorOptions): MediatorHandler {
   const allowedDomains = registration?.allowedDidDomains?.length ? registration.allowedDidDomains.map(domain => domain.toLowerCase()) : undefined
-  /** Whether a did:webvh may use this mediator at all. */
+  /** Whether a did:webvh may use this mediator at all. A did:vh names no domain to judge: its log is read only from the operator's own watchers, which is the allowance. */
   function didAllowed(did: string): boolean {
     if (!allowedDomains || !did.startsWith('did:webvh:')) return true
     let domain: string
@@ -194,7 +194,7 @@ export function createMediator({
    * that is not (or is no longer) a keyAgreement key. */
   function heldKey(kid: string): Uint8Array {
     const did = didOf(kid)
-    if (did.startsWith('did:webvh:')) {
+    if (isLogDid(did)) {
       const hex = store.webvhKey(did, kid)
       if (!hex) {
         throw new UnknownWebvhState(
@@ -238,7 +238,7 @@ export function createMediator({
   async function keyAgreementKey(kid: string): Promise<Uint8Array> {
     const did = didOf(kid)
     if (!didAllowed(did)) throw new DidNotAllowed(`${did} is not on a domain this mediator serves`)
-    if (resolveWebvh && did.startsWith('did:webvh:')) {
+    if (resolveWebvh && isLogDid(did)) {
       const check = webvhChecks.get(did)
       const listed = store.webvhKey(did, kid) !== undefined
       const fresh = check?.confirmedAt !== undefined && now() - check.confirmedAt < webvhFreshMs
@@ -358,7 +358,7 @@ export function createMediator({
   async function signingKey(kid: string): Promise<SigningKey> {
     const did = kid.split('#', 1)[0]!
     if (did.startsWith('did:peer:2.')) return authenticationSigningKey(decodePeerDid2(did) as never, kid)
-    if (did.startsWith('did:webvh:') && resolveWebvh) {
+    if (isLogDid(did) && resolveWebvh) {
       if (!didAllowed(did)) throw new DidNotAllowed(`${did} is not on a domain this mediator serves`)
       const key = (await resolveWebvh(did))?.authentication?.[kid]
       if (key) return key
@@ -372,11 +372,11 @@ export function createMediator({
    * full here and kept only if it is newer than what this mediator already
    * holds for that DID. */
   async function acceptWebvhLog(req: Request): Promise<Response> {
-    let state: ReturnType<typeof webvhStateFromLog>
+    let state: ReturnType<typeof didStateFromLog>
     try {
-      state = webvhStateFromLog(await req.text())
+      state = didStateFromLog(await req.text())
     } catch (error) {
-      return Response.json({ error: `not a valid did:webvh log: ${error instanceof Error ? error.message : String(error)}` }, { status: 400 })
+      return Response.json({ error: `not a valid did:webvh or did:vh log: ${error instanceof Error ? error.message : String(error)}` }, { status: 400 })
     }
     if (!didAllowed(state.did)) return Response.json({ error: `${state.did} is not on a domain this mediator serves` }, { status: 403 })
     const outcome = store.recordWebvhState(state.did, state.versionNumber, state.keys)

@@ -1,0 +1,4368 @@
+{
+ "now": "2026-06-01T00:00:00Z",
+ "vectors": [
+  {
+   "name": "valid/single-entry",
+   "note": "A created log.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": true,
+    "versionNumber": 1,
+    "deactivated": false
+   }
+  },
+  {
+   "name": "valid/key-agreement",
+   "note": "A document with an X25519 keyAgreement key and a DIDComm service (what a mediator reads).",
+   "did": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp",
+   "log": [
+    {
+     "versionId": "1-QmYtRtpdRmvrynw7AXLk9HfLNvRy5yFo9L7giwsxvuEGW1",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       },
+       {
+        "id": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp#ka",
+        "type": "Multikey",
+        "controller": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp",
+        "publicKeyMultibase": "z6LSc5P8RANd2LzwAtFQHwHkr1GJvZXTz1cBgegqhdHd5Kac"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp#k"
+      ],
+      "keyAgreement": [
+       "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp#ka"
+      ],
+      "service": [
+       {
+        "id": "did:vh:QmRyRBtGATetzVbMnLSvcWqGBv2xMvxpctaeCe7CizkDxp#didcomm",
+        "type": "DIDCommMessaging",
+        "serviceEndpoint": {
+         "uri": "https://mediator.example/"
+        }
+       }
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z5uHe4vVLUBC8Ls6NxBZ66zUjWtuLreDFNwGuY3A1zxpXecrkx2d3hKR3tNzJbSEP8j4g4DhYZaA6RtMDLgAytjyM"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": true,
+    "versionNumber": 1,
+    "deactivated": false
+   }
+  },
+  {
+   "name": "valid/rotation-without-prerotation",
+   "note": "Entry 2 is signed by the keys of entry 1 and introduces k1; entry 3 is signed by k1.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmP5URR71TVRTsFpjvXQkpmJgQC1X9fNXjNTUYPFmqviDx",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4Z2ydUNTRBb9RLc33n2XhRkkHwKvVV2fpfXrQkQema9sJ8BcGNwegHTP6TQhnqtdWMVNnAgNMv2Yzbi5saFwfFto"
+      }
+     ]
+    },
+    {
+     "versionId": "3-QmTdCCsQXW17F2HgxWEbgxgtnmMEUcDwJHzXMZCU6nF8xt",
+     "versionTime": "2026-01-01T00:00:20Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ],
+      "service": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#s",
+        "type": "S",
+        "serviceEndpoint": "https://s.example"
+       }
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv#z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv",
+       "created": "2026-01-01T00:00:20Z",
+       "proofValue": "z5g1VEJWCbE1ZfHB572pYmKkrTkQPFdEd7WoRwR25N4SJokpEnh1ZM81nhMJM5qNd8Npqo2MbNHHqzoZED79Rxgc6"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": true,
+    "versionNumber": 3,
+    "deactivated": false
+   }
+  },
+  {
+   "name": "valid/version-number",
+   "note": "Selecting version 2 of three.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmP5URR71TVRTsFpjvXQkpmJgQC1X9fNXjNTUYPFmqviDx",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4Z2ydUNTRBb9RLc33n2XhRkkHwKvVV2fpfXrQkQema9sJ8BcGNwegHTP6TQhnqtdWMVNnAgNMv2Yzbi5saFwfFto"
+      }
+     ]
+    },
+    {
+     "versionId": "3-QmTdCCsQXW17F2HgxWEbgxgtnmMEUcDwJHzXMZCU6nF8xt",
+     "versionTime": "2026-01-01T00:00:20Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ],
+      "service": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#s",
+        "type": "S",
+        "serviceEndpoint": "https://s.example"
+       }
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv#z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv",
+       "created": "2026-01-01T00:00:20Z",
+       "proofValue": "z5g1VEJWCbE1ZfHB572pYmKkrTkQPFdEd7WoRwR25N4SJokpEnh1ZM81nhMJM5qNd8Npqo2MbNHHqzoZED79Rxgc6"
+      }
+     ]
+    }
+   ],
+   "options": {
+    "versionNumber": 2
+   },
+   "expect": {
+    "ok": true,
+    "versionNumber": 2,
+    "deactivated": false
+   }
+  },
+  {
+   "name": "valid/prerotation",
+   "note": "Each entry is signed by a key the entry before committed to; the last ends pre-rotation.",
+   "did": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+   "log": [
+    {
+     "versionId": "1-QmVJQWhu4zxG3PdgTR4xTEpmYRfMy5RsaAqakrQBFPGiua",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ],
+      "nextKeyHashes": [
+       "QmR9g5yFfbXJXbEwYCUtBReAvnpTZUJ4dmYKjVcGQZX1xr"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z5TzrBdXpBxoefbmBqwBRXbtwEFTTVyCqckvVaGRTjWEqRoSFptjRuyR7iYNEPmBWDSR3UYWQB9xSyh6d7rRH4Y9g"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmaA62imAdUJysLbZA3VNQvtcyK6nVdhs7aQBYtAv2LaCn",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ],
+      "nextKeyHashes": [
+       "Qmbua7QTqbnFmsJikyBEsxpUYuzCs9YtP5aiwMU3256BsS"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv#z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z5u4rxdbakos6jSTSLwREsdM1DXEy5CW79rJn5u3RJyhBt4h9rvc3soCkXVYD9hJ4JdE6Rh1DyJUp33uRW7ZFHx4y"
+      }
+     ]
+    },
+    {
+     "versionId": "3-QmTSYzJy49gXWbbFX9KsciHEBAqPKRTDACrWqpPggCrWD6",
+     "versionTime": "2026-01-01T00:00:20Z",
+     "parameters": {
+      "updateKeys": [
+       "z6Mku782ok6HnB88g6ZDWQwrqdsXwpj15h2WYiiBtJVhPuog"
+      ],
+      "nextKeyHashes": []
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6Mku782ok6HnB88g6ZDWQwrqdsXwpj15h2WYiiBtJVhPuog#z6Mku782ok6HnB88g6ZDWQwrqdsXwpj15h2WYiiBtJVhPuog",
+       "created": "2026-01-01T00:00:20Z",
+       "proofValue": "z5LHxdWVr2qhrA2CwEAfUPjTGSzpFYArAVsL969qEvx8roktdg3eam2ESQ9zET9AWfwk8dyDaQdNtMPLDjRq3YuD8"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": true,
+    "versionNumber": 3,
+    "deactivated": false
+   }
+  },
+  {
+   "name": "valid/deactivated",
+   "note": "The latest version of a deactivated DID has no document.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmPfjxxVPioRtfR3VkkPR6xkMA3LQKdvSNyafg13eBCqXP",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "deactivated": true
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z5aTYQ3ea4g5ngDfP1NzkALetiF7M4Pt9NW7NKYUyrb7Ri9Ye1hGPsqg3aLtYsaiywE88ykRgMYv19QWdHRhr5KbN"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": true,
+    "versionNumber": 2,
+    "deactivated": true,
+    "documentNull": true
+   }
+  },
+  {
+   "name": "valid/deactivated-earlier-version",
+   "note": "An earlier version of a deactivated DID still resolves, flagged deactivated.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmPfjxxVPioRtfR3VkkPR6xkMA3LQKdvSNyafg13eBCqXP",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "deactivated": true
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z5aTYQ3ea4g5ngDfP1NzkALetiF7M4Pt9NW7NKYUyrb7Ri9Ye1hGPsqg3aLtYsaiywE88ykRgMYv19QWdHRhr5KbN"
+      }
+     ]
+    }
+   ],
+   "options": {
+    "versionNumber": 1
+   },
+   "expect": {
+    "ok": true,
+    "versionNumber": 1,
+    "deactivated": true
+   }
+  },
+  {
+   "name": "invalid/first-entry-edited",
+   "note": "The document of the first entry was changed after the SCID was computed.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ],
+      "alsoKnownAs": [
+       "https://evil.example"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "SCID does not match"
+   }
+  },
+  {
+   "name": "invalid/later-entry-edited",
+   "note": "The document of a later entry was changed: its entry hash no longer matches.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmP5URR71TVRTsFpjvXQkpmJgQC1X9fNXjNTUYPFmqviDx",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ],
+      "alsoKnownAs": [
+       "https://evil.example"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4Z2ydUNTRBb9RLc33n2XhRkkHwKvVV2fpfXrQkQema9sJ8BcGNwegHTP6TQhnqtdWMVNnAgNMv2Yzbi5saFwfFto"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "entry hash"
+   }
+  },
+  {
+   "name": "invalid/other-did",
+   "note": "A valid log, presented for a different SCID.",
+   "did": "did:vh:1111111111111111111111111111111111111111111111",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "not the SCID of the DID"
+   }
+  },
+  {
+   "name": "invalid/not-a-vh-did",
+   "note": "The DID is a did:webvh.",
+   "did": "did:webvh:Qm:example.com",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidDid",
+    "reason": "Not a did:vh"
+   }
+  },
+  {
+   "name": "invalid/unsigned",
+   "note": "An entry with no proof.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmP5URR71TVRTsFpjvXQkpmJgQC1X9fNXjNTUYPFmqviDx",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": []
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "no proof"
+   }
+  },
+  {
+   "name": "invalid/signed-by-unauthorised-key",
+   "note": "Entry 2 is signed by k3, which no entry authorised.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmavEmjtM6HbjtHs8xpQmWMoVShzqh5qsN4gvckSY5z8S8",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkoRarY16Th772tkhjhLTeEy1dzLr64kigMwJDAbofk71D#z6MkoRarY16Th772tkhjhLTeEy1dzLr64kigMwJDAbofk71D",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z3eojo6SyKtBrwTuVx3i89kRvZ4qGR9pTtvKuKPDx6CuKkq4yRy5LXWSexzqferMuPYXnEEdkNUYLo9D7MtYbbakJ"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "authorised key"
+   }
+  },
+  {
+   "name": "invalid/signed-by-previous-keys-after-rotation",
+   "note": "Entry 3 is signed by k0 although entry 2 replaced k0 with k1.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmP5URR71TVRTsFpjvXQkpmJgQC1X9fNXjNTUYPFmqviDx",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4Z2ydUNTRBb9RLc33n2XhRkkHwKvVV2fpfXrQkQema9sJ8BcGNwegHTP6TQhnqtdWMVNnAgNMv2Yzbi5saFwfFto"
+      }
+     ]
+    },
+    {
+     "versionId": "3-QmdHVaKMQ4E5TjX4wWFidWoENiDjo1qReCcU8Auz4VZmPk",
+     "versionTime": "2026-01-01T00:00:20Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:20Z",
+       "proofValue": "z3tbRJECdoiRy4GuBE75xfQjHybKaDydyvYQGLcZBUW3rSZAd3wFEwvAXseGzp48YfH8HZYbY7RtAUTJRX7R3fCgU"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "authorised key"
+   }
+  },
+  {
+   "name": "invalid/prerotation-uncommitted-key",
+   "note": "Entry 2 authorises k3, which entry 1 did not commit to.",
+   "did": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+   "log": [
+    {
+     "versionId": "1-QmVJQWhu4zxG3PdgTR4xTEpmYRfMy5RsaAqakrQBFPGiua",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ],
+      "nextKeyHashes": [
+       "QmR9g5yFfbXJXbEwYCUtBReAvnpTZUJ4dmYKjVcGQZX1xr"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z5TzrBdXpBxoefbmBqwBRXbtwEFTTVyCqckvVaGRTjWEqRoSFptjRuyR7iYNEPmBWDSR3UYWQB9xSyh6d7rRH4Y9g"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmcPxgFe1wDvci44xRZq6VGiK7GGw2weaMFrgqGiwVz7kJ",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkoRarY16Th772tkhjhLTeEy1dzLr64kigMwJDAbofk71D"
+      ],
+      "nextKeyHashes": []
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkoRarY16Th772tkhjhLTeEy1dzLr64kigMwJDAbofk71D#z6MkoRarY16Th772tkhjhLTeEy1dzLr64kigMwJDAbofk71D",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "zGpMLHvzdwqkfz2tChdGwfD7z4Sag9N32T6ycpZVe1MKXHRx5axfe2b7HpPvXE7HDUUNMRjRM3VxhaWpzgVc83HS"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "did not commit"
+   }
+  },
+  {
+   "name": "invalid/prerotation-update-keys-not-restated",
+   "note": "Entry 2 omits updateKeys while pre-rotation is active.",
+   "did": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+   "log": [
+    {
+     "versionId": "1-QmVJQWhu4zxG3PdgTR4xTEpmYRfMy5RsaAqakrQBFPGiua",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ],
+      "nextKeyHashes": [
+       "QmR9g5yFfbXJXbEwYCUtBReAvnpTZUJ4dmYKjVcGQZX1xr"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z5TzrBdXpBxoefbmBqwBRXbtwEFTTVyCqckvVaGRTjWEqRoSFptjRuyR7iYNEPmBWDSR3UYWQB9xSyh6d7rRH4Y9g"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmTQ758zgSwRrBYjNJcyFBBmrfwfv6KQLLAbKd7LCCjsqG",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "nextKeyHashes": []
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv#z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4jrqDyoHXZCzkCiL4TtaCGj9Pmd8mQD5aTdNMfGKS7eM1v9rzZoZrnpnJx7iTAaSbL8kAgpwfT9hZgKrWpJWRfKh"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "restate updateKeys"
+   }
+  },
+  {
+   "name": "invalid/prerotation-next-key-hashes-not-restated",
+   "note": "Entry 2 omits nextKeyHashes while pre-rotation is active.",
+   "did": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+   "log": [
+    {
+     "versionId": "1-QmVJQWhu4zxG3PdgTR4xTEpmYRfMy5RsaAqakrQBFPGiua",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ],
+      "nextKeyHashes": [
+       "QmR9g5yFfbXJXbEwYCUtBReAvnpTZUJ4dmYKjVcGQZX1xr"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z5TzrBdXpBxoefbmBqwBRXbtwEFTTVyCqckvVaGRTjWEqRoSFptjRuyR7iYNEPmBWDSR3UYWQB9xSyh6d7rRH4Y9g"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmcQUwtBxNbcyEro83WMsqMPHGK3aGgGaX28VkAeDsn9Eo",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "updateKeys": [
+       "z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmaDrXQST2t3RzyutEzwMgXCV6ToimNPmirQFaiQuWyHDx#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv#z6MkgSprPb5yVT8uixDT5CVivy7AyTtNwZvKgcBJHE9CPeBv",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "zriujhH4fuRPYkD52DsZ3GB1zrhvsLrbiDZrNVFyMurBHwMS8q6yEbB3DV7jS6Ds8MB9eXdNYcUwB1crAd1yVtVf"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "restate nextKeyHashes"
+   }
+  },
+  {
+   "name": "invalid/version-number-gap",
+   "note": "Entry 2 is numbered 3.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "3-QmavEmjtM6HbjtHs8xpQmWMoVShzqh5qsN4gvckSY5z8S8",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z2j9rHWRvYKH1yUPUoVZhF8Whk4wuDfxj6UwHTwqVaX5j1HosWnKNcLAcESxu23fYFv6xbY4rNZt9Nic9JviSV9jU"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "version number"
+   }
+  },
+  {
+   "name": "invalid/time-not-increasing",
+   "note": "Entry 2 has the same versionTime as entry 1.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmdEmiyc5juZXaZCydphhZw26wysyXMGFSxMecPpWGC9DM",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "zNUccGwyLxgeah59tKz2dgk1P2Bn73pVhkyCFQRCRWfXpg1VdctdCfDTbiFKbK5trN5eqcoNWmh4Dj4Qc95Yh47G"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "not later"
+   }
+  },
+  {
+   "name": "invalid/time-in-the-future",
+   "note": "Entry 2 is a year after the resolver's now.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmfQqq1WSLob6Jj57z6rMeD3L2s5MZm1fMyRrp6eSZBqjh",
+     "versionTime": "2028-01-01T00:00:00Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2028-01-01T00:00:00Z",
+       "proofValue": "zpruyQkTEmJfWYKdYhyQMhUa3LKC9RuUdDgHRf67vyuMMkhqmCCY5GnNjRTdk56vFkJoYCRFuAsqtCpY92SctqUg"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "future"
+   }
+  },
+  {
+   "name": "invalid/time-with-fraction",
+   "note": "Entry 2's versionTime has fractional seconds.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmdfE6RocgJRY4Anxu279FGxNJKyiGiW1ogKbYZaHNJj8L",
+     "versionTime": "2026-01-01T00:00:10.500Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10.500Z",
+       "proofValue": "z5raFitSK1bBz7eiZU2Ay8is81Ve2SDLT6o3EGPcR5rKntExZ1dDYzT9YMZ1LhZM5fK8Wp14uUHkSwgbATkgBMiC"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "whole seconds"
+   }
+  },
+  {
+   "name": "invalid/document-id-is-the-did-with-src",
+   "note": "Entry 2's document id carries a ?src=.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmYbwMiAAZcawZiSDkxVeBNxfxgUxZbFsw82r8DfKK1N6q",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U?src=https://alice.did.md",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z2Zzmf62VTqychaornLspx26GgQeu3LBqyj2S3EUrvXsrQEoTmhHDSZek6q9Rd9Jf8VMpDkMY19n84FPnSkn2U88"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "document id must be exactly"
+   }
+  },
+  {
+   "name": "invalid/document-id-is-another-did",
+   "note": "Entry 2's document id is another did:vh.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmRotZpSf5xPgr1vH374j4SdSRjkLxBwoPAnepeay2BrMD",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:1111111111111111111111111111111111111111111111",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z3NGrBjscz6Z9KRnoBmxS2RQYU3K4exiaP8vzvRccQdqYoJFuabf39APrkoPANpD3FJh1Aw39ZBdzdobzijC3C6aY"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "document id must be exactly"
+   }
+  },
+  {
+   "name": "invalid/portable",
+   "note": "A did:webvh parameter.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmVoAJo3zZe19LF9pPU2hf4bb4prmgfLJXbyaCqydCLqea",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "portable": true
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4L1YVECUThHHxuVpGZc4p1rbV36tQUrx1ANLVR7hShr2ZPMWCA4JAWNiRBsCopvjWkM4oxJk6SqhoBNdnu5SjDYt"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "portable"
+   }
+  },
+  {
+   "name": "invalid/log-version",
+   "note": "VH-Log's own version parameter, which a specialisation that designates its own must not use.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmStoTPQnUemNFeuTeSrPZTE2fgdWqkZNsdXHwnQqDCR1p",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "logVersion": "vh-log:1.0"
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z5rMnJDKegpSnj6zSrYSP5HWHcd5CS1UsAmSSVGMcLhYQubEsq2jmvoVUrpvSegXzQPTiWVEzHjjyJ6TSg5N7GGoe"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "logVersion"
+   }
+  },
+  {
+   "name": "invalid/unknown-parameter",
+   "note": "A parameter did:vh does not define.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmVkwzNM6aNEB15dcuvDpJWMQENgwNm71iVadaQ6NcNBwH",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "color": "red"
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z5AfLbMBo6EY4RE5uKbUrrbeGtE5EB7wf1vKAbQwDxXhHZv3Wz6CYKbyVhSd49iAWLbYhPZGi9FnVHZLFEPP21UZm"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "not a did:vh parameter"
+   }
+  },
+  {
+   "name": "invalid/null-parameter",
+   "note": "null stands for nothing in a parameter.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmPrPNWL7J4SoNhnTdapMWTVX2ZQ51dh75xAF3VmcTyGqq",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "ttl": null
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z2BC84ScEWBX3ouMEGnQuzrk4yFnJ2PiYQ5ppaGw1MbLJxv4SnHGhzyyT2GsAKAJeVht56SJtVmk5xjuuv4DSPcnp"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "null"
+   }
+  },
+  {
+   "name": "invalid/method-is-webvh",
+   "note": "The method of another DID method.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmZxtREv5FCKL3v1CBdmCC8y5kPtPaG5LQ5AeTSvHydiju",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "method": "did:webvh:1.0"
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z2EPCmLJmCW1vqQBAUb2EerYvhyVFPAzXUgCC6hUFV9QqQAtizSUVG3T9aYu4bTwA1XffxbK6hynUefVrVHzVSLK1"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "Unsupported method"
+   }
+  },
+  {
+   "name": "invalid/scid-in-later-entry",
+   "note": "parameters.scid in a later entry.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmcMfjqnEM8EJdMeTM49hLzUEgzeSqQkXrkirahmHiB266",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U"
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z2ZjCVFcnBKSmp6M3WN212hQQwAGEC3u3EwqNRkw19Po3K4t2UHPZ8dWQ7gZXnUhGD4dyp9WpKVJ27TbfnDsuPDXU"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "scid may only appear"
+   }
+  },
+  {
+   "name": "invalid/entry-after-deactivation",
+   "note": "An entry follows the deactivating entry.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmPfjxxVPioRtfR3VkkPR6xkMA3LQKdvSNyafg13eBCqXP",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "deactivated": true
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z5aTYQ3ea4g5ngDfP1NzkALetiF7M4Pt9NW7NKYUyrb7Ri9Ye1hGPsqg3aLtYsaiywE88ykRgMYv19QWdHRhr5KbN"
+      }
+     ]
+    },
+    {
+     "versionId": "3-QmYqh393U99R6FH9T13qXMBXWdmjH8c2JxZxTjTjwkpYbv",
+     "versionTime": "2026-01-01T00:00:20Z",
+     "parameters": {},
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:20Z",
+       "proofValue": "z41MRkdR3ge3jMRVMFaeBrjCpXoSSAnwiQHHEv8WBWQ2B4BtPf9JDKqxb7ciMmBi9ADf6DbAKdEozYECrhLpFk9Af"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "invalidLog",
+    "reason": "deactivated"
+   }
+  },
+  {
+   "name": "invalid/witness-not-supported",
+   "note": "A witness configuration is refused rather than ignored.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    },
+    {
+     "versionId": "2-QmZswD49BdYCMotnydforTMdPkTBpy4sYfXDDZk4JJbDbT",
+     "versionTime": "2026-01-01T00:00:10Z",
+     "parameters": {
+      "witness": {
+       "threshold": 1,
+       "witnesses": [
+        {
+         "id": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+       ]
+      }
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:10Z",
+       "proofValue": "z4HUMRQDuKXvbsAmuUEmAv2Tk7GsZPK2qKs7WELgpcMVfU7z7x289eC9R7GaMdR98663JZZQc64uqFHtci7gywUuf"
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "ok": false,
+    "code": "featureNotSupported",
+    "reason": "witnesses"
+   }
+  },
+  {
+   "name": "invalid/two-version-selectors",
+   "note": "More than one of versionId, versionTime and versionNumber.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    }
+   ],
+   "options": {
+    "versionNumber": 1,
+    "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a"
+   },
+   "expect": {
+    "ok": false,
+    "code": "invalidOptions",
+    "reason": "At most one"
+   }
+  },
+  {
+   "name": "invalid/version-not-found",
+   "note": "A version the log does not have.",
+   "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+   "log": [
+    {
+     "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
+     "versionTime": "2026-01-01T00:00:00Z",
+     "parameters": {
+      "method": "did:vh:1.0",
+      "scid": "QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "updateKeys": [
+       "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+      ]
+     },
+     "state": {
+      "@context": [
+       "https://www.w3.org/ns/did/v1",
+       "https://w3id.org/security/multikey/v1"
+      ],
+      "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+      "verificationMethod": [
+       {
+        "id": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k",
+        "type": "Multikey",
+        "controller": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
+        "publicKeyMultibase": "z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm"
+       }
+      ],
+      "authentication": [
+       "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U#k"
+      ]
+     },
+     "proof": [
+      {
+       "type": "DataIntegrityProof",
+       "cryptosuite": "eddsa-jcs-2022",
+       "proofPurpose": "assertionMethod",
+       "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
+       "created": "2026-01-01T00:00:00Z",
+       "proofValue": "z2WNhxsBhekaTVowkuwdH8QSo7MpMormVtey79HHMacvq1UytoEShJAt9ZSsJ38V6isbsXnoCtzuCZ5ddpZvPSgfC"
+      }
+     ]
+    }
+   ],
+   "options": {
+    "versionNumber": 2
+   },
+   "expect": {
+    "ok": false,
+    "code": "notFound",
+    "reason": "No entry"
+   }
+  }
+ ],
+ "shadows": [
+  {
+   "name": "valid/derived",
+   "note": "The derivation: the DID replaced in ids, controllers and references (also followed by #, ? or /), alsoKnownAs reduced to the did:vh DID, relative references and other strings untouched.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": true
+  },
+  {
+   "name": "invalid/extra-member",
+   "note": "A member the derivation does not give.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ],
+    "extra": 1
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/missing-member",
+   "note": "A member the derivation gives is missing.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/other-key",
+   "note": "A verification key that is not the did:vh document's.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkuDdJdKLCgwZuQuEi9xG6LVgJJ9Tebr74CXPYPSumqgJs"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/extra-service",
+   "note": "A service the did:vh document does not have.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     },
+     {
+      "id": "#x",
+      "type": "X",
+      "serviceEndpoint": "https://evil.example"
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/also-known-as-extra",
+   "note": "alsoKnownAs names more than the did:vh DID.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+     "https://evil.example"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/also-known-as-keeps-vh-document-names",
+   "note": "alsoKnownAs copied from the did:vh document instead of reduced.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/also-known-as-another-did",
+   "note": "alsoKnownAs names another did:vh.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:1111111111111111111111111111111111111111111111"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/id-not-the-web-did",
+   "note": "The document's id is another did:web.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:evil.example",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/vh-id-left-in-place",
+   "note": "The did:vh DID was not replaced.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/vh-document-does-not-name-the-web-did",
+   "note": "The did:vh document does not list this did:web DID: the link is one-way.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:bob.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/vh-document-names-nothing",
+   "note": "The did:vh document lists no alias at all.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:web:alice.did.md",
+    "controller": "did:web:alice.did.md",
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:web:alice.did.md#k",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:web:alice.did.md",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:web:alice.did.md#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:web:alice.did.md#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:web:alice.did.md"
+       ]
+      }
+     }
+    ],
+    "alsoKnownAs": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+    ]
+   },
+   "ok": false
+  },
+  {
+   "name": "invalid/not-an-object",
+   "note": "Not a document.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": "did:web:alice.did.md",
+   "ok": false
+  },
+  {
+   "name": "invalid/null",
+   "note": "null.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": null,
+   "ok": false
+  },
+  {
+   "name": "invalid/array",
+   "note": "An array.",
+   "vhDocument": {
+    "@context": [
+     "https://www.w3.org/ns/did/v1",
+     "https://w3id.org/security/multikey/v1"
+    ],
+    "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "alsoKnownAs": [
+     "did:web:alice.did.md",
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md",
+     "https://example.org/alice"
+    ],
+    "name": "Alice",
+    "verificationMethod": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     },
+     {
+      "id": "#rel",
+      "type": "Multikey",
+      "controller": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+      "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+     }
+    ],
+    "authentication": [
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#k",
+     "#rel"
+    ],
+    "assertionMethod": [
+     "#rel"
+    ],
+    "service": [
+     {
+      "id": "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ#wallet",
+      "type": "SelfIssuedOPAuthorizationEndpoint",
+      "serviceEndpoint": "https://dito.did.md/authorize"
+     },
+     {
+      "id": "#files",
+      "type": "relativeRef",
+      "serviceEndpoint": {
+       "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+       "accept": [
+        "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+       ]
+      }
+     }
+    ]
+   },
+   "didWeb": "did:web:alice.did.md",
+   "webDocument": [
+    {
+     "@context": [
+      "https://www.w3.org/ns/did/v1",
+      "https://w3id.org/security/multikey/v1"
+     ],
+     "id": "did:web:alice.did.md",
+     "controller": "did:web:alice.did.md",
+     "name": "Alice",
+     "verificationMethod": [
+      {
+       "id": "did:web:alice.did.md#k",
+       "type": "Multikey",
+       "controller": "did:web:alice.did.md",
+       "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+      },
+      {
+       "id": "#rel",
+       "type": "Multikey",
+       "controller": "did:web:alice.did.md",
+       "publicKeyMultibase": "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+      }
+     ],
+     "authentication": [
+      "did:web:alice.did.md#k",
+      "#rel"
+     ],
+     "assertionMethod": [
+      "#rel"
+     ],
+     "service": [
+      {
+       "id": "did:web:alice.did.md#wallet",
+       "type": "SelfIssuedOPAuthorizationEndpoint",
+       "serviceEndpoint": "https://dito.did.md/authorize"
+      },
+      {
+       "id": "#files",
+       "type": "relativeRef",
+       "serviceEndpoint": {
+        "uri": "https://alice.did.md/x/did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ/y",
+        "accept": [
+         "did:web:alice.did.md"
+        ]
+       }
+      }
+     ],
+     "alsoKnownAs": [
+      "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     ]
+    }
+   ],
+   "ok": false
+  }
+ ]
+}

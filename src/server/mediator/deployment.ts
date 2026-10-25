@@ -7,7 +7,7 @@ import { didCommAccepted, didCommPost } from '../../protocol/didcomm/crypto.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
 import { startRelayPoller, type RelayPollHandle } from './relay-poller.ts'
-import { createNetworkWebvhResolver, type WebvhStateResolver } from './webvh-state.ts'
+import { createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver, type WebvhStateResolver } from './webvh-state.ts'
 import { peerMediatorIdentity, webMediatorIdentity } from './identity.ts'
 
 export interface MediatorDeploymentOptions {
@@ -35,6 +35,9 @@ export interface MediatorDeploymentOptions {
    * `refreshSeconds` is how often every did:webvh with an inbox is resolved
    * again (default 300), which is how a device removed from its DID loses its inbox. */
   webvh?: { resolve?: boolean | WebvhStateResolver; refreshSeconds?: number }
+  /** Where a did:vh's log is looked for (webvh-state.ts, createVhWatcherResolver): origins serving `GET /log?scid=`. A did:vh DID names no
+   * place, so without any, this mediator does not know a did:vh's keys (it resolves nothing for it). Chosen by the operator, never by a DID. */
+  vh?: { watchers?: readonly string[] }
   /** Numbers v2 admin can change while the mediator runs (settings.ts); absent, `rateLimitPerMinute`, `registration` and `limits` stand. */
   live?: LiveMediatorLimits
   /** Answers `/admin/*` (admin-api.ts) before anything else does. */
@@ -76,7 +79,10 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
   let shuttingDown = false
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
   const webvhResolve = options.webvh?.resolve
-  const resolveWebvh = webvhResolve === false ? undefined : typeof webvhResolve === 'function' ? webvhResolve : createNetworkWebvhResolver()
+  const vhWatchers = [...(options.vh?.watchers ?? [])]
+  const resolveWebvh = webvhResolve === false ? undefined
+    : typeof webvhResolve === 'function' ? webvhResolve
+    : createDidStateResolver({ webvh: createNetworkWebvhResolver(), ...(vhWatchers.length ? { vh: createVhWatcherResolver({ watchers: vhWatchers }) } : {}) })
   const liveLimits = options.live
   const admin = options.admin?.(store)
   const newInboxLimit = liveLimits ? () => liveLimits.newInboxesPerAddressPerHour() : options.registration?.newInboxesPerAddressPerHour

@@ -637,6 +637,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
     解決は https のみ・リダイレクトなし・5 秒・1 MB の上限で、CDN を越えるよう毎回一意のクエリを付ける。ホストは、名前（末尾のドットや IPv4 の省略形・16 進形も含めて、内部名・IP リテラルを拒否）と、**名前が解決する全アドレス**（ループバック・私設・リンクローカル・CGNAT・マルチキャスト・予約済み。IPv4 射影と NAT64 は中の IPv4 で判定）の両方が公開のものに限る。結果は 5 分間信頼し、鍵が見つからなければ（10 秒に 1 回まで）解決し直す。
     ネットワークが落ちているときは、1 時間以内に確認した状態なら使い、無ければ 503。**5 分ごとに、受信箱を持つ全 did:webvh を解決し直し**、DID から外れた端末の受信箱を失効させる（`MEDIATOR_WEBVH_REFRESH_SECONDS`）。
     - 解決を使わない配備（`MEDIATOR_WEBVH_RESOLVE=0`）では、従来どおり client が `POST /webvh-log` で渡した検証済みのログだけを知る。これは**DIDComm ではない biset 独自の入口**で、今は誰も送らない。
+  - **did:vh（2026-10-25。dito の `PLAN-didvh.md`）**: `did:vh:<SCID>` は場所を含まないので、ログの置き場所を DID から求められない。mediator は `MEDIATOR_VH_WATCHERS=https://did.md`（`GET /log?scid=` を返す origin。did.md のホストは、どの名前の下でも返す）に**運用者が指定した watcher だけ**にログを聞く（`createVhWatcherResolver`）。DID やメッセージが取得元を指定することはできない。watcher への接続の守りは did:webvh のホストと同じ（https のみ・公開ホストのみ・リダイレクトなし・上限）。ログは `protocol/vh/resolver.ts` で全エントリを検証する（`state.id` は常に DID と完全一致、`portable` と未知のパラメータは拒否、witness を設定したログは無視せず拒否）。watcher を指定しなければ、did:vh は `POST /webvh-log` で渡されたログだけを知る。watcher に聞けなかったときは 503（did:webvh と同じ）、ログが無い・検証できない・別の DID のものなら 401。DID のドメインによる許可（`MEDIATOR_ALLOWED_DID_DOMAINS`）は did:vh には効かない（許可は watcher の指定が担う）。**版の記憶**（古いログ、同じ履歴から分かれたログを拒否）の核は `protocol/freshness.ts` にある。mediator の `did_states` はまだ版番号しか持たないので、同じ番号の別ログは見分けられない（要対応）。名前の表示は `protocol/vh/didweb.ts`: did:vh の文書と、それが名乗る `did:web:alice.did.md` の `did.json` が**双方向に一致**したときだけ `alice@did.md` と呼ぶ（検証できなければ DID のまま。アドレスは作らない）。dito の `packages/vh` とは `test/fixtures/did-vh-vectors.json`（ログ33件と did:web の影15件）で同じ判定を保証する。
   - **`device` ラベルは任意**（biset の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（Y）に端末を区別する。
   - **1 DID あたり最大 3 端末**。4 台目は problem-report `e.m.req.max-devices` で拒否し、client は登録済み端末の最終利用日つきのエラーを利用者に見せる（`MediatorDeviceLimitError`）。
 - **誰が登録できるか**: 既定は、DID の鍵を持つ者なら誰でも（開放型）。次の 2 つで絞れる。
@@ -665,7 +666,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Mediator: `MEDIATOR_PUBLIC_URL`（必須）、`MEDIATOR_DATABASE_PATH`（または `MEDIATOR_DATA_DIR`）、`PORT`（既定 8791）、`MEDIATOR_HOST`（既定 127.0.0.1）、
   `MEDIATOR_ALLOWED_ORIGINS`、`MEDIATOR_RATE_LIMIT_PER_MINUTE`、`MEDIATOR_MAX_REQUEST_BYTES`、`MEDIATOR_MAX_INBOXES`、`MEDIATOR_MAX_DEVICES_PER_DID`、
   `MEDIATOR_MAX_QUEUE_ITEMS`、`MEDIATOR_MAX_QUEUE_BYTES`、`MEDIATOR_MAX_MESSAGE_BYTES`、`MEDIATOR_QUEUE_TTL_MS`、`MEDIATOR_DORMANT_AFTER_MS`、
-  `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`、`MEDIATOR_ALLOWED_DID_DOMAINS`、`MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`。
+  `MEDIATOR_REPLAY_TTL_MS`、`MEDIATOR_MAX_REPLAY_IDS`、`MEDIATOR_RELAY_UPSTREAM_URL`、`MEDIATOR_ALLOWED_DID_DOMAINS`、`MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`、`MEDIATOR_VH_WATCHERS`（did:vh のログを聞く origin。カンマ区切り）。
 - biset-mimi: `MIMI_DATABASE_PATH`、`MIMI_MODE`、`MIMI_PUBLIC_BASE_URL`、`MIMI_ALLOW_EXTERNAL_JOIN`、`PORT`。
 
 ## 12. クライアントの起動
