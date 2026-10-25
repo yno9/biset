@@ -275,6 +275,38 @@ describe('DIDComm ingress projector', () => {
     await expect(projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(unsigned)), 'ingress-2'))).rejects.toThrow('unauthenticated')
   })
 
+  test('a delivery failure a mail bridge reports is filed in the conversation with the address it could not deliver to, not in the bridge\'s own', async () => {
+    const bridgeDid = 'did:web:did.md:did.md:didmail'
+    const bridgeX = x25519.utils.randomSecretKey()
+    const bridgeKid = `${bridgeDid}#key-1`
+    const failure = (from: string) => buildPlaintext(BASIC_MESSAGE, {
+      content: 'I could not deliver your message to alice@gmail.com: the recipient\'s mail server refused it.',
+      problem: { code: 'e.m.xfer.rejected', address: 'alice@gmail.com', messageId: 'm-1' },
+    }, from, identityId, { thid: 'didmail', pthid: 'thread-1' })
+    const project = async (from: string, kid: string, bridgeHosts?: string[]) => {
+      const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(failure(from))), { kid, privateKey: bridgeX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+      const projector = new DidCommIngressProjector({
+        identityId, actorDeviceId: recipientKid, ...(bridgeHosts ? { bridgeHosts } : {}),
+        resolveOwnKey(k) { return k === recipientKid ? { kid: recipientKid, x25519PrivateKey: recipientX } : null },
+        async resolveSenderKey() { return x25519.getPublicKey(bridgeX) },
+        async alreadyProcessed() { return false },
+        async nextActorSeq() { return 1 },
+        async initialParents() { return [] },
+        activeSegment: segmentFor,
+        async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
+        signer,
+      })
+      return (await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)), crypto.randomUUID()))).projection.emails[0]!
+    }
+    // the bridge this client uses: the notice sits in the conversation with alice@gmail.com's bridge DID
+    const filed = await project(bridgeDid, bridgeKid, ['did.md'])
+    expect(filed.threadId).toBe(didCommThreadId(identityId, 'did:web:did.md:gmail.com:alice'))
+    expect(filed.from).toMatchObject([{ email: bridgeDid }])
+    // a bridge host this client does not use cannot file a notice into anyone's conversation; nor can a client with no bridge
+    expect((await project(bridgeDid, bridgeKid, ['other.example'])).threadId).toBe(didCommThreadId(identityId, bridgeDid))
+    expect((await project(bridgeDid, bridgeKid)).threadId).toBe(didCommThreadId(identityId, bridgeDid))
+  })
+
   test('a basicmessage from a did:peer no contact names is held back, not projected (§10-5)', async () => {
     const agent = generatePeerIdentity({ uri: 'https://agent-mediator.test.example' })
     const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hello from an agent' }, agent.did, identityId)
