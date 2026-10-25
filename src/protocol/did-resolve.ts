@@ -100,6 +100,9 @@ export async function verifiedVhAddress(did: string, context: DidResolveContext 
   return undefined
 }
 
+/** A did:web points to a did:vh that does not confirm it (or to two): the DID is refused, not believed as a did:web. */
+export class DidRefused extends Error {}
+
 /** What to believe about a DID someone is reached at: the DID whose document counts, and that document. */
 export interface TrustedDid {
   /** The DID to address, sign for and verify against: the did:vh of a did:web that is its shadow, else the DID itself. */
@@ -126,7 +129,7 @@ function vhPointerOf(webDid: string, document: DidWebDocument): { did: string; h
     } catch { /* an unreadable src names no host */ }
     found.set(did, hosts)
   }
-  if (found.size > 1) throw new Error(`${webDid} points to more than one did:vh`)
+  if (found.size > 1) throw new DidRefused(`${webDid} points to more than one did:vh`)
   const [first] = found
   return first ? { did: first[0], hosts: [...new Set(first[1].filter(isDomainHost))] } : undefined
 }
@@ -159,9 +162,9 @@ export async function resolveTrustedDid(did: string, context: DidResolveContext 
   if (!pointer) return { did, document: web, linked: false }
   for (const host of pointer.hosts) rememberVhLocation(pointer.did, host)
   const found = await fetchDidLog(pointer.did, context)
-  if (!found?.document) throw new Error(`${did} points to ${pointer.did}, whose log was not found`)
+  if (!found?.document) throw new DidRefused(`${did} points to ${pointer.did}, whose log was not found`)
   const check = checkDidWebShadow(found.document as unknown as Record<string, unknown>, did, web)
-  if (!check.ok) throw new Error(`${did} points to ${pointer.did}, which does not confirm it: ${check.reason}`)
+  if (!check.ok) throw new DidRefused(`${did} points to ${pointer.did}, which does not confirm it: ${check.reason}`)
   ;(context.links ?? configured.links)?.set(did, pointer.did)
   return { did: pointer.did, document: found.document, linked: true }
 }

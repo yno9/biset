@@ -104,11 +104,19 @@ describe('a domain that gives each user a host of their own is read directly (id
     const asked: string[] = []
     expect(await resolveMailAddressDid('alice@did.md', ['did.md'], world(asked), ['did.md'])).toBe(did)
     expect(asked.some(url => url.includes('webfinger'))).toBe(false)
-    expect(asked).toEqual(['https://alice.did.md/.well-known/did.jsonl', 'https://alice.did.md/.well-known/did.json'])
+    // the did:web document first (did:web), then the log it points to (did:vh: src); nothing else
+    expect(asked).toEqual(['https://alice.did.md/.well-known/did.json', 'https://alice.did.md/.well-known/did.jsonl'])
   })
 
   test('a log whose did:web document is not what it derives is refused, not trusted', async () => {
-    await expect(resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json({ ...shadow, service: [], extra: true }) }), ['did.md'])).rejects.toThrow('does not name alice@did.md')
+    await expect(resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json({ ...shadow, service: [], extra: true }) }), ['did.md'])).rejects.toThrow('does not confirm it')
+  })
+
+  test('a did:web with no did:vh in alsoKnownAs is a plain did:web contact; a host that is down is asked the usual way', async () => {
+    const plain = { id: 'did:web:alice.did.md', service: [] }
+    expect(await resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json(plain) }), ['did.md'])).toBe('did:web:alice.did.md')
+    const down = (async () => { throw new TypeError('network') }) as typeof fetch
+    await expect(resolveMailAddressDid('alice@did.md', [], down, ['did.md'])).rejects.toThrow('No DID answers')
   })
 
   test('no identity at the host (or the host is down): the usual way is asked, and a domain not listed is not read this way', async () => {

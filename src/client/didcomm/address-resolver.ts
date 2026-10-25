@@ -11,8 +11,9 @@
 // and its document, not the WebFinger reply, is what a message is encrypted
 // to.
 
-import { rememberVhLocation } from '../../protocol/did-resolve.ts'
-import { fetchVhResolution, resolveVhByHost } from '../../protocol/vh/fetch.ts'
+import { DidRefused, rememberVhLocation, resolveTrustedDid } from '../../protocol/did-resolve.ts'
+import { fetchVhResolution } from '../../protocol/vh/fetch.ts'
+import { isDomainHost } from '../../protocol/vh/identifier.ts'
 import { didWebDocumentUrl, verifiedAddress } from '../../protocol/vh/didweb.ts'
 
 // A circuit through Tor takes seconds longer than a direct connection: a page served at an onion address waits for it.
@@ -74,20 +75,26 @@ async function shadowOf(host: string, fetchImpl: typeof fetch): Promise<unknown>
   }
 }
 
-/** The identity published at the host of an address under a domain that gives each user a host of their own (`alice@did.md` at
- * `alice.did.md`): its log is the host's `/.well-known/did.jsonl`, it must name `did:web:<host>`, and the did:web document served
- * there must be the shadow the log derives. Nobody else is asked, so this works with every bridge down. undefined: no such identity
- * (or the host could not be reached: the caller then asks the usual way). */
+/** The identity of an address under a domain that gives each user a host of their own (`alice@did.md` at `alice.did.md`). Only the
+ * naming is a convention (didmail's: `name@apex` is the did:web DID `did:web:name.apex`; neither did:web nor did:vh says anything
+ * about mail addresses). From there every step is a specification's: the did:web document at `https://name.apex/.well-known/did.json`
+ * (did:web), its `alsoKnownAs` pointing to the did:vh and where its log is (did:vh: Advertising DID Log Sources), the log read from
+ * that location (did:vh: The src Option) and checked against the did:web document in both directions (`resolveTrustedDid`). Nobody
+ * else is asked, so this works with every bridge down. A did:web that points to no did:vh is a plain did:web contact. undefined: no
+ * such identity (or the host could not be reached: the caller then asks the usual way); a DID that does not confirm itself is refused. */
 async function identityAtHost(address: string, fetchImpl: typeof fetch): Promise<string | undefined> {
   const host = hostOfAddress(address)
-  let found: Awaited<ReturnType<typeof resolveVhByHost>>
-  try { found = await resolveVhByHost(host, { fetch: fetchImpl }) } catch { return undefined }
-  if (!found) return undefined
-  if (verifiedAddress(found.document as unknown as Record<string, unknown>, `did:web:${host}`, await shadowOf(host, fetchImpl)) !== address.toLowerCase()) {
-    throw new Error(`${host} publishes ${found.did}, but that DID does not name ${address} (alsoKnownAs and its did:web document must agree)`)
+  if (!isDomainHost(host)) return undefined // a name that is not a DNS label has no host of its own
+  let trusted: Awaited<ReturnType<typeof resolveTrustedDid>>
+  try {
+    trusted = await resolveTrustedDid(`did:web:${host}`, { fetch: fetchImpl })
+  } catch (error) {
+    if (error instanceof DidRefused) throw new Error(`${address}: ${error.message}`)
+    return undefined
   }
-  rememberVhLocation(found.did, host)
-  return found.did
+  if (!trusted) return undefined
+  if (trusted.linked) rememberVhLocation(trusted.did, host)
+  return trusted.did
 }
 
 /** The DID `address` is reached at: a domain that gives each user a host of their own is read directly (`identityDomains`), else
