@@ -50,10 +50,9 @@ Every divergence from upstream is marked in the source with a comment starting
   contain (no self Update proposal in one's own commit — `clientState.ts`'s
   `validateProposals`), not what a committer's own path update may carry;
   this is not a new capability, just exposing a hook upstream never needed.
-  `mls/group.ts`'s `updateOwnCredential` is the one caller, used by domain
-  moves (`identity/webvh/move.ts`, removed 2026-09-05 with native login --
-  this hook is currently unused) to re-issue a device's MLS credential
-  after its did:webvh identity relocates (ARC.md §4.6). Every existing
+  `mls/group.ts`'s `updateOwnCredential` is the one caller, meant to re-issue a device's MLS
+  credential when the identity behind it changes its DID (this hook is
+  currently unused: a did:vh DID never changes when its log moves). Every existing
   caller's behavior is unchanged when the new parameter is omitted.
 - `createCommit.ts`'s `joinGroupExternal` -- a bug fix, not an addition.
   `resync: true` is meant to remove whichever existing leaf shares the

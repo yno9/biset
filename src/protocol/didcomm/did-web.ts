@@ -1,9 +1,9 @@
 // Minimal did:web reader for public DIDComm service agents.  User identities
-// remain did:webvh and use the signed-log resolver; this is for service DIDs:
+// are did:vh and use the signed-log resolver; this is for service DIDs:
 // a mediator (did:web:mediator.biset.md), a mail bridge's address DIDs
 // (did:web:did.md:gmail.com:alice).
 import { selectDidCommEndpoint } from './service-endpoint.ts'
-import { keyAgreementRecipients } from './webvh-route.ts'
+import { keyAgreementRecipients } from './doc-route.ts'
 import type { X25519Recipient } from './crypto.ts'
 
 export interface DidWebDocument {

@@ -1,7 +1,7 @@
 // resolveDidDocument: one way to resolve a DID of any method; a did:vh's log is looked for at the places the caller knows.
 import { afterEach, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { serializeLog } from '../../src/protocol/webvh/log.ts'
+import { serializeLog } from '../../src/protocol/vh/log.ts'
 import { configureDidResolution, resolveDidDocument } from '../../src/protocol/did-resolve.ts'
 import { StaleLogError, InMemoryVersionMemory } from '../../src/protocol/freshness.ts'
 import { buildVhDidCommLog, extendVhLog } from './support/vh-log-fixture.ts'

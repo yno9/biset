@@ -83,7 +83,7 @@ interface DocumentMethods { id: string; verificationMethod?: readonly Verificati
 
 /** The method `kid` names, when the document references it from
  * `authentication` (compared by fragment: a domain move rewrites a
- * did:webvh's DID part, never a key's fragment). */
+ * a did:vh's DID, never a key's fragment). */
 export function authenticationMethodOf(document: DocumentMethods, kid: string): VerificationMethodLike | undefined {
   const wanted = fragmentOf(kid)
   if (!(document.authentication ?? []).some(reference => typeof reference === 'string' && fragmentOf(reference) === wanted)) return undefined
@@ -102,7 +102,7 @@ export function authenticationSigningKey(document: DocumentMethods, kid: string)
  * (SignatureError when the document answers no). */
 export type SigningKeyResolver = (kid: string) => Promise<SigningKey>
 
-/** did:peer:2 from the DID itself, did:web, did:webvh and did:vh by resolution.
+/** did:peer:2 from the DID itself, did:web and did:vh by resolution.
  * `fetchImpl` should bypass a host's CDN. */
 export function signingKeyResolver(fetchImpl: typeof fetch = fetch): SigningKeyResolver {
   return async kid => {
@@ -114,7 +114,7 @@ export function signingKeyResolver(fetchImpl: typeof fetch = fetch): SigningKeyR
       if (!document) throw new SignatureError(`${did} does not resolve`)
       return authenticationSigningKey(document as DocumentMethods, kid)
     }
-    if (did.startsWith('did:webvh:') || did.startsWith('did:vh:')) {
+    if (did.startsWith('did:vh:')) {
       const document = await resolveDidDocument(did, { fetch: fetchImpl })
       if (!document) throw new SignatureError(`${did} does not resolve`)
       return authenticationSigningKey(document as unknown as DocumentMethods, kid)

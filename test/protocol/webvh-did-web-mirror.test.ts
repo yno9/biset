@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { didWebToHttpsUrl, buildWebDid } from '../../src/client/identity/web/identifier.ts'
-import { fakeAnchor } from './support/webvh-log-fixture.ts'
+import { fakeAnchor } from './support/did-log-fixture.ts'
 
 describe('did:web mirror', () => {
   test('createGenesis with didWebMirror publishes a matching did:web document', async () => {

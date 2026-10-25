@@ -12,7 +12,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { encodeMultikey } from '../../protocol/webvh/multikey.ts'
+import { encodeMultikey } from '../../protocol/vh/multikey.ts'
 import { authenticationKeyOf } from '../../protocol/didcomm/from-prior.ts'
 
 /** The id of the key that marks the generation of biset's generation seed in the DID document: its public half

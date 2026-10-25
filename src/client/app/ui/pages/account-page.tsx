@@ -3,8 +3,7 @@
 // no identity yet, the one thing to do from here is sign up.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
-import { parseWebvhDid } from '../../../../protocol/webvh/identifier.ts'
-import { resolve } from '../../../../protocol/webvh/resolver.ts'
+import { resolveDidDocument } from '../../../../protocol/did-resolve.ts'
 import { AccountList, KeysPanel } from '../account/account-list.tsx'
 import { cropAvatar } from '../account/avatar-crop.tsx'
 import { chooseImage, PROFILE_CHANGED } from '../account/profile.ts'
@@ -80,15 +79,16 @@ function AliasButton({ children }: { children: string }) {
 }
 
 function IdentityCard({ did }: { did: string }) {
-  const label = parseWebvhDid(did).domain
   const accountState = useStore(accountConfig)
+  // The address the identity is published at; the DID itself names none.
+  const label = accountState?.wallet?.handle ?? did
   const [name, setName] = useState(label)
 
-  // The card is a view of the signed did:webvh document: a self-asserted name overrides the bare
+  // The card is a view of the signed did:vh document: a self-asserted name overrides the bare
   // domain label once it resolves, in the background so the card shows something at once.
   useEffect(() => {
     let current = true
-    resolve(did).then(found => { if (current && found?.name) setName(found.name) }).catch(() => {})
+    resolveDidDocument(did).then(found => { if (current && found?.name) setName(found.name) }).catch(() => {})
     return () => { current = false }
   }, [did])
 

@@ -79,8 +79,8 @@ export function isDeviceLabel(value: unknown): value is string {
  * body is stored once in `messages`; `deliveries` holds one small row per
  * inbox that still owes it, so N devices cost one body plus N rows.
  *
- * `did_states` is the latest verified did:webvh log state this mediator has
- * seen per DID -- the only source it authenticates a did:webvh device key
+ * `did_states` is the latest verified did:vh log state this mediator has
+ * seen per DID -- the only source it authenticates a did:vh device key
  * against, and the record that revokes a device the moment a newer log
  * drops its key. Nothing here can decrypt a byte of what it queues.
  *
@@ -176,18 +176,29 @@ export class SqliteMediatorStore {
     }
   }
 
-  // ── did:webvh state ───────────────────────────────────────────────────────
+  // ── did:vh state ──────────────────────────────────────────────────────────
 
-  /** Records a verified did:webvh state if it is newer than what is held.
+  /** Records a verified did:vh state if it is newer than what is held.
    * `keys` maps every keyAgreement kid (absolute DID URL) to its X25519 key,
    * hex. A newer state revokes: every inbox of that DID registered with a kid
-   * the new state no longer lists is dropped with what it held. */
-  recordWebvhState(did: string, versionNumber: number, keys: Record<string, string>): 'stored' | 'stale' {
+   * the new state no longer lists is dropped with what it held.
+   *
+   * `versionIds` (the versionId of every entry, in order) is what lets a log that merely verifies be told from the one this
+   * mediator already holds: a longer log must contain the held version at its place, or it is another continuation of the same
+   * history (`'forked'`), and nothing of it is kept. A row held from before this was recorded has no ids, and is compared by
+   * version number alone. */
+  recordLogState(did: string, versionNumber: number, keys: Record<string, string>, versionIds: readonly string[] = []): 'stored' | 'stale' | 'forked' {
     return this.transaction(() => {
-      const held = this.database.query<{ version_number: number }, [string]>('SELECT version_number FROM did_states WHERE did = ?').get(did)
-      if (held && Number(held.version_number) >= versionNumber) return 'stale'
-      this.database.query('INSERT INTO did_states (did, version_number, keys_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(did) DO UPDATE SET version_number = excluded.version_number, keys_json = excluded.keys_json, updated_at = excluded.updated_at')
-        .run(did, versionNumber, JSON.stringify(keys), Date.now())
+      const held = this.database.query<{ version_number: number; version_ids_json: string }, [string]>('SELECT version_number, version_ids_json FROM did_states WHERE did = ?').get(did)
+      if (held) {
+        const heldIds = JSON.parse(held.version_ids_json) as string[]
+        const heldNumber = Number(held.version_number)
+        const heldId = heldIds[heldNumber - 1]
+        if (heldId !== undefined && versionIds.length >= heldNumber && versionIds[heldNumber - 1] !== heldId) return 'forked'
+        if (heldNumber >= versionNumber) return 'stale'
+      }
+      this.database.query('INSERT INTO did_states (did, version_number, keys_json, updated_at, version_ids_json) VALUES (?, ?, ?, ?, ?) ON CONFLICT(did) DO UPDATE SET version_number = excluded.version_number, keys_json = excluded.keys_json, updated_at = excluded.updated_at, version_ids_json = excluded.version_ids_json')
+        .run(did, versionNumber, JSON.stringify(keys), Date.now(), JSON.stringify(versionIds))
       const removeInbox = this.database.query('DELETE FROM inboxes WHERE recipient_did = ? AND device = ?')
       for (const row of this.database.query<InboxRow, [string]>('SELECT device, registered_kid, last_seen FROM inboxes WHERE recipient_did = ?').all(did)) {
         if (!Object.hasOwn(keys, row.registered_kid)) removeInbox.run(did, row.device)
@@ -198,20 +209,20 @@ export class SqliteMediatorStore {
   }
 
   /** When the held state of `did` was last recorded (a new version). */
-  webvhStateRecordedAt(did: string): number | undefined {
+  logStateRecordedAt(did: string): number | undefined {
     const row = this.database.query<{ updated_at: number }, [string]>('SELECT updated_at FROM did_states WHERE did = ?').get(did)
     return row ? Number(row.updated_at) : undefined
   }
 
-  /** The did:webvh and did:vh DIDs that hold at least one inbox -- the ones whose keys
+  /** The did:vh DIDs that hold at least one inbox -- the ones whose keys
    * have to be checked again from time to time, so a device removed from its
    * DID loses its inbox. */
-  webvhRecipientDids(): string[] {
-    return this.database.query<{ recipient_did: string }, []>("SELECT DISTINCT recipient_did FROM inboxes WHERE recipient_did LIKE 'did:webvh:%' OR recipient_did LIKE 'did:vh:%'").all().map(row => row.recipient_did)
+  logRecipientDids(): string[] {
+    return this.database.query<{ recipient_did: string }, []>("SELECT DISTINCT recipient_did FROM inboxes WHERE recipient_did LIKE 'did:vh:%'").all().map(row => row.recipient_did)
   }
 
   /** The X25519 key (hex) the latest held state lists for this kid. */
-  webvhKey(did: string, kid: string): string | undefined {
+  logKey(did: string, kid: string): string | undefined {
     const row = this.database.query<{ keys_json: string }, [string]>('SELECT keys_json FROM did_states WHERE did = ?').get(did)
     if (!row) return undefined
     const keys = JSON.parse(row.keys_json) as Record<string, string>
@@ -454,7 +465,8 @@ function installSchema(database: Database): void {
       did TEXT PRIMARY KEY,
       version_number INTEGER NOT NULL,
       keys_json TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      version_ids_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE TABLE IF NOT EXISTS inboxes (
       recipient_did TEXT NOT NULL,
@@ -487,4 +499,7 @@ function installSchema(database: Database): void {
     );
     CREATE INDEX IF NOT EXISTS replay_ids_expiry ON replay_ids(expires_at);
   `)
+  // A database made before the versionIds were kept: the column is added, empty (such a row is compared by version number alone).
+  const columns = database.query<{ name: string }, []>('PRAGMA table_info(did_states)').all().map(column => column.name)
+  if (!columns.includes('version_ids_json')) database.exec("ALTER TABLE did_states ADD COLUMN version_ids_json TEXT NOT NULL DEFAULT '[]'")
 }

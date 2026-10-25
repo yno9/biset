@@ -3,7 +3,7 @@
 // key), in any order; the Root must never be taken to be whichever comes first.
 import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'
+import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
 import { rootAuthority } from '../src/client/identity/wallet/did-md-oauth.ts'
 
 const DID = 'did:webvh:QmZdfGg8BAxEMLvHRC1RwDVcthg66akuBzJoeLvRdHXwQz:alice.did.md'

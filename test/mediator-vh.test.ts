@@ -3,12 +3,12 @@
 // works as for a did:webvh. Logs are hand-built (support/vh-log-fixture.ts), not the resolver under test.
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
 import { T, deviceLabel, freshMediator, utf8 } from './support/mediator.ts'
 import { packAuthcrypt } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
-import { createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver } from '../src/server/mediator/webvh-state.ts'
+import { createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver } from '../src/server/mediator/log-state.ts'
 import { addKeyAgreement, buildVhDidCommLog, extendVhLog } from './protocol/support/vh-log-fixture.ts'
 
 const root = ed25519.utils.randomSecretKey()
@@ -32,11 +32,11 @@ function withWatcher(world: { log: typeof base.log | null; down?: boolean }, opt
     if (!new URL(String(input)).pathname.startsWith('/log') || world.log === null) return new Response('', { status: 404 })
     return new Response(serializeLog(world.log))
   }) as typeof fetch
-  const resolveWebvh = createDidStateResolver({
+  const resolveLog = createDidStateResolver({
     webvh: createNetworkWebvhResolver({ lookup: publicLookup, fetch: fetchImpl }),
     ...((options.watchers ?? ['https://did.md']).length ? { vh: createVhWatcherResolver({ watchers: options.watchers ?? ['https://did.md'], lookup: publicLookup, fetch: fetchImpl }) } : {}),
   })
-  const m = freshMediator({}, SqliteMediatorStore.memory(), { now: () => clock.now, webvhFreshMs: 300_000, webvhRetryMs: 10_000, webvhStaleMs: 3_600_000, resolveWebvh })
+  const m = freshMediator({}, SqliteMediatorStore.memory(), { now: () => clock.now, logFreshMs: 300_000, logRetryMs: 10_000, logStaleMs: 3_600_000, resolveLog })
   return { ...m, calls, clock }
 }
 
@@ -72,17 +72,17 @@ describe('a mediator with a watcher for did:vh', () => {
     expect((reply.body as any).updated[0].result).toBe('success')
   })
 
-  test('a device the DID no longer lists loses its inbox when the DID is resolved again (refreshWebvh)', async () => {
+  test('a device the DID no longer lists loses its inbox when the DID is resolved again (refreshLogs)', async () => {
     const world = { log: base.log as typeof base.log | null }
     const m = withWatcher(world)
     await m.request(phoneHolder, T.RECIPIENT_UPDATE, add)
     expect(m.store.listInboxes(did)).toHaveLength(1)
-    expect(m.store.webvhRecipientDids()).toEqual([did])
+    expect(m.store.logRecipientDids()).toEqual([did])
     world.log = extendVhLog(base.log, root, rootPublic, state => {
       state.keyAgreement = []
       state.verificationMethod = state.verificationMethod.filter((vm: { id: string }) => vm.id !== `${did}#k_phone`)
     }, '2026-08-24T00:00:00Z')
-    expect(await m.refreshWebvh()).toMatchObject({ checked: 1, revoked: 1 })
+    expect(await m.refreshLogs()).toMatchObject({ checked: 1, revoked: 1 })
     expect(m.store.listInboxes(did)).toHaveLength(0)
   })
 
@@ -104,7 +104,7 @@ describe('a mediator with a watcher for did:vh', () => {
     expect((await raw(m, phoneHolder)).status).toBe(503)
   })
 
-  test('a log pushed to POST /webvh-log works for a did:vh too, and a stale one is ignored', async () => {
+  test('a log pushed to POST /did-log works for a did:vh too, and a stale one is ignored', async () => {
     const m = withWatcher({ log: null })
     expect(await (await m.pushLog(serializeLog(base.log))).json()).toMatchObject({ did, version: 1, outcome: 'stored' })
     expect(await (await m.pushLog(serializeLog(base.log))).json()).toMatchObject({ outcome: 'stale' })

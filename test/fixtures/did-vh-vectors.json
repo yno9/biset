@@ -886,8 +886,8 @@
   },
   {
    "name": "invalid/not-a-vh-did",
-   "note": "The DID is a did:webvh.",
-   "did": "did:webvh:Qm:example.com",
+   "note": "The DID is of another method.",
+   "did": "did:web:example.com",
    "log": [
     {
      "versionId": "1-QmdwV1oBY3tXECiaTApKjBo3UGqWGVehdR3Txy3oPRHK5a",
@@ -1997,7 +1997,7 @@
   },
   {
    "name": "invalid/portable",
-   "note": "A did:webvh parameter.",
+   "note": "A parameter of another DID method, which did:vh does not define.",
    "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
    "log": [
     {
@@ -2340,7 +2340,7 @@
    }
   },
   {
-   "name": "invalid/method-is-webvh",
+   "name": "invalid/method-is-another",
    "note": "The method of another DID method.",
    "did": "did:vh:QmQpTjS8RFQks4DWbhnYD58jLsJb1e46wL2nQYKBe6tS5U",
    "log": [
@@ -2384,10 +2384,10 @@
      ]
     },
     {
-     "versionId": "2-QmZxtREv5FCKL3v1CBdmCC8y5kPtPaG5LQ5AeTSvHydiju",
+     "versionId": "2-QmR3AphjjkxCLwTukm4tMY4S45kjN7eNRs1skqyaYnkiwA",
      "versionTime": "2026-01-01T00:00:10Z",
      "parameters": {
-      "method": "did:webvh:1.0"
+      "method": "did:web:1.0"
      },
      "state": {
       "@context": [
@@ -2414,7 +2414,7 @@
        "proofPurpose": "assertionMethod",
        "verificationMethod": "did:key:z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm#z6MktTxHZ4hxSK41USQtnrsi816sFiQLx361tACky8Z3bJhm",
        "created": "2026-01-01T00:00:10Z",
-       "proofValue": "z2EPCmLJmCW1vqQBAUb2EerYvhyVFPAzXUgCC6hUFV9QqQAtizSUVG3T9aYu4bTwA1XffxbK6hynUefVrVHzVSLK1"
+       "proofValue": "z5w9njxSc4yPtMbfsLcY6X3wP9aDusteaRNkK2cHri8trQsqo9xx4WE9EV16xe8LknSySc8bCCkVTpud29WZZuZct"
       }
      ]
     }

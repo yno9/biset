@@ -92,10 +92,10 @@ export function ComposePage() {
                         value={row.fullDid ? labelForDid(row.fullDid) : row.text}
                         // A manual edit always clears an elided DID's real address.
                         onChange={event => update(row.id, current => ({ id: current.id, text: event.target.value }))}
-                        // A typed did:webvh collapses to its elided form once the field is left.
+                        // A typed did:vh collapses to its elided form once the field is left.
                         onBlur={() => update(row.id, current => {
                           const full = addressOf(current)
-                          return full.startsWith('did:webvh:') ? { id: current.id, text: labelForDid(full), fullDid: full } : { id: current.id, text: full ? full : current.text }
+                          return full.startsWith('did:vh:') ? { id: current.id, text: labelForDid(full), fullDid: full } : { id: current.id, text: full ? full : current.text }
                         })} />
                       {index === 0 ? <button id="new-add-btn" className="new-compose-add-btn" tabIndex={-1} style={{ fontSize: 20, padding: '0 4px', lineHeight: 1 }}
                         onClick={() => { focusNewRow.current = true; setRows(current => [...current, { id: nextId.current++, text: '' }]) }}>+</button> : null}

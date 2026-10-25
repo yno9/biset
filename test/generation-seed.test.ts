@@ -2,7 +2,7 @@
 // (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2): the seed in use is the one whose
 // rotation key the DID document publishes; a removed device may not use any.
 import { describe, expect, test } from 'vitest'
-import type { LogEntry } from '../src/protocol/webvh/log.ts'
+import type { LogEntry } from '../src/protocol/vh/log.ts'
 import {
   createGenerationSeedAuthority, DeviceRemovedError, GenerationSeedPendingError, SEED_LOST_AFTER_MS, seedStatus,
 } from '../src/client/didcomm/generation-seed-bootstrap.ts'

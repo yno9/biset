@@ -1,5 +1,5 @@
 // Multikey (did:key-style multibase+multicodec public key encoding), Ed25519
-// only — the only key type did:webvh v1.0's eddsa-jcs-2022 cryptosuite uses
+// only — the only key type did:vh's eddsa-jcs-2022 cryptosuite uses
 // for LOG SIGNING, and the only key type this resolver needs (device
 // keyAgreement entries belong to the DIDComm transport layer, not the
 // signing-key resolution this module exists for).

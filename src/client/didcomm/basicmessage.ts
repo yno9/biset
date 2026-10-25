@@ -8,7 +8,7 @@
 // OOB/bootstrap/control plus, now, 1:1 chat -- not the old system's full
 // messaging subsystem, confirmed with the user).
 import type { MailAuthResults } from '../store/projection/gateway.ts'
-import { identityKey } from '../../protocol/webvh/identifier.ts'
+import { identityKey } from '../../protocol/vh/identifier.ts'
 
 export const BASIC_MESSAGE = 'https://didcomm.org/basicmessage/2.0/message'
 

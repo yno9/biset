@@ -1,8 +1,7 @@
-// Picks a DIDComm route out of an already-resolved did:webvh document.
+// Picks a DIDComm route out of an already-resolved did:vh document.
 //
-// Replaces webvh-routing.ts (deleted 2026-09-16 with routing.json itself):
-// `keyAgreement` and the `#didcomm` DIDCommMessaging service now live in the
-// signed did:webvh log, published by did.md Wallet's
+// `keyAgreement` and the `#didcomm` DIDCommMessaging service live in the
+// signed did:vh log, published by did.md Wallet's
 // `urn:did-core:document-edit:v1`, so there is nothing to merge in from a
 // second document. Verified live against
 // `cb81.did.md/.well-known/did.jsonl`: `keyAgreement` is an array of
@@ -14,7 +13,7 @@
 // One function for every reader of a routing document (the outbound send,
 // the mediator, did:web documents), so they never disagree on where a
 // message goes.
-import type { WebvhDidDocument } from '../webvh/document.ts'
+import type { DidDocument } from '../vh/document.ts'
 import { selectDidCommEndpoint } from './service-endpoint.ts'
 import { decodeKeyAgreementMultikey, keyAgreementKeyFromJwk } from './key-agreement.ts'
 import type { X25519Recipient } from './crypto.ts'
@@ -40,7 +39,7 @@ export interface DidCommRoute {
  * verificationMethod (matched on the absolute DID URL and on the bare
  * `#fragment`, since a document may store either form) whose `Multikey` or
  * `publicKeyJwk` decodes as one of those; anything else is skipped. Shared by
- * did:webvh and did:web resolution. */
+ * did:vh and did:web resolution. */
 export function keyAgreementRecipients(doc: { id: string; keyAgreement?: string[]; verificationMethod?: Array<{ id: string; publicKeyMultibase?: string; publicKeyJwk?: Record<string, unknown> }> }): X25519Recipient[] {
   const absolute = (id: string) => id.startsWith('#') ? `${doc.id}${id}` : id
   const wanted = new Set((doc.keyAgreement ?? []).map(absolute))
@@ -57,7 +56,7 @@ export function keyAgreementRecipients(doc: { id: string; keyAgreement?: string[
 }
 
 /** The live DIDCommMessaging service is the newest one in the document. */
-export function didCommRouteFromDocument(doc: WebvhDidDocument, options: { preferOnion?: boolean } = {}): DidCommRoute {
+export function didCommRouteFromDocument(doc: DidDocument, options: { preferOnion?: boolean } = {}): DidCommRoute {
   const service = [...doc.service].reverse().find(value => value.type === 'DIDCommMessaging')
   // A mediator with a Tor entrance publishes a set (PLAN-tor.md D-4);
   // `preferOnion` is set only by a sender that is itself on Tor (D-5/D-6).

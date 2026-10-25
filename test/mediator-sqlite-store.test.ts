@@ -52,7 +52,7 @@ describe('SqliteMediatorStore', () => {
     const did = 'did:webvh:scid:example.test'
     const first = SqliteMediatorStore.open(path)
     const identity = first.loadIdentity('https://mediator.example')
-    first.recordWebvhState(did, 3, { [`${did}#k_a`]: '010203' })
+    first.recordLogState(did, 3, { [`${did}#k_a`]: '010203' })
     expect(first.addInbox(did, deviceLabel(1), `${did}#k_a`)).toBe('added')
     expect(first.enqueue(did, JSON.stringify({ ciphertext: 'opaque' }))).toBe(1)
     expect(first.check('Message-ID-A')).toBe(true)
@@ -61,7 +61,7 @@ describe('SqliteMediatorStore', () => {
     const second = SqliteMediatorStore.open(path)
     expect(second.loadIdentity('https://mediator.example').did).toBe(identity.did)
     expect(second.listInboxes(did).map(inbox => inbox.device)).toEqual([deviceLabel(1)])
-    expect(second.webvhKey(did, `${did}#k_a`)).toBe('010203')
+    expect(second.logKey(did, `${did}#k_a`)).toBe('010203')
     expect(second.peek(did, deviceLabel(1), 10)).toEqual([expect.objectContaining({ packed: JSON.stringify({ ciphertext: 'opaque' }) })])
     expect(second.check('message-id-a')).toBe(false)
     second.close()

@@ -7,7 +7,7 @@ import { createMediator, type LiveSocket, type MediatorHandler, type MediatorOpt
 import { SqliteMediatorStore, type SqliteMediatorLimits } from '../../src/server/mediator/sqlite-store.ts'
 import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt, didCommPost } from '../../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../../src/protocol/didcomm/message.ts'
-import { createNetworkWebvhResolver } from '../../src/server/mediator/webvh-state.ts'
+import { createNetworkWebvhResolver } from '../../src/server/mediator/log-state.ts'
 import { webMediatorIdentity } from '../../src/server/mediator/identity.ts'
 
 export const MEDIATOR_URL = 'https://mediator.test.example'
@@ -18,7 +18,7 @@ export interface KeyHolder { did: string; xKid: string; xPriv: Uint8Array }
 
 export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store = SqliteMediatorStore.memory(limits), options: Partial<MediatorOptions> = {}) {
   const mediator = webMediatorIdentity(store.loadIdentity(MEDIATOR_URL), MEDIATOR_URL)
-  const { handle, refreshWebvh } = createMediator({ mediator, store, ...options })
+  const { handle, refreshLogs } = createMediator({ mediator, store, ...options })
   /** The client address the transport would pass (unset: none, as for a relay poller). */
   const client: { address?: string } = {}
   const call = async (path: string, init: RequestInit) => {
@@ -45,8 +45,8 @@ export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store 
     msg.attachments = [{ id: 'inner', data: { json: payload } }]
     return post(packAnoncrypt(utf8(JSON.stringify(msg)), [{ kid: mediator.xKid, publicKey: mediator.xPub }]))
   }
-  const pushLog = (jsonl: string) => call('/webvh-log', { method: 'POST', body: jsonl })
-  return { mediator, store, handle, call, post, request, forward, pushLog, refreshWebvh, client }
+  const pushLog = (jsonl: string) => call('/did-log', { method: 'POST', body: jsonl })
+  return { mediator, store, handle, call, post, request, forward, pushLog, refreshLogs, client }
 }
 
 /** How a mediator under test learns a did:webvh's keys: by resolving it, as in
@@ -56,7 +56,7 @@ export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store 
 export function testWebvhResolver() {
   let network: typeof fetch = async () => new Response('the test network is not set up yet', { status: 500 })
   return {
-    resolveWebvh: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }),
+    resolveLog: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }),
     useNetwork(fetchImpl: typeof fetch) { network = fetchImpl },
   }
 }

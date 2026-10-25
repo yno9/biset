@@ -5,12 +5,12 @@ import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { credentialFor } from '../../src/client/mls/identity.ts'
 import { createMlsDeviceCredential } from '../../src/client/mls/device-credential.ts'
-import { webvhAuthenticationService } from '../../src/client/mls/webvh-authentication-service.ts'
+import { didAuthenticationService } from '../../src/client/mls/did-authentication-service.ts'
 import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
-import { encodeMultikey } from '../../src/protocol/webvh/multikey.ts'
-import { multikeyHashBase58 } from '../../src/protocol/webvh/hash.ts'
-import { buildGenesisLog, fakeAnchor, withFetch } from './support/webvh-log-fixture.ts'
+import { encodeMultikey } from '../../src/protocol/vh/multikey.ts'
+import { multikeyHashBase58 } from '../../src/protocol/vh/hash.ts'
+import { buildGenesisLog, fakeAnchor, withFetch } from './support/did-log-fixture.ts'
 
 describe('webvh Authentication Service', () => {
   test('accepts a Root-signed credential whose embedded key matches the leaf signature key', async () => {
@@ -21,7 +21,7 @@ describe('webvh Authentication Service', () => {
     const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, leafSignaturePublicKey, rootPrivateKey, rootPrivateKey))
 
     await withFetch(log, async () => {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
+      expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
     })
   })
 
@@ -34,7 +34,7 @@ describe('webvh Authentication Service', () => {
     const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, impostorPublicKey, rootPrivateKey, rootPrivateKey))
 
     await withFetch(log, async () => {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
+      expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
     })
   })
 
@@ -46,7 +46,7 @@ describe('webvh Authentication Service', () => {
     const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, leafSignaturePublicKey, rootPrivateKey, ed25519.utils.randomSecretKey()))
 
     await withFetch(log, async () => {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
+      expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
     })
   })
 
@@ -55,12 +55,12 @@ describe('webvh Authentication Service', () => {
     const authority = ed25519.utils.randomSecretKey()
     const credential = credentialFor(createMlsDeviceCredential('did:webvh:deadbeef:test.example', '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafSignaturePublicKey, authority, authority))
     await withFetch(null, async () => {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
+      expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
     })
   })
 
   test('rejects a non-basic / non-DID-URL credential without resolving anything', async () => {
-    expect(await webvhAuthenticationService.validateCredential({ credentialType: 'x509', certificates: [] }, new Uint8Array(32))).toBe(false)
+    expect(await didAuthenticationService.validateCredential({ credentialType: 'x509', certificates: [] }, new Uint8Array(32))).toBe(false)
   })
 
   // Root-cause regression guard: `validateRatchetTree` (vendor/clientState.ts)
@@ -96,7 +96,7 @@ describe('webvh Authentication Service', () => {
     const realFetch = globalThis.fetch
     globalThis.fetch = anchor.fetch
     try {
-      expect(await webvhAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
+      expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
     } finally {
       globalThis.fetch = realFetch
     }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
 import { resolveDidDocument } from '../src/protocol/did-resolve.ts'
 import { buildVhDidCommLog } from './protocol/support/vh-log-fixture.ts'
 import { isMailAddress, resolveMailAddressDid } from '../src/client/didcomm/address-resolver.ts'

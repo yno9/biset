@@ -9,7 +9,7 @@ import { defaultFetch } from '../net-fetch.ts'
 import { addressedTo } from './message.ts'
 import { parseDidCommJws, SignatureError, signingKeyResolver, type DidCommJws, type SigningKeyResolver } from './jws.ts'
 import { openDidCommPayload } from './open.ts'
-import { SenderKeyNotPublishedError } from './webvh-resolve.ts'
+import { SenderKeyNotPublishedError } from './sender-key.ts'
 import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED } from './mediator-protocol.ts'
 
 /** A Pickup 3.0 status, plus biset's `missed`: the mediator dropped copies

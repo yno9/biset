@@ -1,6 +1,6 @@
 // Root-cause regression guard for the DIDComm-side counterpart of the same
 // domain-move bug fixed in core/identity/webvh-signing-key-resolver.ts and
-// mls/webvh-authentication-service.ts: a device that never itself moved
+// mls/did-authentication-service.ts: a device that never itself moved
 // must keep resolving under its OWN unchanged (old-did-prefixed) DIDComm
 // senderKid after a SIBLING device moves the shared identity's domain.
 //
@@ -12,11 +12,11 @@ import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
 import { didToHttpsUrl } from '../../src/protocol/webvh/identifier.ts'
-import { serializeLog } from '../../src/protocol/webvh/log.ts'
-import { encodeMultikey } from '../../src/protocol/webvh/multikey.ts'
-import { multikeyHashBase58 } from '../../src/protocol/webvh/hash.ts'
-import { resolveDidCommSenderKey } from '../../src/protocol/didcomm/webvh-resolve.ts'
-import { buildDidCommLog, fakeAnchor } from './support/webvh-log-fixture.ts'
+import { serializeLog } from '../../src/protocol/vh/log.ts'
+import { encodeMultikey } from '../../src/protocol/vh/multikey.ts'
+import { multikeyHashBase58 } from '../../src/protocol/vh/hash.ts'
+import { resolveDidCommSenderKey } from '../../src/protocol/didcomm/sender-key.ts'
+import { buildDidCommLog, fakeAnchor } from './support/did-log-fixture.ts'
 
 describe('resolveDidCommSenderKey', () => {
   test('a never-moved device\'s senderKid still resolves after the identity moves', async () => {

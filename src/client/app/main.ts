@@ -41,7 +41,7 @@ import { ditoEmbedOrigin } from '../identity/wallet/dito-embed.ts'
 import { mountApp } from './ui/app.tsx'
 import { VaultBackedLocalJmapMutationSink } from '../store/projection/vault-mutation-sink.ts'
 import { DidCommIngressProjector, isProjectableDidCommIngress } from '../didcomm/ingress-projector.ts'
-import { resolveDidCommSenderKey } from '../../protocol/didcomm/webvh-resolve.ts'
+import { resolveDidCommSenderKey } from '../../protocol/didcomm/sender-key.ts'
 import { didCommThreadId } from '../didcomm/basicmessage.ts'
 import { answerTrustPing, sendDidCommMessage } from '../didcomm/send-message.ts'
 import { didcommGroupAddress, groupConversation, parseDidCommGroupAddress } from '../didcomm/group-chat.ts'
@@ -53,7 +53,7 @@ import { ingestTransportIngress } from '../store/vault/ingress-ingest.ts'
 import type { IngressEnvelopeV1 } from '../../protocol/ingress.ts'
 import { bytesToBase64url, canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canonical.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { SenderKeyNotPublishedError } from '../../protocol/didcomm/webvh-resolve.ts'
+import { SenderKeyNotPublishedError } from '../../protocol/didcomm/sender-key.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '../store/vault/generation-seed.ts'
@@ -64,13 +64,13 @@ import { autocryptKeyPatch, contactAvatar, contactCryptoKey, ownCryptoKeyPatch, 
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
-import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
-import { resolve as resolveWebvh } from '../../protocol/webvh/resolver.ts'
+import { didCommRouteFromDocument } from '../../protocol/didcomm/doc-route.ts'
+import { resolveDidDocument } from '../../protocol/did-resolve.ts'
 import { sendFrontDoorMessage } from '../didcomm/front-door-send.ts'
 import { isBasicMessage, pgpArmorOf } from '../didcomm/basicmessage.ts'
 import { isPing } from '../../protocol/didcomm/trust-ping.ts'
-import { fetchCurrentLog, freshFetch } from '../identity/webvh/log-io.ts'
-import { entryVersionNumber } from '../../protocol/webvh/log.ts'
+import { fetchCurrentLog, freshFetch } from '../identity/log-io.ts'
+import { entryVersionNumber } from '../../protocol/vh/log.ts'
 import { equalBytes } from '../../protocol/canonical.ts'
 import { createWalletDidCommOutbox, type WalletDidCommOutbox } from '../identity/wallet/didcomm-outbox.ts'
 import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMirrorFile, scanMarkdownProjection, writeMarkdownProjection, type MarkdownMirrorFile } from '../store/vault/markdown-directory.ts'
@@ -89,11 +89,11 @@ import { openStoredMail } from '../pgp/open.ts'
 import { PGP_KEY_CHANGED, type PgpCardConfig } from './ui/account/pgp-card.tsx'
 import { configureDidResolution, verifiedVhAddress } from '../../protocol/did-resolve.ts'
 import { StoredVersionMemory } from '../identity/version-memory.ts'
-import { identityKey, parseWebvhDid, sameIdentity } from '../../protocol/webvh/identifier.ts'
+import { identityKey, sameIdentity } from '../../protocol/vh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
 
-// Where a did:vh's log is looked for, and the memory that refuses an older or forked copy of any log (did:webvh and did:vh).
+// Where a did:vh's log is looked for, and the memory that refuses an older or forked copy of any log.
 configureDidResolution({ watchers: readBisetConfig().vhWatchers, memory: new StoredVersionMemory() })
 
 function downloadFile(bytes: Uint8Array, filename: string): void { const url = URL.createObjectURL(new Blob([bytes.slice()])); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }
@@ -326,7 +326,7 @@ async function configureWalletAccountIfPresent(
           // the sign-up does: the password manager offers to update the saved account there, and its last
           // page signs this device in under the new DID (the request prepared here) and returns.
           const moved = await requestAliasChange()
-          const login = await prepareDidMdMovedDidLoginRequest(moved.did, readBisetConfig())
+          const login = await prepareDidMdMovedDidLoginRequest(moved.did, moved.host, readBisetConfig())
           const origin = ditoEmbedOrigin()
           if (!origin) throw new Error('Changing the alias needs the embedded wallet.')
           location.assign(`${origin}/authorize${login}`)
@@ -480,7 +480,7 @@ async function configureWalletAccountIfPresent(
     })
     // `label@apex`: the address of an identity at `label.apex` (didmail).
     const ownMailAddress = (() => {
-      const domain = parseWebvhDid(device.did).domain
+      const domain = device.handle
       const dot = domain.indexOf('.')
       return dot > 0 ? `${domain.slice(0, dot)}@${domain.slice(dot + 1)}` : undefined
     })()
@@ -713,7 +713,7 @@ async function configureWalletAccountIfPresent(
         // counterparty says it can. Y names the mediator of this identity's
         // public DID document, by DID -- the same on every device.
         let ownMediatorDid: Promise<string | undefined> | undefined
-        const mediatorDidOfDocument = () => ownMediatorDid ??= resolveWebvh(device.did, undefined, freshFetch())
+        const mediatorDidOfDocument = () => ownMediatorDid ??= resolveDidDocument(device.did, { fetch: freshFetch() })
           .then(document => {
             // Only a mediator named by DID: Y cannot embed a URL without the
             // mediator's routing key, or what is sent to Y would not be
@@ -1138,7 +1138,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
 
   // A did.md Wallet session is the ONLY account this client has since N1
   // (2026-09-05). The seed-derived local IdentityRecord path that used to
-  // run here -- the local IdentityRecord store, did:webvh genesis/restore,
+  // run here -- the local IdentityRecord store, did:vh genesis/restore,
   // mail submission and ingress, DIDComm group chat, the transport outbox,
   // OpenPGP enablement and self-hosted checkpoint create/restore -- was removed
   // wholesale; did.md issues the identity now and none of that has a

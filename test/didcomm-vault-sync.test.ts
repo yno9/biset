@@ -10,10 +10,10 @@ import { createVaultEvent, type VaultEventAuthor } from '../src/client/store/vau
 import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
 import { pickupDeliver } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 import { freshMediator, MEDIATOR_URL } from './support/mediator.ts'
-import { createNetworkWebvhResolver } from '../src/server/mediator/webvh-state.ts'
+import { createNetworkWebvhResolver } from '../src/server/mediator/log-state.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import type { IncomingVaultRecords } from '../src/client/store/vault/store.ts'
 
@@ -67,7 +67,7 @@ describe('walletVaultSyncTransport', () => {
   test('one send reaches every device of the identity through the mediator, each able to open it', async () => {
     // The mediator resolves the identity's DID itself, over the same network the devices use.
     let network: typeof fetch = async () => new Response('not ready', { status: 500 })
-    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveWebvh: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }) })
+    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveLog: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }) })
     const root = ed25519.utils.randomSecretKey()
     const phoneX = x25519.utils.randomSecretKey(); const laptopX = x25519.utils.randomSecretKey()
     const { did, log } = buildDidCommLog({

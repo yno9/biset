@@ -26,7 +26,7 @@ import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/me
 import { parseDidCommJws, SignatureError, signingKeyResolver, type SigningKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload, type OpenedMessage } from '../../protocol/didcomm/open.ts'
 import { didcommGroupAddress, isGroupAudience } from './group-chat.ts'
-import { sameIdentity } from '../../protocol/webvh/identifier.ts'
+import { sameIdentity } from '../../protocol/vh/identifier.ts'
 import { describeProblem, isProblemReport } from '../../protocol/didcomm/problems.ts'
 
 export interface OwnDidCommKey { kid: string; x25519PrivateKey: Uint8Array }
@@ -470,7 +470,7 @@ async function resolveCounterparty(
     if (!known) writes.push(didContactPatch(publicDid, address))
     else {
       // The same contact under another address: kept among its aliases.
-      const alias = aliasPatch(known, publicDid, address)
+      const alias = aliasPatch(known, address)
       if (alias) writes.push(alias)
     }
   }

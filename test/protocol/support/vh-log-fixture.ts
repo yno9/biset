@@ -2,9 +2,9 @@
 // primitives (JCS, multihash, Ed25519 data-integrity proofs), not from the resolver under test. A genesis entry and
 // appended entries signed by the key the entry before authorised (no pre-rotation), whole-second UTC times.
 import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
-import { generateEntryHash } from '../../../src/protocol/webvh/log.ts'
-import type { LogEntry, LogParameters } from '../../../src/protocol/webvh/log.ts'
-import { encodeMultikey, jcsMultihashBase58, signProof } from './webvh-log-fixture.ts'
+import { generateEntryHash } from '../../../src/protocol/vh/log.ts'
+import type { LogEntry, LogParameters } from '../../../src/protocol/vh/log.ts'
+import { encodeMultikey, jcsMultihashBase58, signProof } from './did-log-fixture.ts'
 
 type Document = Record<string, any>
 

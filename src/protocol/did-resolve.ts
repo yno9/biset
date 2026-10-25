@@ -1,11 +1,11 @@
-// One way to resolve a DID document whatever its method. biset holds identities of three kinds: a did:webvh (the host is in the
-// DID), a did:vh (no host: its log is looked for where the contact is known by, or at a watcher), and the did:web document a
-// did:vh publishes beside itself (a shadow, derived from the log; didmail's bridges are did:web too). Callers that only need "the
-// document of this DID" call this and do not branch on the method themselves.
-import { resolve as resolveWebvh } from './webvh/resolver.ts'
-import type { WebvhDidDocument } from './webvh/document.ts'
+// One way to resolve a DID document whatever its method. biset holds identities of two kinds: a did:vh (no host in the DID: its
+// log is looked for where the contact is known by, or at a watcher), and the did:web document a did:vh publishes beside itself (a
+// shadow, derived from the log; didmail's bridges are did:web too). Callers that only need "the document of this DID" call this
+// and do not branch on the method themselves.
+import type { DidDocument } from './vh/document.ts'
 import { resolveDidWeb } from './didcomm/did-web.ts'
 import { fetchVhResolution, type VhLogSources } from './vh/fetch.ts'
+import type { LogEntry } from './vh/log.ts'
 import { didWebCandidates, didWebDocumentUrl, verifiedAddress } from './vh/didweb.ts'
 import type { VersionMemory } from './freshness.ts'
 
@@ -13,7 +13,7 @@ export interface DidResolveContext {
   fetch?: typeof fetch
   /** Where to look for the log of a did:vh. */
   vh?: Omit<VhLogSources, 'fetch'>
-  /** Refuses an old or forked log of a did:webvh or did:vh. */
+  /** Refuses an old or forked log. */
   memory?: VersionMemory
 }
 
@@ -39,18 +39,27 @@ export function rememberVhLocation(did: string, host: string): void {
   metAt.set(did, hosts)
 }
 
+function vhSources(did: string, context: DidResolveContext): VhLogSources {
+  return {
+    locations: [...(context.vh?.locations ?? []), ...(configured.locationsOf?.(did) ?? []), ...(metAt.get(did) ?? [])],
+    watchers: [...(context.vh?.watchers ?? []), ...(configured.watchers ?? [])],
+    fetch: context.fetch ?? fetch,
+  }
+}
+
+/** The whole verified log of a did:vh and its latest document; null when nobody asked has it (or it does not verify for this
+ * DID). Throws on a log that is stale or forked relative to the memory. */
+export async function fetchDidLog(did: string, context: DidResolveContext = {}): Promise<{ entries: LogEntry[]; document: DidDocument | null; versionId: string } | null> {
+  const found = await fetchVhResolution(did, vhSources(did, context), context.memory ?? configured.memory)
+  return found ? { entries: found.log, document: found.resolution.doc, versionId: found.resolution.latestVersionId } : null
+}
+
 /** The latest document of `did`; null when it does not resolve (no log, deactivated, nobody has it). Throws on a log that is
  * invalid, stale or forked. */
-export async function resolveDidDocument(did: string, context: DidResolveContext = {}): Promise<WebvhDidDocument | null> {
-  const fetchImpl = context.fetch ?? fetch
-  if (did.startsWith('did:vh:')) {
-    const locations = [...(context.vh?.locations ?? []), ...(configured.locationsOf?.(did) ?? []), ...(metAt.get(did) ?? [])]
-    const watchers = [...(context.vh?.watchers ?? []), ...(configured.watchers ?? [])]
-    const found = await fetchVhResolution(did, { locations, watchers, fetch: fetchImpl }, context.memory ?? configured.memory)
-    return found?.resolution.doc ?? null
-  }
-  if (did.startsWith('did:web:')) return (await resolveDidWeb(did, fetchImpl)) as WebvhDidDocument | null
-  return resolveWebvh(did, undefined, fetchImpl, context.memory ?? configured.memory)
+export async function resolveDidDocument(did: string, context: DidResolveContext = {}): Promise<DidDocument | null> {
+  if (did.startsWith('did:vh:')) return (await fetchDidLog(did, context))?.document ?? null
+  if (did.startsWith('did:web:')) return (await resolveDidWeb(did, context.fetch ?? fetch)) as DidDocument | null
+  throw new Error(`resolveDidDocument: unsupported DID method for ${did}`)
 }
 
 /** The address a did:vh goes by (`alice@did.md`), or undefined: its latest document must name a plain-host did:web DID in

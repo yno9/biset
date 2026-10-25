@@ -9,20 +9,19 @@
 // A message carries a delivery pack (store/vault/delivery-pack.ts):
 // events, their encrypted objects, and the SegmentKeys those objects need.
 // DIDComm authcrypt is the only encryption the pack needs.
-import { sameIdentity } from '../../protocol/webvh/identifier.ts'
+import { sameIdentity } from '../../protocol/vh/identifier.ts'
 import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
 import type { IdentityId } from '../../protocol/ids.ts'
-import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
-import { resolveByDomain } from '../../protocol/webvh/resolver.ts'
-import { keyAgreementRecipients } from '../../protocol/didcomm/webvh-route.ts'
+import { resolveDidDocument } from '../../protocol/did-resolve.ts'
+import { keyAgreementRecipients } from '../../protocol/didcomm/doc-route.ts'
 import { decodeVaultDeliveryPack, encodeVaultDeliveryPack, type VaultDeliveryPackV1 } from '../store/vault/delivery-pack.ts'
 import { verifyVaultEvent } from '../store/vault/events.ts'
 import { verifyVaultObjectIntegrity } from '../store/vault/objects.ts'
 import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord, VaultObjectRecord, VaultSegmentKey, VaultSyncRecordReader } from '../store/vault/store.ts'
 import { sendFrontDoorMessage } from './front-door-send.ts'
-import { freshFetch } from '../identity/webvh/log-io.ts'
+import { freshFetch } from '../identity/log-io.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 
 /** The most one Vault Sync message carries, from the mediator's disclosed
@@ -53,7 +52,7 @@ export interface VaultSyncApplyResult extends IncomingVaultRecordsResult { skipp
 /** This identity's device keys, as its DID document lists them right now. */
 export async function resolveOwnDeviceKids(identityDid: string): Promise<string[]> {
   // Past the host's CDN too (`freshFetch`): the device list shown to the user and the recipients of a sync must not lag a removal by the CDN's 30 s.
-  const document = await resolveByDomain(parseWebvhDid(identityDid).domain, undefined, undefined, freshFetch())
+  const document = await resolveDidDocument(identityDid, { fetch: freshFetch() })
   if (!document || document.id !== identityDid) throw new Error('this identity\'s DID does not resolve')
   return keyAgreementRecipients(document).map(recipient => recipient.kid)
 }

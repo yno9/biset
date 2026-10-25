@@ -79,7 +79,7 @@ export interface PathSecret {
 // about PROPOSALS bundled into a commit, not about what a committer's own
 // UpdatePath LeafNode may contain -- the committer is presenting their own
 // new leaf either way, proposal or not. mls/group.ts's updateOwnCredential
-// (a did:webvh domain move's credential migration) is the one caller;
+// (a credential migration) is the one caller;
 // every existing caller (rekey, removeMembers, addMembers, ...) leaves
 // this undefined and gets byte-for-byte the old behavior.
 export async function createUpdatePath(

@@ -213,8 +213,7 @@ export type LeafNodeTBSKeyPackage = LeafNodeData & LeafNodeInfoKeyPackage
 // signer for — signLeafNodeCommit/signLeafNodeKeyPackage below cover the
 // other two, but nothing in this file's own createCommit/joinGroup flows
 // ever needed to construct a self-issued Update proposal, which is exactly
-// what mls/group.ts's updateOwnCredential (a did:webvh domain move's
-// credential migration, see self-group.ts's own header) needs: replace an
+// what mls/group.ts's updateOwnCredential (a credential migration, see self-group.ts's own header) needs: replace an
 // EXISTING leaf's credential in place via a plain Update proposal, with no
 // tree-shape change at all -- unlike an external-commit resync, which
 // removes and re-adds a leaf and, for a single-member group, hits an

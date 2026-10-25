@@ -36,12 +36,12 @@
 // live inbox of X (routing.md lets a mediator multiplex to a recipient's
 // several physical devices).
 //
-// did:peer keys are read straight out of the DID. did:webvh keys are learned
+// did:peer keys are read straight out of the DID. did:vh keys are learned
 // the way any DIDComm agent learns a sender's keys: the mediator resolves the
-// DID (`resolveWebvh`, webvh-state.ts) and re-checks it from time to time --
+// DID (`resolveLog`, log-state.ts) and re-checks it from time to time --
 // a newer log revokes every inbox registered with a key it no longer lists.
-// Without a `resolveWebvh` it falls back to the latest log a client pushed to
-// `POST /webvh-log` (not DIDComm; see webvh-state.ts).
+// Without a `resolveLog` it falls back to the latest log a client pushed to
+// `POST /did-log` (not DIDComm; see log-state.ts).
 import { decodePeerDid2, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 import { assertFromMatchesSender, buildPlaintext, isExpired, type DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { buildProblemReport, PROBLEM_REPORT } from '../../protocol/didcomm/problems.ts'
@@ -51,8 +51,7 @@ import {
 } from '../../protocol/didcomm/crypto.ts'
 import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { defaultDeviceLabel } from '../../protocol/didcomm/mediator-device.ts'
-import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
-import { didStateFromLog, isLogDid, WebvhUnavailable, type WebvhStateResolver } from './webvh-state.ts'
+import { vhStateFromLog, isLogDid, LogUnavailable, type LogStateResolver } from './log-state.ts'
 import { peerMediatorIdentity, type MediatorIdentity } from './identity.ts'
 import { authenticationSigningKey, DIDCOMM_SIGNED_MEDIA_TYPE, signDidCommMessage, SignatureError, type SigningKey } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload } from '../../protocol/didcomm/open.ts'
@@ -85,23 +84,18 @@ export interface MediatorOptions {
    * `max_receive_bytes`). Defaults to the store's per-message limit; a
    * deployment with a smaller request-body limit passes the smaller one. */
   maxReceiveBytes?: number
-  /** How to learn a did:webvh's current keys: resolve its log. Absent: only
-   * logs pushed to `POST /webvh-log` are known (the mediator never dials out). */
-  resolveWebvh?: WebvhStateResolver
+  /** How to learn a did:vh's current keys: resolve its log. Absent: only
+   * logs pushed to `POST /did-log` are known (the mediator never dials out). */
+  resolveLog?: LogStateResolver
   /** A resolved state is trusted this long before the DID is resolved again (default 5 min). */
-  webvhFreshMs?: number
+  logFreshMs?: number
   /** After a resolution attempt (any outcome), the same DID is not tried again for this long (default 10 s). */
-  webvhRetryMs?: number
+  logRetryMs?: number
   /** When resolution fails, the state held is still used if it was confirmed this recently (default 1 h). */
-  webvhStaleMs?: number
+  logStaleMs?: number
   now?: () => number
   /** Who may hold an inbox here. Unset: anyone who can prove they own a DID. */
   registration?: {
-    /** Only a did:webvh whose domain is one of these (or a subdomain of one)
-     * may register, or authenticate at all -- such a DID is not even resolved.
-     * A did:peer (a relationship's DID, which names no owner) is not limited
-     * by this. */
-    allowedDidDomains?: readonly string[]
     /** Asked before a NEW inbox is created, with the client's address (set by
      * the transport); `false` refuses it. Re-registering an inbox is never asked. */
     admitNewInbox?(clientAddress: string): boolean
@@ -136,10 +130,10 @@ export interface LiveSocket {
 export interface MediatorHandler {
   /** Handles a mediator request, or returns null if the path isn't ours. */
   handle(req: Request, url: URL, clientAddress?: string): Promise<Response | null>
-  /** Resolves every did:webvh that holds an inbox again, so a device its DID
+  /** Resolves every did:vh that holds an inbox again, so a device its DID
    * dropped loses its inbox now rather than at its next request. Does
-   * nothing without `resolveWebvh`. */
-  refreshWebvh(): Promise<{ checked: number; revoked: number }>
+   * nothing without `resolveLog`. */
+  refreshLogs(): Promise<{ checked: number; revoked: number }>
   /** The WebSocket transport: one call per text frame, and one when the
    * socket closes (live mode ends with the connection, Pickup 3.0). */
   live: {
@@ -156,28 +150,18 @@ interface Reply { trigger: DidCommPlaintext; packed: string }
 type Outcome = { reply: Reply } | { http: Response }
 
 class Malformed extends Error {}
-/** A did:webvh outside this mediator's allowed domains (registration.allowedDidDomains). */
-class DidNotAllowed extends Error {}
-/** A did:webvh sender whose current keys do not include the key it used (or
+/** A did:vh sender whose current keys do not include the key it used (or
  * whose log this mediator has not seen). */
-class UnknownWebvhState extends Error {
+class UnknownLogState extends Error {
   constructor(message: string, readonly code: string) { super(message) }
 }
 
 export function createMediator({
-  mediator: mediatorOption, store, maxReceiveBytes = store.limits.maxMessageBytes, resolveWebvh,
-  webvhFreshMs = 5 * 60_000, webvhRetryMs = 10_000, webvhStaleMs = 60 * 60_000, now = Date.now, registration,
+  mediator: mediatorOption, store, maxReceiveBytes = store.limits.maxMessageBytes, resolveLog,
+  logFreshMs = 5 * 60_000, logRetryMs = 10_000, logStaleMs = 60 * 60_000, now = Date.now, registration,
 }: MediatorOptions): MediatorHandler {
-  const allowedDomains = registration?.allowedDidDomains?.length ? registration.allowedDidDomains.map(domain => domain.toLowerCase()) : undefined
-  /** Whether a did:webvh may use this mediator at all. A did:vh names no domain to judge: its log is read only from the operator's own watchers, which is the allowance. */
-  function didAllowed(did: string): boolean {
-    if (!allowedDomains || !did.startsWith('did:webvh:')) return true
-    let domain: string
-    try { domain = parseWebvhDid(did).domain.toLowerCase() } catch { return false }
-    return allowedDomains.some(allowed => domain === allowed || domain.endsWith(`.${allowed}`))
-  }
-  /** Per did:webvh: when it was last resolved successfully, and last tried. */
-  const webvhChecks = new Map<string, { confirmedAt?: number; triedAt: number }>()
+  /** Per did:vh: when it was last resolved successfully, and last tried. */
+  const logChecks = new Map<string, { confirmedAt?: number; triedAt: number }>()
   const resolving = new Map<string, Promise<void>>()
   const mediator = 'peerKid' in mediatorOption ? mediatorOption : peerMediatorIdentity(mediatorOption)
   /** Every kid that names this mediator's key. A sender that took its key from
@@ -190,16 +174,16 @@ export function createMediator({
   const liveInboxes = new WeakMap<LiveSocket, Map<string, () => void>>()
 
   /** The X25519 key of `kid` as this mediator holds it now -- self-certifying
-   * for did:peer, the latest verified state for did:webvh. Throws for any kid
+   * for did:peer, the latest verified state for did:vh. Throws for any kid
    * that is not (or is no longer) a keyAgreement key. */
   function heldKey(kid: string): Uint8Array {
     const did = didOf(kid)
     if (isLogDid(did)) {
-      const hex = store.webvhKey(did, kid)
+      const hex = store.logKey(did, kid)
       if (!hex) {
-        throw new UnknownWebvhState(
+        throw new UnknownLogState(
           `${kid} is not a keyAgreement key of ${did}`,
-          resolveWebvh ? 'e.m.trust.sender-key-not-listed' : 'e.m.did.log-required',
+          resolveLog ? 'e.m.trust.sender-key-not-listed' : 'e.m.did.log-required',
         )
       }
       return fromHex(hex)
@@ -218,48 +202,47 @@ export function createMediator({
     const running = resolving.get(did)
     if (running) return running
     const attempt = (async () => {
-      const check = webvhChecks.get(did) ?? { triedAt: 0 }
+      const check = logChecks.get(did) ?? { triedAt: 0 }
       check.triedAt = now()
-      webvhChecks.set(did, check)
-      const state = await resolveWebvh!(did)
+      logChecks.set(did, check)
+      const state = await resolveLog!(did)
       if (state) {
-        store.recordWebvhState(state.did, state.versionNumber, state.keys)
-        check.confirmedAt = now()
+        // A log that forks the one held is not the DID's current state: its keys are not used, and nothing is confirmed.
+        if (store.recordLogState(state.did, state.versionNumber, state.keys, state.versionIds) !== 'forked') check.confirmedAt = now()
       }
     })().finally(() => resolving.delete(did))
     resolving.set(did, attempt)
     return attempt
   }
 
-  /** The X25519 key of `kid`. A did:webvh key is checked against a fresh
+  /** The X25519 key of `kid`. A did:vh key is checked against a fresh
    * enough resolution of its DID first: a key just added is not in a state
    * held from before, so an unknown key triggers a resolve (no more often
-   * than `webvhRetryMs`). */
+   * than `logRetryMs`). */
   async function keyAgreementKey(kid: string): Promise<Uint8Array> {
     const did = didOf(kid)
-    if (!didAllowed(did)) throw new DidNotAllowed(`${did} is not on a domain this mediator serves`)
-    if (resolveWebvh && isLogDid(did)) {
-      const check = webvhChecks.get(did)
-      const listed = store.webvhKey(did, kid) !== undefined
-      const fresh = check?.confirmedAt !== undefined && now() - check.confirmedAt < webvhFreshMs
-      const recentlyTried = check !== undefined && now() - check.triedAt < webvhRetryMs
+    if (resolveLog && isLogDid(did)) {
+      const check = logChecks.get(did)
+      const listed = store.logKey(did, kid) !== undefined
+      const fresh = check?.confirmedAt !== undefined && now() - check.confirmedAt < logFreshMs
+      const recentlyTried = check !== undefined && now() - check.triedAt < logRetryMs
       if ((!listed || !fresh) && !recentlyTried) {
         try {
           await resolveAndRecord(did)
         } catch (error) {
           // The network failed. A state confirmed (or, for a pushed one,
           // recorded) recently enough still stands; otherwise ask to retry.
-          const lastKnown = Math.max(check?.confirmedAt ?? 0, store.webvhStateRecordedAt(did) ?? 0)
-          if (!listed || now() - lastKnown > webvhStaleMs) throw error instanceof WebvhUnavailable ? error : new WebvhUnavailable(error instanceof Error ? error.message : String(error))
+          const lastKnown = Math.max(check?.confirmedAt ?? 0, store.logStateRecordedAt(did) ?? 0)
+          if (!listed || now() - lastKnown > logStaleMs) throw error instanceof LogUnavailable ? error : new LogUnavailable(error instanceof Error ? error.message : String(error))
         }
       }
     }
     return heldKey(kid)
   }
 
-  async function refreshWebvh(): Promise<{ checked: number; revoked: number }> {
-    if (!resolveWebvh) return { checked: 0, revoked: 0 }
-    const dids = store.webvhRecipientDids()
+  async function refreshLogs(): Promise<{ checked: number; revoked: number }> {
+    if (!resolveLog) return { checked: 0, revoked: 0 }
+    const dids = store.logRecipientDids()
     const before = store.stats().inboxes
     for (const did of dids) {
       try { await resolveAndRecord(did) } catch (error) { console.warn(`[mediator] could not re-check ${did}:`, error instanceof Error ? error.message : String(error)) }
@@ -341,7 +324,7 @@ export function createMediator({
     // authorizes by -- so it stays unauthenticated here.
     const open = async (plaintext: Uint8Array, authcryptSenderKid?: string) => {
       try { return await openDidCommPayload(plaintext, authcryptSenderKid, signingKey) } catch (error) {
-        if (error instanceof WebvhUnavailable) throw error
+        if (error instanceof LogUnavailable) throw error
         throw new Malformed(error instanceof Error ? error.message : String(error))
       }
     }
@@ -353,39 +336,37 @@ export function createMediator({
     return { msg: (await open(plaintext, senderKid)).message, senderKid }
   }
 
-  /** The signing key a signer kid names: a did:peer:2's own, a did:webvh's as
+  /** The signing key a signer kid names: a did:peer:2's own, a did:vh's as
    * this mediator resolves it (the same guarded resolution as its keys). */
   async function signingKey(kid: string): Promise<SigningKey> {
     const did = kid.split('#', 1)[0]!
     if (did.startsWith('did:peer:2.')) return authenticationSigningKey(decodePeerDid2(did) as never, kid)
-    if (isLogDid(did) && resolveWebvh) {
-      if (!didAllowed(did)) throw new DidNotAllowed(`${did} is not on a domain this mediator serves`)
-      const key = (await resolveWebvh(did))?.authentication?.[kid]
+    if (isLogDid(did) && resolveLog) {
+      const key = (await resolveLog(did))?.authentication?.[kid]
       if (key) return key
     }
     throw new SignatureError(`${kid} is not a signing key this mediator can read`)
   }
 
-  /** `POST /webvh-log` -- a did:webvh log (JSONL), pushed by a client.
-   * Not DIDComm (see webvh-state.ts): kept for a mediator that resolves
+  /** `POST /did-log` -- a did:vh log (JSONL), pushed by a client.
+   * Not DIDComm (see log-state.ts): kept for a mediator that resolves
    * nothing. Self-certifying, so anyone may hand it over: it is verified in
    * full here and kept only if it is newer than what this mediator already
    * holds for that DID. */
-  async function acceptWebvhLog(req: Request): Promise<Response> {
-    let state: ReturnType<typeof didStateFromLog>
+  async function acceptDidLog(req: Request): Promise<Response> {
+    let state: ReturnType<typeof vhStateFromLog>
     try {
-      state = didStateFromLog(await req.text())
+      state = vhStateFromLog(await req.text())
     } catch (error) {
-      return Response.json({ error: `not a valid did:webvh or did:vh log: ${error instanceof Error ? error.message : String(error)}` }, { status: 400 })
+      return Response.json({ error: `not a valid did:vh log: ${error instanceof Error ? error.message : String(error)}` }, { status: 400 })
     }
-    if (!didAllowed(state.did)) return Response.json({ error: `${state.did} is not on a domain this mediator serves` }, { status: 403 })
-    const outcome = store.recordWebvhState(state.did, state.versionNumber, state.keys)
-    return Response.json({ did: state.did, version: state.versionNumber, outcome })
+    const outcome = store.recordLogState(state.did, state.versionNumber, state.keys, state.versionIds)
+    return Response.json({ did: state.did, version: state.versionNumber, outcome }, { status: outcome === 'forked' ? 409 : 200 })
   }
 
   async function handle(req: Request, url: URL, clientAddress?: string): Promise<Response | null> {
     if (req.method === 'GET' && url.pathname === '/.well-known/did.json') return Response.json(mediator.doc)
-    if (req.method === 'POST' && url.pathname === '/webvh-log') return acceptWebvhLog(req)
+    if (req.method === 'POST' && url.pathname === '/did-log') return acceptDidLog(req)
     if (url.pathname !== '/' || req.method !== 'POST') return null
     if (!isDidCommEncryptedRequest(req)) return httpProblem(415, 'e.m.msg', 'The request is not an encrypted DIDComm message: its Content-Type must be {1}.', [DIDCOMM_ENCRYPTED_MEDIA_TYPE])
     const outcome = await receive(await req.text(), undefined, clientAddress)
@@ -415,9 +396,8 @@ export function createMediator({
     try {
       ;({ msg, senderKid } = await unpack(raw))
     } catch (e) {
-      if (e instanceof DidNotAllowed) return { http: httpProblem(403, 'e.m.trust.did-not-allowed', 'The sender is not on a domain this mediator serves.') }
-      if (e instanceof UnknownWebvhState) return { http: httpProblem(401, e.code, 'The sender could not be authenticated: {1}', [e.message]) }
-      if (e instanceof WebvhUnavailable) return { http: httpProblem(503, 'e.m.me.res.net', "The sender's DID could not be resolved right now: {1}", [e.message]) }
+      if (e instanceof UnknownLogState) return { http: httpProblem(401, e.code, 'The sender could not be authenticated: {1}', [e.message]) }
+      if (e instanceof LogUnavailable) return { http: httpProblem(503, 'e.m.me.res.net', "The sender's DID could not be resolved right now: {1}", [e.message]) }
       if (e instanceof Malformed) return { http: httpProblem(400, 'e.m.msg', 'The message is malformed: {1}', [e.message]) }
       console.error('[mediator] could not unpack an inbound message:', e)
       return { http: httpProblem(400, 'e.m.trust.crypto', 'The message could not be decrypted.') }
@@ -625,6 +605,6 @@ export function createMediator({
     }
   }
 
-  return { handle, live, mediatorDid: mediator.did, refreshWebvh }
+  return { handle, live, mediatorDid: mediator.did, refreshLogs }
 }
 

@@ -231,33 +231,6 @@ export class IndexedDbVaultStore implements VaultProjectionReader, VaultProjecti
   }
 
   /**
-   * Domain move (identity/webvh/move.ts) support: every store here is keyed
-   * by identityId (KEY_PATHS above), which is the did:webvh string this
-   * device's identity happens to resolve at right now -- a domain move
-   * changes that string while the identity itself, and every row already
-   * recorded under the old one, stays exactly the same. One multi-store
-   * transaction covering every store, so a failure partway through never
-   * leaves some stores moved and others still under the old key.
-   */
-  async rekeyIdentity(oldIdentityId: IdentityId, newIdentityId: IdentityId): Promise<void> {
-    if (oldIdentityId === newIdentityId) return
-    const storeNames = Object.values(STORES)
-    const transaction = this.database.transaction(storeNames, 'readwrite')
-    for (const name of storeNames) {
-      const keyPath = KEY_PATHS[name]
-      const store = transaction.objectStore(name)
-      const rows = await requestValue<Array<Record<string, unknown>>>(store.getAll())
-      for (const row of rows) {
-        if (row.identityId !== oldIdentityId) continue
-        const oldKey = Array.isArray(keyPath) ? keyPath.map(field => row[field]) : row[keyPath]
-        store.put({ ...row, identityId: newIdentityId })
-        store.delete(oldKey as IDBValidKey)
-      }
-    }
-    await transactionDone(transaction)
-  }
-
-  /**
    * Idempotence is anchored by the ingress receipt's composite key. A repeated
    * ingress aborts before any object/event/projection mutation can commit.
    */
@@ -675,10 +648,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 // Every store's keyPath, `identityId` first (sole key, or the first element
-// of a compound one) -- the single source of truth for createStores below
-// AND rekeyIdentity (IndexedDbVaultStore's own method), which needs to know
-// each store's exact key shape to move a row from its old key to its new
-// one. Kept as one table specifically so the two never drift apart.
+// of a compound one) -- the single source of truth for createStores below.
 const KEY_PATHS: Record<StoreName, string | string[]> = {
   [STORES.ingressReceipts]: ['identityId', 'ingressId'],
   [STORES.objects]: ['identityId', 'objectId'],

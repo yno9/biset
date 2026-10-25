@@ -11,7 +11,7 @@ import {
   __internal, b64url, didCommAccepted, packAnoncrypt, packAuthcrypt, recipientsForSender, sameCurveRecipients, unpackAnoncrypt, unpackAuthcrypt, type DidCommJWE,
 } from '../../src/protocol/didcomm/crypto.ts'
 import { decodeKeyAgreementMultikey, encodeKeyAgreementMultikey, keyAgreementKeyFromJwk, jwkOfKeyAgreementKey } from '../../src/protocol/didcomm/key-agreement.ts'
-import { keyAgreementRecipients } from '../../src/protocol/didcomm/webvh-route.ts'
+import { keyAgreementRecipients } from '../../src/protocol/didcomm/doc-route.ts'
 import { decodePeerDid2, generatePeerIdentity, peerKeyAgreementRecipients } from '../../src/protocol/didcomm/peer.ts'
 import { wrapForwardHops } from '../../src/protocol/didcomm/forward-wrap.ts'
 import { authenticationSigningKey, parseDidCommJws, signDidCommMessage, SignatureError, verifyDidCommJws, verifyJwsSignature, type SigningKey } from '../../src/protocol/didcomm/jws.ts'

@@ -1,6 +1,5 @@
 // Data Integrity Proof, eddsa-jcs-2022 cryptosuite (W3C VC Data Integrity /
-// EdDSA Cryptosuites) — the only cryptosuite did:webvh v1.0 permits
-// (DIDWEBVHFEAT.md §6). Hashes a "proof configuration" (everything about the
+// EdDSA Cryptosuites) — the only cryptosuite did:vh permits. Hashes a "proof configuration" (everything about the
 // proof except its signature) and the target document separately, concatenates
 // the two hashes, and Ed25519-verifies the result.
 import { ed25519 } from '@noble/curves/ed25519.js'

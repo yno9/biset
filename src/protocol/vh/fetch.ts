@@ -4,9 +4,10 @@
 //     `https://<host>/.well-known/did.jsonl`;
 //   - watchers: services that hold logs by SCID (`GET <watcher>/log?scid=`), the operator's or the identity's own (`watchers`).
 // The first copy that verifies for this DID wins; one that does not (another identity's, damaged) is passed over.
-import { parseLog, type LogEntry } from '../webvh/log.ts'
+import { parseLog, type LogEntry } from './log.ts'
 import { resolveVhEntries, type VhResolution } from './resolver.ts'
-import { parseVhDid } from './identifier.ts'
+import { isVhDid, parseVhDid } from './identifier.ts'
+import type { DidDocument } from './document.ts'
 import { checkAndRemember, type VersionMemory } from '../freshness.ts'
 
 export interface VhLogSources {
@@ -56,4 +57,28 @@ export async function fetchVhResolution(did: string, sources: VhLogSources, memo
     return { resolution, log }
   }
   return null
+}
+
+/**
+ * The did:vh published at a host (`alice.did.md`) when only the host is known (a typed alias, a login hint): the log is at
+ * `https://<host>/.well-known/did.jsonl` and its first entry says which DID it is. It counts only if it verifies in full and its
+ * current document names `did:web:<host>` as its place (the location rule a host enforces when it takes a log), so a host
+ * cannot make another identity's log pass for the name it serves. null when there is no such log.
+ */
+export async function resolveVhByHost(host: string, options: { fetch?: typeof fetch; memory?: VersionMemory } = {}): Promise<{ did: string; document: DidDocument; entries: LogEntry[] } | null> {
+  const text = await textOf(`https://${host}/.well-known/did.jsonl`, options.fetch ?? fetch)
+  if (text === undefined) return null
+  let entries: LogEntry[]
+  let did: unknown
+  try {
+    entries = parseLog(text)
+    did = (entries[0]?.state as { id?: unknown } | undefined)?.id
+  } catch { return null }
+  if (typeof did !== 'string' || !isVhDid(did)) return null
+  let resolution: VhResolution
+  try { resolution = resolveVhEntries(did, entries) } catch { return null }
+  const document = resolution.doc
+  if (!document || !document.alsoKnownAs.includes(`did:web:${host.toLowerCase()}`)) return null
+  if (options.memory) await checkAndRemember(options.memory, did, entries)
+  return { did, document, entries }
 }

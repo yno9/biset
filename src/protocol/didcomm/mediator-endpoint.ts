@@ -10,7 +10,7 @@
 //
 // Per the spec the mediator's own document uses a plain URL (no DID, so no
 // recursion), and here also no routingKeys of its own.
-import { keyAgreementRecipients } from './webvh-route.ts'
+import { keyAgreementRecipients } from './doc-route.ts'
 import { decodePeerDid2, peerKeyAgreementRecipients } from './peer.ts'
 import { resolveDidWeb, didWebDidCommRoute } from './did-web.ts'
 import { peerHop, type ForwardHop } from './forward-wrap.ts'

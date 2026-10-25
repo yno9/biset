@@ -2,28 +2,15 @@
 // signed-in identity's own DID) and the compose page (a typed recipient's
 // DID) both need the exact same elision, and duplicating it was already the
 // kind of divergence that bit this codebase once (state.ts/message-view.ts).
-//
-// Ported from src.bak/did/contacts.ts's ownDidParts, narrowed to what this
-// rewrite's did:webvh actually produces: subdomain-per-identity, no trailing
-// `:{username}` path segment (identity/webvh/create-genesis.ts) -- so hiding
-// the 46-char SCID and keeping `did:webvh:{domain}` is the whole rule, not
-// src.bak's more general prefix/hidden/suffix split (which existed to also
-// handle a foreign did:webvh's own path convention).
-import { identityKey, parseWebvhDid, sameIdentity, scidOf, vhScidOf } from '../../../protocol/webvh/identifier.ts'
+import { identityKey, sameIdentity, vhScidOf } from '../../../protocol/vh/identifier.ts'
 import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
 
-/** Elided display form -- `did:webvh:t.biset.md` for a did:webvh, the raw
- * string unchanged for anything else (a bare email, or a DID method this
- * rewrite doesn't create). Never lossy: the caller keeps the real value
- * separately (e.g. an input's `dataset.fullDid`) for anything that actually
- * needs it (copy, send). */
-export function shortWebvhDid(did: string): string {
-  if (!did.startsWith('did:webvh:')) return did
-  try {
-    return `did:webvh:${parseWebvhDid(did).domain}`
-  } catch {
-    return did
-  }
+/** Elided display form -- `did:vh:QmfJMA…` for a did:vh (its SCID cut short), the raw string unchanged for anything else (a bare
+ * email, another DID method). Never lossy: the caller keeps the real value separately (e.g. an input's `dataset.fullDid`) for
+ * anything that actually needs it (copy, send). */
+export function shortDid(did: string): string {
+  const scid = vhScidOf(did)
+  return scid ? `did:vh:${scid.slice(0, 8)}…` : did
 }
 
 /** How a DID is shown to a person: as a mail address, `hrdcv7qkr@nine.testrun.org`, `alice@did.md`. biset's principle is that a
@@ -31,23 +18,14 @@ export function shortWebvhDid(did: string): string {
  * not come through here. Everything else that names someone calls this, so a rule changed here changes it everywhere.
  *
  *  - a mail bridge's DID (`did:web:{bridge}:{domain}:{local}`) is the address it stands for (didmail PROTOCOL.md §3.1);
- *  - a did:webvh of this system (`{username}.{apex}`, no separate path: identity/bootstrap.ts) is `username@apex`, the address
- *    didmail gives it;
- *  - anything else (a bare address, another DID method, a did:webvh shaped otherwise) is left as it is, never invented. */
+ *  - a did:vh names no host, so its address is not in the string: it is the did:web DID its document names (`alice@did.md` for
+ *    `did:web:alice.did.md`), once that DID's shadow was checked in both directions (protocol/vh/didweb.ts verifiedAddress);
+ *  - anything else (a bare address, another DID method, a did:vh with no verified address) is left as it is, never invented. */
 export function labelForDid(did: string): string {
   const bridged = mailAddressOfBridgeDid(did)
   if (bridged) return bridged
-  // A did:vh names no host, so its address is not in the string: it is the did:web DID its document names, once that DID's
-  // shadow was checked in both directions (protocol/vh/didweb.ts verifiedAddress). Without one the DID is shown as it is.
   if (vhScidOf(did)) return verifiedAddresses.get(identityKey(did)) ?? did
-  if (!did.startsWith('did:webvh:')) return did
-  try {
-    const domain = parseWebvhDid(did).domain
-    const dot = domain.indexOf('.')
-    return dot > 0 ? `${domain.slice(0, dot)}@${domain.slice(dot + 1)}` : shortWebvhDid(did)
-  } catch {
-    return did
-  }
+  return did
 }
 
 // The address a did:vh stands for, by identity key, where its did:web shadow was verified (set by whoever verified it).
@@ -59,7 +37,7 @@ export function setVerifiedAddresses(addresses: ReadonlyMap<string, string>): vo
 // the one on a mail's From:). Without one, the address. The list is filled from the contact cards each time the inbox is
 // refreshed (shell.ts); the places that name a person call displayName, the ones that mean the address call labelForDid.
 //
-// Stored data names this identity and its correspondents by their identity key (identityKey: `did:webvh:<SCID>`, no host), and
+// Stored data names this identity and its correspondents by their identity key (identityKey: `did:vh:<SCID>`, no host), and
 // a DID may have changed its alias since: so names, pictures and addresses are looked up under the key as well as the DID. What a
 // screen shows is never the key itself: the name, else the address the identity stands for, else (only when nothing is known of
 // it) the raw string.
@@ -74,8 +52,8 @@ export function setContactDids(dids: ReadonlyMap<string, string>): void {
   contactDids = new Map([...dids].filter(([, did]) => !isIdentityKey(did)))
 }
 
-/** A DID with no host, the form identityKey makes (and every bare did:vh): it names an identity, not a place. */
-const isIdentityKey = (did: string): boolean => (scidOf(did) !== undefined && did.split(':').length === 3) || (vhScidOf(did) === did.slice('did:vh:'.length) && vhScidOf(did) !== undefined)
+/** A bare did:vh, the form identityKey makes: it names an identity, not a place. */
+const isIdentityKey = (did: string): boolean => vhScidOf(did) !== undefined && vhScidOf(did) === did.slice('did:vh:'.length)
 
 // This identity's own DID, set when the app starts (before any message is drawn: a screen that read it from the account page's
 // state would draw the first messages before that state exists, and not draw them again).
@@ -101,7 +79,7 @@ export function avatarOf(did: string | undefined): string | undefined { return d
 // ── Transport protocol pill ─────────────────────────────────────────────────
 // Shared between pages/compose-page.tsx (a typed recipient) and right-col.tsx (a
 // conversation's actual participants) -- a "to"/participant is either a
-// did:webvh string (DIDComm) or a plain mail address, decided entirely by
+// did:vh string (DIDComm) or a plain mail address, decided entirely by
 // its shape. the thread header's own conv-via badge used to hardcode 'Mail'
 // unconditionally (written before DIDComm chat send existed, never revisited
 // once it did) -- this is the one place that decides, so both readers agree.

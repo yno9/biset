@@ -5,12 +5,12 @@
 // vectors, test/fixtures/did-vh-vectors.json): an invalid entry anywhere fails the whole log, every proof of an entry
 // must verify, unknown members of an entry or of `parameters` are refused, and a log that configures witnesses is
 // refused (`featureNotSupported`) rather than accepted without the approvals it needs.
-import { entryVersionNumber, isVersionTimeNotTooFarInFuture, verifyEntryHash, type LogEntry } from '../webvh/log.ts'
-import { verifyScid } from '../webvh/scid.ts'
-import { verifyProof } from '../webvh/proof.ts'
-import { decodeMultikey } from '../webvh/multikey.ts'
-import { multikeyHashBase58 } from '../webvh/hash.ts'
-import type { WebvhDidDocument } from '../webvh/document.ts'
+import { entryVersionNumber, isVersionTimeNotTooFarInFuture, verifyEntryHash, type LogEntry } from './log.ts'
+import { verifyScid } from './scid.ts'
+import { verifyProof } from './proof.ts'
+import { decodeMultikey } from './multikey.ts'
+import { multikeyHashBase58 } from './hash.ts'
+import type { DidDocument } from './document.ts'
 import { VH_METHOD, isScid, parseVhDid } from './identifier.ts'
 
 type VhErrorCode = 'invalidDid' | 'invalidOptions' | 'invalidLog' | 'notFound' | 'featureNotSupported'
@@ -117,7 +117,7 @@ export interface VhResolveOptions {
 export interface VhResolution {
   did: string
   /** The document of the selected version; null when the DID is deactivated and its latest version was asked for. */
-  doc: WebvhDidDocument | null
+  doc: DidDocument | null
   versionId: string
   versionNumber: number
   /** The newest version of the whole log, whichever was selected. */
@@ -219,7 +219,7 @@ export function resolveVhEntries(did: string, log: readonly LogEntry[], options:
 
   const last = states[states.length - 1]!.active
   const entry = log[selected]!
-  const state = entry.state as Partial<WebvhDidDocument> & { id: string }
+  const state = entry.state as Partial<DidDocument> & { id: string }
   const latest = log[log.length - 1]!
   return {
     did,

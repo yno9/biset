@@ -3,7 +3,7 @@
 import { expect, test } from 'vitest'
 import vectors from '../fixtures/did-vh-vectors.json'
 import { resolveVhEntries } from '../../src/protocol/vh/resolver.ts'
-import type { LogEntry } from '../../src/protocol/webvh/log.ts'
+import type { LogEntry } from '../../src/protocol/vh/log.ts'
 
 type Expectation = { ok: true; versionNumber: number; deactivated: boolean; documentNull?: boolean } | { ok: false; code: string; reason: string }
 const file = vectors as unknown as { now: string; vectors: Array<{ name: string; note: string; did: string; log: unknown[]; options?: Record<string, unknown>; expect: Expectation }> }

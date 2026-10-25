@@ -12,16 +12,16 @@ import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { queuedMessageOf } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { defaultDeviceLabel } from '../src/protocol/didcomm/mediator-device.ts'
-import { WebvhUnavailable, type WebvhState } from '../src/server/mediator/webvh-state.ts'
+import { LogUnavailable, type WebvhState } from '../src/server/mediator/log-state.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
-import { buildDidCommLog, fakeAnchor } from './protocol/support/webvh-log-fixture.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
+import { buildDidCommLog, fakeAnchor } from './protocol/support/did-log-fixture.ts'
 import { pushWebvhLog } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { createGenesis } from '../src/client/identity/webvh/create-genesis.ts'
 import { migrateWebvhLocation } from '../src/client/identity/webvh/migrate.ts'
 import { fetchCurrentLog } from '../src/client/identity/webvh/log-io.ts'
-import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'
-import { multikeyHashBase58 } from '../src/protocol/webvh/hash.ts'
+import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
+import { multikeyHashBase58 } from '../src/protocol/vh/hash.ts'
 import { deviceLabel, freshMediator, peer, T, utf8 } from './support/mediator.ts'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -325,13 +325,13 @@ describe('blind mediator', () => {
   test('a newer did:webvh state revokes inboxes registered with a key it no longer lists', () => {
     const { store } = freshMediator()
     const did = 'did:webvh:scid:example.test'
-    expect(store.recordWebvhState(did, 1, { [`${did}#k_a`]: '00', [`${did}#k_b`]: '01' })).toBe('stored')
+    expect(store.recordLogState(did, 1, { [`${did}#k_a`]: '00', [`${did}#k_b`]: '01' })).toBe('stored')
     store.addInbox(did, deviceLabel(1), `${did}#k_a`)
     store.addInbox(did, deviceLabel(2), `${did}#k_b`)
-    expect(store.recordWebvhState(did, 2, { [`${did}#k_a`]: '00' })).toBe('stored')
+    expect(store.recordLogState(did, 2, { [`${did}#k_a`]: '00' })).toBe('stored')
     expect(store.listInboxes(did).map(inbox => inbox.device)).toEqual([deviceLabel(1)])
-    expect(store.webvhKey(did, `${did}#k_b`)).toBeUndefined()
-    expect(store.recordWebvhState(did, 1, { [`${did}#k_b`]: '01' })).toBe('stale')
+    expect(store.logKey(did, `${did}#k_b`)).toBeUndefined()
+    expect(store.recordLogState(did, 1, { [`${did}#k_b`]: '01' })).toBe('stale')
   })
 })
 
@@ -427,7 +427,7 @@ describe('a standard client of the mediator', () => {
 })
 
 // did:webvh keys, learned the way a DIDComm agent learns a sender's keys: the
-// mediator resolves the DID itself (webvh-state.ts) -- nothing is pushed.
+// mediator resolves the DID itself (log-state.ts) -- nothing is pushed.
 describe('a mediator that resolves did:webvh', () => {
   const DID = 'did:webvh:scid:alice.example'
   const hex = (key: Uint8Array) => [...key].map(x => x.toString(16).padStart(2, '0')).join('')
@@ -443,8 +443,8 @@ describe('a mediator that resolves did:webvh', () => {
     const calls = { n: 0 }
     const clock = { now: Date.now() } // the store stamps real time, so the test clock starts there
     const m = freshMediator({}, SqliteMediatorStore.memory(), {
-      now: () => clock.now, webvhFreshMs: options.fresh ?? 300_000, webvhRetryMs: options.retry ?? 10_000, webvhStaleMs: options.stale ?? 3_600_000,
-      resolveWebvh: async () => { calls.n++; if (world.down) throw new WebvhUnavailable('network down'); return world.state },
+      now: () => clock.now, logFreshMs: options.fresh ?? 300_000, logRetryMs: options.retry ?? 10_000, logStaleMs: options.stale ?? 3_600_000,
+      resolveLog: async () => { calls.n++; if (world.down) throw new LogUnavailable('network down'); return world.state },
     })
     return { ...m, calls, clock }
   }
@@ -506,7 +506,7 @@ describe('a mediator that resolves did:webvh', () => {
     expect(m.calls.n).toBe(2)
   })
 
-  test('refreshWebvh revokes the inbox of a device its DID no longer lists, with what it held', async () => {
+  test('refreshLogs revokes the inbox of a device its DID no longer lists, with what it held', async () => {
     const a = device('k_a'); const b = device('k_b')
     const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex, [`${DID}#k_b`]: b.hex }) as WebvhState | null }
     const m = resolving(world, { retry: 0 })
@@ -516,7 +516,7 @@ describe('a mediator that resolves did:webvh', () => {
     expect(m.store.stats()).toMatchObject({ inboxes: 2, pendingDeliveries: 2 })
 
     world.state = stateWith(2, { [`${DID}#k_a`]: a.hex }) // k_b was removed from the DID
-    expect(await m.refreshWebvh()).toEqual({ checked: 1, revoked: 1 })
+    expect(await m.refreshLogs()).toEqual({ checked: 1, revoked: 1 })
     expect(m.store.listInboxes(DID).map(inbox => inbox.device)).toEqual([deviceLabel(1)])
     expect(m.store.stats()).toMatchObject({ inboxes: 1, pendingDeliveries: 1 })
     // and the removed device can no longer even ask
@@ -540,7 +540,7 @@ describe('a mediator that resolves did:webvh', () => {
     expect((await raw(m, a.holder, T.STATUS_REQUEST, {})).status).toBe(503)
   })
 
-  test('a log pushed to POST /webvh-log still works (kept, not DIDComm); the resolver is only asked', async () => {
+  test('a log pushed to POST /did-log still works (kept, not DIDComm); the resolver is only asked', async () => {
     const root = ed25519.utils.randomSecretKey()
     const xPriv = x25519.utils.randomSecretKey()
     const { did, log } = buildDidCommLog({ rootPrivateKey: root, rootPublicKey: ed25519.getPublicKey(root), keyAgreementKeys: [{ fragment: 'k_a', x25519PublicKey: x25519.getPublicKey(xPriv) }], endpointUri: 'https://x.example', domain: 'alice.example' })

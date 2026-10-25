@@ -392,7 +392,7 @@ export interface UnpackedAuthcrypt { plaintext: Uint8Array; senderKid: string }
  * `senderKid` is UNVERIFIED input at the point this is called: it is read
  * straight from the sender-supplied `apu` header of a message that has not
  * decrypted yet, so a real implementation of this (e.g.
- * `didcomm/webvh-resolve.ts`'s `resolveDidCommSenderKey`) makes a LIVE
+ * `didcomm/sender-key.ts`'s `resolveDidCommSenderKey`) makes a LIVE
  * outbound HTTP fetch to whatever domain the CLAIMED sender's DID names —
  * an attacker-steerable request. unpackAuthcrypt below calls this only
  * after every cheap, no-network structural check on the message has already

@@ -58,15 +58,15 @@ export async function queryRecipients(mediator: MediatorInfo, own: DidCommSender
   return dids.flatMap(entry => (entry.devices ?? []).flatMap(device => typeof device.last_seen === 'number' ? [{ lastSeen: device.last_seen }] : []))
 }
 
-/** Hands this DID's did:webvh log to the mediator (`POST /webvh-log`).
+/** Hands this DID's did:vh log to the mediator (`POST /did-log`).
  *
- * NOT DIDComm, and no longer used by biset: a mediator learns a did:webvh's
- * keys by resolving the DID (server/mediator/webvh-state.ts). Kept for a
- * mediator deployed without resolution (`MEDIATOR_WEBVH_RESOLVE=0`), which
- * authenticates did:webvh device keys only against logs it is handed.
+ * NOT DIDComm, and no longer used by biset: a mediator learns a did:vh's
+ * keys by resolving the DID at its watchers (server/mediator/log-state.ts). Kept for a
+ * mediator deployed without resolution (`MEDIATOR_DID_RESOLVE=0`), which
+ * authenticates did:vh device keys only against logs it is handed.
  * Self-certifying, so sending it needs no authentication. A newer log is
  * also how a removed device's inbox gets revoked there. */
-export async function pushWebvhLog(mediator: MediatorInfo, logJsonl: string, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
-  const resp = await fetchImpl(`${mediator.url.replace(/\/$/, '')}/webvh-log`, { method: 'POST', headers: { 'content-type': 'application/jsonl' }, body: logJsonl })
-  if (!resp.ok) throw new Error(`pushWebvhLog: HTTP ${resp.status} ${await resp.text()}`)
+export async function pushDidLog(mediator: MediatorInfo, logJsonl: string, fetchImpl: typeof fetch = defaultFetch()): Promise<void> {
+  const resp = await fetchImpl(`${mediator.url.replace(/\/$/, '')}/did-log`, { method: 'POST', headers: { 'content-type': 'application/jsonl' }, body: logJsonl })
+  if (!resp.ok) throw new Error(`pushDidLog: HTTP ${resp.status} ${await resp.text()}`)
 }

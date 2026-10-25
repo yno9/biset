@@ -1,19 +1,15 @@
-// The DIDComm side of did:webvh resolution: one sender-key resolver.
+// The DIDComm side of DID resolution: one sender-key resolver.
 //
-// Until 2026-09-16 this module also held `mergeRouting`/`resolveWithRouting`,
-// which spliced routing.json's keyAgreement/service into the document
-// resolved from the signed log. routing.json is retired: did.md publishes
-// `keyAgreement` and the `#didcomm` service INTO the signed log (verified
-// live against `cb81.did.md/.well-known/did.jsonl`), so `resolve()` alone
-// already returns everything a DIDComm sender needs. Callers that wanted a
-// route now call webvh-route.ts's `didCommRouteFromDocument` on that
-// document.
+// did.md publishes `keyAgreement` and the `#didcomm` service INTO the signed
+// log, so `resolveDidDocument()` alone returns everything a DIDComm sender
+// needs. A caller that wants a route calls doc-route.ts's
+// `didCommRouteFromDocument` on that document.
 import { resolveDidDocument } from '../did-resolve.ts'
 import { defaultFetch } from '../net-fetch.ts'
-import { keyAgreementRecipients } from './webvh-route.ts'
+import { keyAgreementRecipients } from './doc-route.ts'
 import { didOfKid } from '../ids.ts'
 
-/** Resolves a DIDComm sender's kid (a full DID URL, `did:webvh:...#k_<hash>`)
+/** Resolves a DIDComm sender's kid (a full DID URL, `did:vh:...#k_<hash>`)
  * to its published X25519 keyAgreement public key -- crypto.ts's
  * `ResolveSenderKey`, backed by a live resolve. Throws if the identity
  * doesn't resolve, or hasn't published a keyAgreement entry for this exact
@@ -21,13 +17,8 @@ import { didOfKid } from '../ids.ts'
  * authenticated, so there is nothing safe to decrypt with).
  *
  * Matches by `#fragment` against the resolved document's OWN current id,
- * not `senderKid` verbatim -- same fix, same reason, as
- * core/identity/webvh-signing-key-resolver.ts's own header: a did:webvh
- * domain move rewrites every verificationMethod's did PREFIX at once, but
- * never the `#fragment` suffix. A sender whose OWN didCommKid was never
- * re-issued (any device other than the one that performed the move) would
- * otherwise become permanently unauthenticatable the instant a SIBLING
- * device moves. */
+ * not `senderKid` verbatim: a kid is matched by its `#fragment`, which is
+ * what names a device key, whichever absolute form a sender wrote. */
 /** The sender's DID resolved, and does not list this kid as a
  * keyAgreement key: a device removed from it, or a kid that never was one.
  * Not a network failure -- retrying cannot change the answer. */

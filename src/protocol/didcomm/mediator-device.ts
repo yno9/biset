@@ -1,9 +1,9 @@
 // The `device` label naming one device's inbox at a mediator
-// (mediator/server.ts). Every DID a device registers -- its did:webvh
+// (mediator/server.ts). Every DID a device registers -- its did:vh
 // front door and each relationship did:peer -- needs one, and they must not
 // match across DIDs: the same label under two DIDs would tell the mediator
 // that a relationship did:peer belongs to the same device (and so the same
-// person) as a public did:webvh, which is exactly what a pairwise did:peer
+// person) as a public did:vh, which is exactly what a pairwise did:peer
 // exists to hide. So the label is a keyed hash of the DID under a secret
 // only this device holds: stable for this device, unlinkable across DIDs.
 import { hmac } from '@noble/hashes/hmac.js'

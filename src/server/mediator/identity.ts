@@ -9,7 +9,7 @@
 //    private relationship embeds. It stays accepted, and is listed as an
 //    `alsoKnownAs` alias of the did:web, so a client holding either works.
 import { encodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
-import { encodeMultikey } from '../../protocol/webvh/multikey.ts'
+import { encodeMultikey } from '../../protocol/vh/multikey.ts'
 import { encodePeerDid2, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 
 export interface MediatorIdentity {

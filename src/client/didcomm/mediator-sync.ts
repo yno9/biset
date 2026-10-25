@@ -20,9 +20,9 @@ import { defaultFetch } from '../../protocol/net-fetch.ts'
 /** mediate-request + recipient-update(add), unconditionally -- both are
  * idempotent (`no_change` when the inbox already exists), so calling this on
  * every boot is the self-heal for a mediator that lost this inbox. A
- * did:webvh inbox needs nothing more: the mediator resolves the DID itself,
+ * did:vh inbox needs nothing more: the mediator resolves the DID itself,
  * as any DIDComm agent does, to see this device's key listed. (An earlier
- * version pushed the DID's log to `POST /webvh-log` first; the mediator
+ * version pushed the DID's log to `POST /did-log` first; the mediator
  * still accepts that, but it is not DIDComm and nothing sends it now.) */
 export async function registerWithMediator(mediatorUrl: string, inbox: MediatorInboxClient, fetchImpl: typeof fetch = defaultFetch()): Promise<MediatorInfo> {
   const mediator = await fetchMediatorInfo(mediatorUrl, fetchImpl)

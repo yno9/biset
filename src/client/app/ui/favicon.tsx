@@ -4,7 +4,6 @@ import Avatar from 'boring-avatars'
 import { useEffect } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { parseWebvhDid } from '../../../protocol/webvh/identifier.ts'
 import { useStore } from '../react/store.ts'
 import { accountConfig } from './account/state.ts'
 import { useOwnProfile } from './account/use-own-profile.ts'
@@ -56,8 +55,8 @@ export function Favicon() {
     if (!link) return
     original ??= { href: link.href, type: link.type }
     if (!did) { link.href = original.href; link.type = original.type; return }
-    let label = ''
-    try { label = parseWebvhDid(did).domain } catch { /* not a did:webvh */ }
+    // The address the identity is published at (a did:vh DID names none).
+    const label = config?.wallet?.handle ?? ''
     let current = true
     const show = (href: string, type: string) => { if (current) { link.type = type; link.href = href } }
     let timer: ReturnType<typeof setTimeout> | undefined

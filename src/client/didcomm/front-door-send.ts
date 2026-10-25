@@ -1,5 +1,5 @@
 // The Vault-independent half of send-message.ts's outbound DIDComm send:
-// resolve the recipient's did:webvh document, authcrypt (Forward-wrapped through a registered
+// resolve the recipient's did:vh document, authcrypt (Forward-wrapped through a registered
 // mediator when the recipient has one), POST. Split out (2026-08-31) so
 // DOM-less deploy units (mls-ds/, whose own tsconfig has no `lib: ["DOM"]`)
 // that need only this generic primitive stay free of the client's Vault and
@@ -12,21 +12,21 @@ import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { wrapForwardHops, type ForwardHop } from '../../protocol/didcomm/forward-wrap.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
 import { decodePeerDid2, peerKeyAgreementRecipients } from '../../protocol/didcomm/peer.ts'
-import { didCommRouteFromDocument } from '../../protocol/didcomm/webvh-route.ts'
+import { didCommRouteFromDocument } from '../../protocol/didcomm/doc-route.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { isTorEnvironment } from './mediator-endpoints.ts'
 import { resolveDidWeb, didWebDidCommRoute } from '../../protocol/didcomm/did-web.ts'
 
 /** A did:peer:2 counterpart -- a mediator, or another device/bot addressed
- * directly by its did:peer rather than a did:webvh identity (e.g. a service
- * with no domain of its own to publish a did:webvh log at). Self-certifying:
+ * directly by its did:peer rather than a did:vh identity (e.g. a service
+ * with no place of its own to publish a did:vh log at). Self-certifying:
  * everything `resolveFrontDoorRoute` needs is IN the DID string, no network
- * call. Distinguishing it from did:webvh up front (rather than letting
+ * call. Distinguishing it from did:vh up front (rather than letting
  * `resolve` fail on it) is what makes a did:peer recipient a
  * valid `sendFrontDoorMessage` target at all -- found
  * live 2026-09-09: an outside DIDComm agent identified only by a did:peer
- * (no domain to host a did:webvh log at) could not receive a first-contact
- * message otherwise (`parseWebvhDid: not a did:webvh identifier`). */
+ * (no place to publish a did:vh log at) could not receive a first-contact
+ * message otherwise. */
 function isDidPeer(did: string): boolean {
   return did.startsWith('did:peer:2.')
 }
@@ -41,7 +41,7 @@ interface FrontDoorRoute {
 }
 
 /** Resolves a recipient's DIDComm route regardless of DID method: did:peer:2
- * decodes locally (self-certifying); did:web and did:webvh resolve over the
+ * decodes locally (self-certifying); did:web and did:vh resolve over the
  * network (`resolve` + `didCommRouteFromDocument`). The endpoint it names --
  * a URL, or the DID of the recipient's mediator -- is then expanded into where
  * to POST and whom to wrap for (`expandEndpoint`). Shared by
@@ -133,7 +133,7 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   // mediator (named by DID, or by URL plus did:peer routing keys): deliver
   // Forward-wrapped through it rather than authcrypt'ing straight to
   // `endpointUri` (the legacy first-party-infra model, still supported for a
-  // did:webvh identity that hasn't migrated yet -- always at least one hop
+  // did:vh identity that hasn't registered yet -- always at least one hop
   // for a did:peer:2 recipient, which is only ever reachable through its own
   // mediator). The hops are a chain (forward-wrap.ts's `wrapForwardHops`,
   // outermost/closest-to-sender first).

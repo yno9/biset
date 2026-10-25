@@ -6,8 +6,8 @@ import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { parseJwe, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes } from '../../src/protocol/didcomm/crypto.ts'
 import { BASIC_MESSAGE } from '../../src/client/didcomm/basicmessage.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
-import { buildDidCommLog, type DidCommStateExtras } from '../protocol/support/webvh-log-fixture.ts'
-import type { LogEntry } from '../../src/protocol/webvh/log.ts'
+import { buildDidCommLog, type DidCommStateExtras } from '../protocol/support/did-log-fixture.ts'
+import type { LogEntry } from '../../src/protocol/vh/log.ts'
 
 const senderKid = 'did:webvh:def456:bob.test.example#k_senderhash'
 const senderX = x25519.utils.randomSecretKey()

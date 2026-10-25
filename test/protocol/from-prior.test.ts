@@ -2,14 +2,14 @@
 // (PLAN-refactor.md §4.4, §7-2).
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import type { LogEntry } from '../../src/protocol/webvh/log.ts'
+import type { LogEntry } from '../../src/protocol/vh/log.ts'
 import {
   assertKeyNotStale, createFromPrior, FromPriorError, fromPriorClaims, fromPriorKeyResolver, verifyFromPrior,
 } from '../../src/protocol/didcomm/from-prior.ts'
 import { b64url } from '../../src/protocol/didcomm/crypto.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
-import { encodeMultikey } from '../../src/protocol/webvh/multikey.ts'
-import { buildDidCommLog } from './support/webvh-log-fixture.ts'
+import { encodeMultikey } from '../../src/protocol/vh/multikey.ts'
+import { buildDidCommLog } from './support/did-log-fixture.ts'
 
 const rotation = ed25519.keygen()
 const root = ed25519.keygen()

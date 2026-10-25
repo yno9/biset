@@ -172,7 +172,7 @@ export function NewUserPage() {
               {WALLET_DIRECTORY.map(entry => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}
             </select>
           ) : null}
-          {/* Optional: a wallet resolved by did:webvh suffix (alice.did.md) instead of the directory's selection. */}
+          {/* Optional: a wallet resolved by the host an identity is published at (alice.did.md) instead of the directory's selection. */}
           <input id="nu-wallet-suffix" type="text" placeholder="your did:web suffix (optional)" autoComplete="off" value={suffix} onChange={event => setSuffix(event.target.value)}
             style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 15.5, width: 200 }} />
           <button id="nu-wallet-login" type="button" disabled={connecting} onClick={connect}

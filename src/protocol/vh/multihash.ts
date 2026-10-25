@@ -1,5 +1,5 @@
-// Multihash (multiformats/multihash), SHA-256 only — did:webvh v1.0 permits
-// no other hash algorithm (method parameter "did:webvh:1.0"), so this
+// Multihash (multiformats/multihash), SHA-256 only — did:vh:1.0 permits
+// no other hash algorithm (method parameter "did:vh:1.0"), so this
 // implements exactly that fixed shape rather than the general varint-coded
 // table. Both the function code (0x12) and digest length (0x20 = 32) happen
 // to be < 128, so each is a one-byte unsigned-LEB128 varint — no varint

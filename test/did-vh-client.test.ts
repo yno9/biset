@@ -5,7 +5,7 @@ import { aliasPatch, didContactPatch, didContactUid } from '../src/client/store/
 import { StoredVersionMemory } from '../src/client/identity/version-memory.ts'
 import { verifiedVhAddress, configureDidResolution } from '../src/protocol/did-resolve.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
 import { buildVhDidCommLog } from './protocol/support/vh-log-fixture.ts'
 
 const priv = new Uint8Array(32).fill(7)

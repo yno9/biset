@@ -16,7 +16,7 @@ import { MediatorDeviceLimitError, registerWithMediator, startMediatorPolling } 
 import { watchMediatorLive } from '../src/client/didcomm/mediator-live.ts'
 import { packMediatorRequest, unpackMediatorMessage } from '../src/protocol/didcomm/mediator-transport.ts'
 import { PermanentDeliveryError, unpackQueuedMessage } from '../src/protocol/didcomm/mediator-pickup.ts'
-import { SenderKeyNotPublishedError } from '../src/protocol/didcomm/webvh-resolve.ts'
+import { SenderKeyNotPublishedError } from '../src/protocol/didcomm/sender-key.ts'
 import { DELIVERY, LIVE_DELIVERY_CHANGE, LIVE_MODE_NOT_SUPPORTED_PROBLEM, STATUS } from '../src/protocol/didcomm/mediator-protocol.ts'
 import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
 import { createMediatorDeployment } from '../src/server/mediator/deployment.ts'

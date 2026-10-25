@@ -11,7 +11,7 @@
 //      ES256K: jws.ts);
 //   2. the `kid` is a DID URL of `iss`;
 //   3. `iss`'s document lists `kid` under `authentication`, as a key of that
-//      algorithm, and the signature verifies -- and, for a did:webvh `iss`, no
+//      algorithm, and the signature verifies -- and, for a did:vh `iss`, no
 //      log entry after the one that published the key removed a device key
 //      (§7-2: a device removed from the Wallet itself left the key in place,
 //      and the removed device may hold what it signs with);
@@ -21,9 +21,8 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { b64url, b64urlToBytes } from './crypto.ts'
 import { authenticationMethodOf, authenticationSigningKey, JWS_ALGORITHMS, SignatureError, verifyJwsSignature, type JwsAlgorithm, type SigningKey } from './jws.ts'
-import { parseLog, type LogEntry } from '../webvh/log.ts'
-import { resolveEntries } from '../webvh/resolver.ts'
-import { didToHttpsUrl } from '../webvh/identifier.ts'
+import type { LogEntry } from '../vh/log.ts'
+import { fetchDidLog } from '../did-resolve.ts'
 import { resolveDidWeb } from './did-web.ts'
 import { decodePeerDid2 } from './peer.ts'
 
@@ -125,7 +124,7 @@ export function fragmentOf(id: string): string {
 
 /** The public key (multibase) of the method `fragment` names, when
  * `authentication` references it. References are compared by fragment: a
- * domain move rewrites a did:webvh's DID part, never a key's fragment. */
+ * a DID is not the part that names a key: a fragment is. */
 export function authenticationKeyOf(document: DocumentMethods, fragment: string): string | undefined {
   const method = authenticationMethodOf(document, fragment)
   return typeof method?.publicKeyMultibase === 'string' ? method.publicKeyMultibase : undefined
@@ -139,7 +138,7 @@ function signingKeyOf(document: DocumentMethods, kid: string): SigningKey {
   }
 }
 
-// ---- did:webvh: keys published before a device was removed (§7-2) ----
+// ---- did:vh: keys published before a device was removed (§7-2) ----
 
 /** The device keys (keyAgreement fragments) a log entry lists. */
 export function keyAgreementOf(entry: LogEntry): string[] {
@@ -172,7 +171,7 @@ export function deviceRemovedSince(entries: readonly LogEntry[], since: number):
   return false
 }
 
-/** The §7-2 check on a did:webvh `iss`'s verified log: `kid` must still be
+/** The §7-2 check on a did:vh `iss`'s verified log: `kid` must still be
  * published, and no device removed since it was. */
 export function assertKeyNotStale(entries: readonly LogEntry[], kid: string): void {
   const published = authenticationKeySince(entries, kid)
@@ -181,7 +180,7 @@ export function assertKeyNotStale(entries: readonly LogEntry[], kid: string): vo
 }
 
 /** The key resolver for every DID method biset reads as a prior DID:
- * did:webvh from its whole verified log (with the §7-2 check), did:web from
+ * did:vh from its whole verified log (with the §7-2 check), did:web from
  * its document, did:peer:2 from the DID itself. `fetchImpl` should bypass a
  * host's CDN: a stale document would accept a key already replaced. */
 export function fromPriorKeyResolver(fetchImpl: typeof fetch = fetch): FromPriorKeyResolver {
@@ -192,12 +191,10 @@ export function fromPriorKeyResolver(fetchImpl: typeof fetch = fetch): FromPrior
       if (!document) throw new Error(`from_prior: ${iss} does not resolve`)
       return signingKeyOf(document as DocumentMethods, kid)
     }
-    if (!iss.startsWith('did:webvh:')) throw new FromPriorError(`unsupported DID method for iss ${iss}`)
-    const response = await fetchImpl(didToHttpsUrl(iss))
-    if (response.status === 404) throw new FromPriorError(`${iss} has no log`)
-    if (!response.ok) throw new Error(`from_prior: HTTP ${response.status} fetching ${iss}'s log`)
-    const entries = parseLog(await response.text())
-    const document = resolveEntries(iss, entries)
+    if (!iss.startsWith('did:vh:')) throw new FromPriorError(`unsupported DID method for iss ${iss}`)
+    const found = await fetchDidLog(iss, { fetch: fetchImpl })
+    if (!found) throw new FromPriorError(`${iss} has no log`)
+    const { entries, document } = found
     if (!document) throw new FromPriorError(`${iss} is deactivated`)
     const key = signingKeyOf(document as unknown as DocumentMethods, kid)
     assertKeyNotStale(entries, kid)

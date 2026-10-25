@@ -1,11 +1,11 @@
-// How the mediator reads a did:webvh's keys: webvh-state.ts. The host it
+// How the mediator reads a did:webvh's keys: log-state.ts. The host it
 // dials comes from a DID named in a message anyone can send, so the limits
 // here are the point.
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
-import { createNetworkWebvhResolver, isPublicAddress, isPublicHostname, webvhStateFromLog, WebvhUnavailable } from '../src/server/mediator/webvh-state.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
+import { createNetworkWebvhResolver, isPublicAddress, isPublicHostname, webvhStateFromLog, LogUnavailable } from '../src/server/mediator/log-state.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 
 const root = ed25519.utils.randomSecretKey()
 const phone = x25519.utils.randomSecretKey()
@@ -98,8 +98,8 @@ describe('createNetworkWebvhResolver', () => {
   test('a DID with no log is null; a failing host or network is "unavailable", not null', async () => {
     expect(await resolverOf({ fetch: serving(() => new Response('', { status: 404 })) })(did)).toBeNull()
     expect(await resolverOf({ fetch: serving(() => new Response('', { status: 410 })) })(did)).toBeNull()
-    await expect(resolverOf({ fetch: serving(() => new Response('', { status: 503 })) })(did)).rejects.toThrow(WebvhUnavailable)
-    await expect(resolverOf({ fetch: (async () => { throw new Error('connection refused') }) as typeof fetch })(did)).rejects.toThrow(WebvhUnavailable)
+    await expect(resolverOf({ fetch: serving(() => new Response('', { status: 503 })) })(did)).rejects.toThrow(LogUnavailable)
+    await expect(resolverOf({ fetch: (async () => { throw new Error('connection refused') }) as typeof fetch })(did)).rejects.toThrow(LogUnavailable)
   })
 
   test('a log that does not verify, is too big, or is another DID\'s says nothing about this DID (null)', async () => {
@@ -142,7 +142,7 @@ describe('createNetworkWebvhResolver', () => {
   test('a name that does not exist is null; a resolver outage is "unavailable"', async () => {
     const gone = Object.assign(new Error('nx'), { code: 'ENOTFOUND' })
     expect(await createNetworkWebvhResolver({ fetch: serving(() => new Response(text)), lookup: async () => { throw gone } })(did)).toBeNull()
-    await expect(createNetworkWebvhResolver({ fetch: serving(() => new Response(text)), lookup: async () => { throw new Error('SERVFAIL') } })(did)).rejects.toThrow(WebvhUnavailable)
+    await expect(createNetworkWebvhResolver({ fetch: serving(() => new Response(text)), lookup: async () => { throw new Error('SERVFAIL') } })(did)).rejects.toThrow(LogUnavailable)
   })
 
   test('the lookup can be turned off for a deployment that cannot reach private networks anyway', async () => {

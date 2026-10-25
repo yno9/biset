@@ -21,7 +21,7 @@
 //   touch it (ContactCard/set refuses the patch), and an imported file's copy
 //   is dropped: anyone could have edited the file to claim "this did:peer is
 //   Bob".
-import { identityKey, sameIdentity, scidOf } from '../../../protocol/webvh/identifier.ts'
+import { identityKey, sameIdentity } from '../../../protocol/vh/identifier.ts'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { sha1 } from '@noble/hashes/legacy.js'
 import { bytesToBase64url, type CanonicalValue } from '../../../protocol/canonical.ts'
@@ -465,21 +465,8 @@ const state = (path: string) => `${pointerToken(DIDCOMM_CONTACT_PROPERTY)}/${pat
  * it again (another device, a later message) never undoes anything. */
 export function didContactPatch(did: string, verifiedAddress?: string): ContactSetPayload {
   const uid = didContactUid(did)
-  const identity = verifiedAddress ? vhIdentityPatch(verifiedAddress) : webvhIdentityPatch(did)
+  const identity = verifiedAddress ? addressPatch(verifiedAddress) : {}
   return { cardId: contactCardId(uid), patch: { '@type': 'Card', version: '1.0', uid, [`addressBookIds/${DEFAULT_ADDRESS_BOOK_ID}`]: true, 'onlineServices/didcomm': { service: 'DIDComm', uri: did }, ...identity } }
-}
-
-/** JSContact vendor property holding the SCID of a did:webvh contact: the bare SCID (the `did:webvh:`
- * prefix is implied). With the card's `emails` (its aliases) it names every did:webvh the contact has:
- * `did:webvh:<scid>:<host of each alias>`. */
-export const SCID_CONTACT_PROPERTY = 'biset.md:scid'
-
-/** `label@apex` for a did:webvh at host `label.apex` (didmail's form of the address a DID stands for). */
-function mailAddressOfWebvhDid(did: string): string | undefined {
-  if (scidOf(did) === undefined) return undefined
-  const host = decodeURIComponent(did.split(':')[3] ?? '')
-  const dot = host.indexOf('.')
-  return dot > 0 ? `${host.slice(0, dot)}@${host.slice(dot + 1)}` : undefined
 }
 
 /** The id an alias is kept under in `emails` (JMAP ids are letters, digits, `-` and `_`). */
@@ -489,26 +476,19 @@ function aliasKey(address: string): string {
 
 /** A did:vh has no host to read an address from: the one it goes by is known only once its did:web shadow was verified in both
  * directions (did-resolve.ts verifiedVhAddress), and is written as an alias. The SCID needs no property: the DID is the key. */
-function vhIdentityPatch(address: string): Record<string, CanonicalValue> {
+function addressPatch(address: string): Record<string, CanonicalValue> {
   return { [`emails/${aliasKey(address)}`]: { address } }
 }
 
-function webvhIdentityPatch(did: string): Record<string, CanonicalValue> {
-  const scid = scidOf(did)
-  if (scid === undefined) return {}
-  const address = mailAddressOfWebvhDid(did)
-  return { [SCID_CONTACT_PROPERTY]: scid, ...(address ? { [`emails/${aliasKey(address)}`]: { address } } : {}) }
-}
-
-/** The patch adding the address `did` stands for to `card`'s aliases (`emails`), when it is not there yet
+/** The patch adding the verified address of a contact's did:vh to `card`'s aliases (`emails`), when it is not there yet
  * (the contact changed its alias, or writes from a second one). */
-export function aliasPatch(card: LocalJmapContactCard, did: string, verifiedAddress?: string): ContactSetPayload | undefined {
-  const address = verifiedAddress ?? mailAddressOfWebvhDid(did)
+export function aliasPatch(card: LocalJmapContactCard, verifiedAddress: string | undefined): ContactSetPayload | undefined {
+  const address = verifiedAddress
   if (!address) return undefined
   const emails = card.emails
   const known = isObject(emails) && Object.values(emails).some(email => isObject(email) && email.address === address)
   if (known) return undefined
-  return { cardId: card.id, patch: { ...(verifiedAddress ? {} : { [SCID_CONTACT_PROPERTY]: scidOf(did)! }), [`emails/${aliasKey(address)}`]: { address } } }
+  return { cardId: card.id, patch: { [`emails/${aliasKey(address)}`]: { address } } }
 }
 
 /** Records that the counterparty of `cardId` rotated to `did`. */

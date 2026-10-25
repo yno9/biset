@@ -1,7 +1,7 @@
 // The generation seed's authority: which seed this identity uses now, and
 // whether it needs replacing (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2).
 //
-// Every answer comes from the did:webvh log -- this identity's one authority
+// Every answer comes from the did:vh log -- this identity's one authority
 // on its devices and keys -- never from the mediator, and never from a
 // device's own memory of what it did. The seed in use is the one whose
 // rotation key (rotation-key.ts) the DID document publishes: a device's
@@ -25,7 +25,7 @@
 //
 // Keys are compared by `#fragment`: a domain move rewrites the DID part of
 // every id, never the fragment (a key's fragment is derived from the key).
-import type { LogEntry } from '../../protocol/webvh/log.ts'
+import type { LogEntry } from '../../protocol/vh/log.ts'
 import { authenticationKeySince, deviceRemovedSince, fragmentOf, keyAgreementOf } from '../../protocol/didcomm/from-prior.ts'
 import { ROTATION_KEY_FRAGMENT, rotationSigningKey } from './rotation-key.ts'
 
@@ -64,7 +64,7 @@ interface StoredSeed { seed: Uint8Array; seedId: string }
  * holding `seeds` in its Vault, at `now`. */
 export function seedStatus(entries: readonly LogEntry[], ownKid: string, seeds: readonly StoredSeed[], now: number): SeedStatus {
   const last = entries[entries.length - 1]
-  if (!last) throw new Error('the did:webvh log is empty')
+  if (!last) throw new Error('the did:vh log is empty')
   const listed = keyAgreementOf(last)
   if (!listed.includes(fragmentOf(ownKid))) throw new DeviceRemovedError()
   const published = authenticationKeySince(entries, ROTATION_KEY_FRAGMENT)
@@ -84,7 +84,7 @@ export interface GenerationSeedAuthorityOptions {
   /** This device's own front-door kid (a key of the identity's DID). */
   ownKid: string
   seeds: { readAll(): Promise<StoredSeed[]> }
-  /** The identity's did:webvh log, read past the host's CDN. */
+  /** The identity's did:vh log, read past the host's CDN. */
   readLog(): Promise<readonly LogEntry[]>
   /** How long a read of the log is reused. */
   logMaxAgeMs?: number

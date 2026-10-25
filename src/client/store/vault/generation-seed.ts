@@ -31,7 +31,7 @@ export interface GenerationSeedV1 {
   /** 32 random bytes. */
   seed: Uint8Array
   createdAt: string
-  /** The did:webvh log version at which this device stored it (a record of
+  /** The did:vh log version at which this device stored it (a record of
    * when; the DID document, not this, says whether it is in use). */
   afterVersion: number
   /** Kept for records written before the DID document became the seed's

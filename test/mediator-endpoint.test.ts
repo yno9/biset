@@ -10,8 +10,8 @@ import { packAuthcrypt, parseJwe, unpackAnoncrypt, unpackAuthcrypt } from '../sr
 import { FORWARD } from '../src/protocol/didcomm/mediator-protocol.ts'
 import { sendFrontDoorMessage } from '../src/client/didcomm/front-door-send.ts'
 import { sendDidCommMessage } from '../src/client/didcomm/send-message.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
 
 const HOST = 'mediator.example'
 const MEDIATOR_DID = `did:web:${HOST}`

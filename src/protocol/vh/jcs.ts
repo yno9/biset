@@ -1,5 +1,5 @@
 // JSON Canonicalization Scheme (RFC 8785) — minimal implementation covering
-// exactly what did:webvh log entries and Data Integrity proofs need: nested
+// exactly what did:vh log entries and Data Integrity proofs need: nested
 // objects/arrays/strings/numbers/booleans/null. Key sort is UTF-16 code unit
 // order (RFC8785 §3.2.3, which plain JS string comparison already gives —
 // NOT code point or locale order). String/number serialization delegates to

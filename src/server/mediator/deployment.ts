@@ -7,7 +7,7 @@ import { didCommAccepted, didCommPost } from '../../protocol/didcomm/crypto.ts'
 import { SqliteMediatorStore, type SqliteMediatorLimits } from './sqlite-store.ts'
 import { IpRateLimiter } from './rate-limit.ts'
 import { startRelayPoller, type RelayPollHandle } from './relay-poller.ts'
-import { createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver, type WebvhStateResolver } from './webvh-state.ts'
+import { createVhWatcherResolver, type LogStateResolver } from './log-state.ts'
 import { peerMediatorIdentity, webMediatorIdentity } from './identity.ts'
 
 export interface MediatorDeploymentOptions {
@@ -22,22 +22,19 @@ export interface MediatorDeploymentOptions {
   rateLimitPerMinute?: number
   /** Registration policy (server.ts's `registration`). `newInboxesPerAddressPerHour`
    * caps the inboxes one client address may open; absent, no cap. */
-  registration?: { allowedDidDomains?: readonly string[]; newInboxesPerAddressPerHour?: number }
+  registration?: { newInboxesPerAddressPerHour?: number }
   /** Store limits; unset ones take sqlite-store.ts's defaults. */
   limits?: Partial<SqliteMediatorLimits>
   /** Set to have this mediator poll an upstream one for hop-chained
    * delivery (relay-poller.ts) -- absent means this mediator is a leaf/
    * front-door hop only. */
   relayUpstreamUrl?: string
-  /** How this mediator learns a did:webvh's keys (webvh-state.ts). By default
-   * it resolves the DID like any DIDComm agent; `resolve: false` makes it
-   * dial out to nothing, so only logs pushed to `POST /webvh-log` are known.
-   * `refreshSeconds` is how often every did:webvh with an inbox is resolved
-   * again (default 300), which is how a device removed from its DID loses its inbox. */
-  webvh?: { resolve?: boolean | WebvhStateResolver; refreshSeconds?: number }
-  /** Where a did:vh's log is looked for (webvh-state.ts, createVhWatcherResolver): origins serving `GET /log?scid=`. A did:vh DID names no
-   * place, so without any, this mediator does not know a did:vh's keys (it resolves nothing for it). Chosen by the operator, never by a DID. */
-  vh?: { watchers?: readonly string[] }
+  /** How this mediator learns a did:vh's keys (log-state.ts). A did:vh DID names no place, so its log is asked for at `watchers`
+   * (origins serving `GET /log?scid=`), chosen by the operator and never by a DID or a message. Without any, this mediator
+   * resolves nothing and knows only the logs pushed to `POST /did-log`; `resolve: false` does the same on purpose (it dials
+   * out to nothing), or a function is the resolver. `refreshSeconds` is how often every did:vh with an inbox is resolved again
+   * (default 300), which is how a device removed from its DID loses its inbox. */
+  didLogs?: { watchers?: readonly string[]; resolve?: boolean | LogStateResolver; refreshSeconds?: number }
   /** Numbers v2 admin can change while the mediator runs (settings.ts); absent, `rateLimitPerMinute`, `registration` and `limits` stand. */
   live?: LiveMediatorLimits
   /** Answers `/admin/*` (admin-api.ts) before anything else does. */
@@ -78,11 +75,11 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
 
   let shuttingDown = false
   const maxRequestBytes = options.maxRequestBytes ?? DEFAULTS.maxRequestBytes
-  const webvhResolve = options.webvh?.resolve
-  const vhWatchers = [...(options.vh?.watchers ?? [])]
-  const resolveWebvh = webvhResolve === false ? undefined
-    : typeof webvhResolve === 'function' ? webvhResolve
-    : createDidStateResolver({ webvh: createNetworkWebvhResolver(), ...(vhWatchers.length ? { vh: createVhWatcherResolver({ watchers: vhWatchers }) } : {}) })
+  const logResolve = options.didLogs?.resolve
+  const watchers = [...(options.didLogs?.watchers ?? [])]
+  const resolveLog = logResolve === false ? undefined
+    : typeof logResolve === 'function' ? logResolve
+    : watchers.length ? createVhWatcherResolver({ watchers }) : undefined
   const liveLimits = options.live
   const admin = options.admin?.(store)
   const newInboxLimit = liveLimits ? () => liveLimits.newInboxesPerAddressPerHour() : options.registration?.newInboxesPerAddressPerHour
@@ -90,10 +87,9 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
   // Every Tor visitor reaches this server from the local Tor daemon: one
   // address for all of them, so that bucket is wider than a person's.
   const onionLimiter = newInboxLimit ? new IpRateLimiter(typeof newInboxLimit === 'function' ? () => newInboxLimit() * 10 : newInboxLimit * 10, 60 * 60_000) : undefined
-  const { handle, live, mediatorDid, refreshWebvh } = createMediator({
-    mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes), resolveWebvh,
+  const { handle, live, mediatorDid, refreshLogs } = createMediator({
+    mediator, store, maxReceiveBytes: Math.min(maxRequestBytes, store.limits.maxMessageBytes), resolveLog,
     registration: {
-      ...(options.registration?.allowedDidDomains?.length ? { allowedDidDomains: options.registration.allowedDidDomains } : {}),
       ...(newInboxLimiter || liveLimits ? { admitNewInbox: (address: string) => (liveLimits?.registrationOpen() ?? true) && (!newInboxLimiter || (isLoopback(address) ? onionLimiter! : newInboxLimiter).allow(address)) } : {}),
     },
   })
@@ -133,7 +129,7 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
         if (server.upgrade(request, { data: { address: clientAddress(request) } })) return undefined
         return new Response('websocket upgrade failed', { status: 400 })
       }
-      if (request.method === 'POST' && (url.pathname === '/' || url.pathname === '/webvh-log')) {
+      if (request.method === 'POST' && (url.pathname === '/' || url.pathname === '/did-log')) {
         if (!requestLimiter.allow(clientAddress(request))) {
           return new Response('rate limit exceeded', { status: 429, headers: { 'retry-after': '60' } })
         }
@@ -169,14 +165,14 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
     try { store.expire() } catch (error) { log('error', 'background expiry failed', { error: errorMessage(error) }) }
   }, 60_000)
   expiryTimer.unref()
-  const webvhTimer = resolveWebvh
+  const logTimer = resolveLog
     ? setInterval(() => {
-        refreshWebvh().then(result => {
+        refreshLogs().then(result => {
           if (result.revoked > 0) log('info', 'revoked inboxes of devices their DID no longer lists', result)
-        }).catch(error => log('error', 'did:webvh refresh failed', { error: errorMessage(error) }))
-      }, (options.webvh?.refreshSeconds ?? 300) * 1000)
+        }).catch(error => log('error', 'did:vh refresh failed', { error: errorMessage(error) }))
+      }, (options.didLogs?.refreshSeconds ?? 300) * 1000)
     : undefined
-  webvhTimer?.unref()
+  logTimer?.unref()
 
   // Hop-chaining (2026-08-30 discussion): when this mediator is itself named
   // as an intermediate hop in some recipient's DID document, an upstream
@@ -214,7 +210,7 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
       shuttingDown = true
       clearInterval(expiryTimer)
       if (liveTimer) clearInterval(liveTimer)
-      if (webvhTimer) clearInterval(webvhTimer)
+      if (logTimer) clearInterval(logTimer)
       relayPoller?.stop()
       log('info', 'mediator shutting down', { signal })
       // Close every connection now, live WebSockets included: a graceful

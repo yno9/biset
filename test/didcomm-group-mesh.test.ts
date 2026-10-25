@@ -22,7 +22,7 @@ import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { createSegmentKey, decryptVaultObject } from '../src/client/store/vault/objects.ts'
 import { reduceLocalJmapProjection, type DecryptedMutationRecord } from '../src/client/store/projection/reducer.ts'
 import type { VaultEventAuthor } from '../src/client/store/vault/events.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 
 interface Device { kid: string; x: Uint8Array; secret: Uint8Array }
 interface Identity { did: string; domain: string; devices: Device[]; log: unknown[] }
@@ -86,7 +86,7 @@ describe('DIDComm group chat', () => {
     const identities = [alice, bob, carol]
 
     const webvh = testWebvhResolver()
-    const { handle } = createMediator({ mediator, store, resolveWebvh: webvh.resolveWebvh })
+    const { handle } = createMediator({ mediator, store, resolveLog: webvh.resolveLog })
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
       if (url.origin === mediatorUrl) return (await handle(new Request(url, init), url)) ?? new Response('not found', { status: 404 })

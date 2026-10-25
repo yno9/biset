@@ -30,7 +30,7 @@ function didOfJrd(value: unknown): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const aliases = (value as { aliases?: unknown }).aliases
   if (!Array.isArray(aliases)) return undefined
-  return aliases.find((alias): alias is string => typeof alias === 'string' && (alias.startsWith('did:webvh:') || alias.startsWith('did:web:') || alias.startsWith('did:vh:')))
+  return aliases.find((alias): alias is string => typeof alias === 'string' && (alias.startsWith('did:web:') || alias.startsWith('did:vh:')))
 }
 
 async function webFinger(host: string, address: string, fetchImpl: typeof fetch): Promise<string | undefined> {

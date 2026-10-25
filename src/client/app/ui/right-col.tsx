@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
-import { displayName, PROTO_COLOR, PROTO_TEXT, shortWebvhDid } from './did-display.ts'
+import { displayName, PROTO_COLOR, PROTO_TEXT, shortDid } from './did-display.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { PageHost } from './page-host.tsx'
 import { ReplyBox, composeConfig } from './reply-box.tsx'
@@ -116,7 +116,7 @@ function ConvMeta({ group, hidden, groupName }: { group: ThreadGroup | undefined
     if (first.ts) lines.push(`date: ${new Date(first.ts).toISOString()}`)
     lines.push(`participants: ${displayParticipantsOf(msgs, self)}`)
     // A DIDComm thread's key joins two full DIDs with '|': each is elided the same way.
-    lines.push(`thread_id: ${group.key.split('|').map(s => s.startsWith('did:') ? shortWebvhDid(s) : s).join('|')}`)
+    lines.push(`thread_id: ${group.key.split('|').map(s => s.startsWith('did:') ? shortDid(s) : s).join('|')}`)
     lines.push(`messages: ${group.messages.length}`)
   }
   return (

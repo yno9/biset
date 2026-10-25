@@ -4,7 +4,7 @@
 // `alsoKnownAs` becomes `[did:vh:<SCID>]` and nothing else. A did:web document is accepted as that shadow only if it equals
 // the derivation, *and* the did:vh document names the did:web DID: a link in both directions. Checked against the same
 // vectors as dito's packages/vh (test/fixtures/did-vh-vectors.json).
-import { canonicalize } from '../webvh/jcs.ts'
+import { canonicalize } from './jcs.ts'
 
 type Document = Record<string, unknown>
 

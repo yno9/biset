@@ -1,5 +1,5 @@
-// SCID (Self-Certifying IDentifier) verification (DIDWEBVHFEAT.md §3,
-// did:webvh v1.0 spec "SCID Generation and Verification"). The SCID is the
+// SCID (Self-Certifying IDentifier) verification (VH-Log: SCID Generation and Verification;
+// didvh-spec). The SCID is the
 // hash of the genesis log entry with a `{SCID}` placeholder standing in for
 // itself everywhere it would otherwise appear.
 import { jcsMultihashBase58 } from './hash.ts'

@@ -6,11 +6,14 @@
  * secret), AES-wrapped under a non-extractable browser key.
  */
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { decodeMultikey } from '../../../protocol/webvh/multikey.ts'
-import { parseWebvhDid, sameIdentity } from '../../../protocol/webvh/identifier.ts'
-import { verifyProof, type DataIntegrityProof } from '../../../protocol/webvh/proof.ts'
-import { freshFetch } from '../webvh/log-io.ts'
-import { resolveByDomain } from '../../../protocol/webvh/resolver.ts'
+import { decodeMultikey } from '../../../protocol/vh/multikey.ts'
+import type { DidDocument } from '../../../protocol/vh/document.ts'
+import { sameIdentity } from '../../../protocol/vh/identifier.ts'
+import { verifyProof, type DataIntegrityProof } from '../../../protocol/vh/proof.ts'
+import { freshFetch } from '../log-io.ts'
+import { resolveVhByHost } from '../../../protocol/vh/fetch.ts'
+import { resolveDidDocument } from '../../../protocol/did-resolve.ts'
+import { didWebCandidates } from '../../../protocol/vh/didweb.ts'
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
 import { encodePeerDid2 } from '../../../protocol/didcomm/peer.ts'
@@ -162,6 +165,8 @@ export type DidMdActiveSession = {
 /** This browser as an author of the identity's Vault. */
 export type DidMdVaultDevice = {
   did: string
+  /** The address the identity is published at (`alice.did.md`): the alias, which can change while the DID does not. */
+  handle: string
   /** `actorDeviceId` on the Vault events this browser writes. */
   deviceId: string
 }
@@ -260,8 +265,8 @@ async function bisetMediatorFor(values: readonly string[]): Promise<DidMdBisetMe
 
 /** Generates and seals the DIDComm device's own material -- none of it
  * (the X25519 leaf, the mediator inbox-label secret) is bound to
- * this identity's did:webvh, so none of it needs the DID known yet. Only
- * `xKid` (did:webvh + fragment) does; see withDidCommXKid. */
+ * this identity's did:vh, so none of it needs the DID known yet. Only
+ * `xKid` (did:vh + fragment) does; see withDidCommXKid. */
 async function prepareBisetDidCommDevice(mediator: DidMdBisetMediator): Promise<DidMdBisetDidCommDeviceMaterial & { mediatorUrl: string; routingKid: string; mediatorDid?: string; mediatorOnionUrl?: string }> {
   const x25519PrivateKey = x25519.utils.randomSecretKey()
   const x25519PublicKey = x25519.getPublicKey(x25519PrivateKey)
@@ -389,14 +394,15 @@ function isWalletCallback(): boolean {
 /** The Client Identifier of this page as a relying party with no key of its own (OID4VP 1.0 §5.9.3). */
 const clientIdFor = (callback: string): string => `redirect_uri:${callback}`
 
-// Wallet discovery from a did:webvh suffix the user types: resolve that identity's own DID document and read its
+// Wallet discovery from a host the user types (alice.did.md): resolve that identity's own DID document and read its
 // "SelfIssuedOPAuthorizationEndpoint" service entry (where its wallet's authorization screen is). Nothing is
 // registered or fetched from the wallet; the DID document is the whole directory.
 export async function resolveWalletFromSuffix(suffix: string): Promise<WalletDirectoryEntry> {
   const domain = suffix.trim().toLowerCase()
   if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) throw new Error('Enter a domain, e.g. alice.did.md.')
-  const document = await resolveByDomain(domain)
-  if (!document) throw new Error(`${domain} has no did:webvh identity.`)
+  const found = await resolveVhByHost(domain)
+  if (!found) throw new Error(`${domain} has no did:vh identity.`)
+  const document = found.document
   const service = Array.isArray(document.service) ? document.service : []
   const entry = service.find(candidate => candidate?.type === 'SelfIssuedOPAuthorizationEndpoint' && typeof candidate.serviceEndpoint === 'string')
   if (!entry || typeof entry.serviceEndpoint !== 'string') throw new Error(`${domain} does not publish a wallet.`)
@@ -410,10 +416,11 @@ export async function resolveWalletFromSuffix(suffix: string): Promise<WalletDir
 /** did.md's Root key: the identity's own authentication key, `#pass-1`. */
 const ROOT_KEY_FRAGMENT = '#pass-1'
 
-export async function rootAuthority(handle: string, document: Awaited<ReturnType<typeof resolveByDomain>>) {
+export async function rootAuthority(handle: string, document: DidDocument | null) {
   if (!document) throw new Error(`No DID was found for ${handle}`)
-  const parts = parseWebvhDid(document.id)
-  if (parts.domain !== handle || parts.pathSegments.length || parts.port !== undefined) throw new Error('Resolved DID does not match the requested did.md hostname')
+  // The identity is the one published at the handle: its own document names the handle as its place (the host enforced that
+  // when it took the log), and only that one.
+  if (!document.alsoKnownAs.includes(`did:web:${handle}`)) throw new Error('Resolved DID does not match the requested did.md hostname')
   // The Root key is `#pass-1` by name (did.md's genesis), not whichever
   // authentication entry comes first: the document may list other
   // authentication keys too (PLAN-refactor.md §3-4), in any order.
@@ -455,9 +462,12 @@ async function resolvedPendingAuthorization(pending: DidMdPendingAuthorization, 
     if (pending.did !== did) throw new Error('did.md returned a device capability for an unexpected DID')
     return pending as ResolvedPendingAuthorization
   }
-  const parts = parseWebvhDid(did)
-  const handle = didMdHandle(parts.domain)
-  const resolved = await resolveByDomain(handle, undefined, { cache: 'no-store' })
+  // A did:vh DID names no host: the handle is the place its own document says the log is published at.
+  const resolved = await resolveDidDocument(did, { fetch: freshFetch() })
+  if (!resolved) throw new Error(`No DID was found for ${did}`)
+  const place = didWebCandidates(resolved as unknown as Record<string, unknown>)[0]
+  if (!place) throw new Error('did.md returned a device capability for an identity that names no place')
+  const handle = didMdHandle(place.slice('did:web:'.length))
   const identity = await rootAuthority(handle, resolved)
   if (identity.did !== did) throw new Error('did.md returned a device capability for an unexpected DID')
   // The login request prepared this device before the DID was known (see
@@ -558,7 +568,7 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   const resolvedPending = await timedStep('    session: resolvedPendingAuthorization', resolvedPendingAuthorization(pending, did))
   if (options.presented) verifyPresented(options.presented, resolvedPending)
   const capability = await timedStep('    session: capabilityFromResponse', capabilityFromResponse(value, resolvedPending))
-  const resolved = await timedStep('    session: resolveByDomain(did)', resolveByDomain(parseWebvhDid(resolvedPending.did).domain, undefined, undefined, freshFetch()))
+  const resolved = await timedStep('    session: resolveDidDocument(did)', resolveDidDocument(resolvedPending.did, { fetch: freshFetch() }))
   if (!resolved) throw new Error('Could not resolve the DID document after Wallet approval')
   // The credential stands only while the DID document still names the key that signed it.
   const named = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
@@ -631,7 +641,7 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
     handle: session.handle, verificationMethod: session.verificationMethod, rootPublicKey: session.rootPublicKey,
     deviceJkt: session.deviceJkt, privateKey: session.privateKey, publicJwk: session.publicJwk,
     vaultDeviceId: session.vaultDeviceId ?? (() => { throw new Error('This did.md Wallet session predates this Biset version; connect it again.') })(),
-    // None when the capability carries none (a sign-in under a moved DID): the refresh must not expect one.
+    // None when the capability carries none (a sign-in after a move to another host): the refresh must not expect one.
     ...(storedEdit ? { documentEdit: storedEdit as DidCoreDocumentEdit } : {}),
     ...(session.bisetDidCommDevice ? { bisetDidCommDevice: session.bisetDidCommDevice } : {}),
     createdAt: '',
@@ -686,7 +696,7 @@ async function redirectToWallet(client: WalletClient, pending: DidMdPendingAutho
 
 async function otherDeviceMethodIds(did: string, ownKid: string): Promise<string[]> {
   // Read past the host's CDN (`freshFetch`): a stale copy would leave a recently added device out of the removal.
-  const resolved = await resolveByDomain(parseWebvhDid(did).domain, undefined, undefined, freshFetch())
+  const resolved = await resolveDidDocument(did, { fetch: freshFetch() })
   if (!resolved || resolved.id !== did) throw new Error('Could not resolve the current DID document before removing other devices')
   return (resolved.verificationMethod ?? []).flatMap(method => {
     try {
@@ -711,7 +721,7 @@ async function otherDeviceMethodIds(did: string, ownKid: string): Promise<string
  * material -- the X25519 leaf, its mediator inbox-label secret, even
  * the document edit's verification method (a fragment-only id; its
  * `controller` is ignored and overwritten by Wallet regardless) -- turns
- * out not to need the DID either, only `xKid` (did:webvh + fragment) does.
+ * out not to need the DID either, only `xKid` (did:vh + fragment) does.
  * prepareBisetDidCommDevice builds everything else now; withDidCommXKid
  * fills in `xKid` once the token response reveals the DID, the same
  * resolve-after-response pattern resolvedPendingAuthorization already uses
@@ -861,31 +871,30 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
   return submitToWallet(client, pending)
 }
 
-/** The sign-in for the same device under the DID the Wallet moved this identity to (its host changed). */
-async function movedDidLoginPending(newDid: string, config: WalletConfiguration): Promise<{ client: WalletClient, pending: DidMdPendingAuthorization }> {
+/** The sign-in for the same device after the Wallet moved this identity to another host (its DID is the same). */
+async function movedDidLoginPending(did: string, host: string, config: WalletConfiguration): Promise<{ client: WalletClient, pending: DidMdPendingAuthorization }> {
   const session = await readDidMdDeviceSession()
   if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Reconnect did.md Wallet before changing the address')
-  if (!sameIdentity(session.did, newDid)) throw new Error('The moved DID is not this account')
+  if (!sameIdentity(session.did, did)) throw new Error('The moved DID is not this account')
   const client = walletClient()
   const { did: _old, ...rest } = pendingFromSession(session)
   const pending: DidMdPendingAuthorization = {
     ...rest, state: randomBase64url(32), nonce: randomBase64url(32), createdAt: new Date().toISOString(),
-    handle: didMdHandle(parseWebvhDid(newDid).domain),
+    handle: didMdHandle(host),
   }
   delete pending.documentEdit
   return { client, pending }
 }
 
 /**
- * The Wallet moved this identity to another address (its DID's host): the sign-in request for the same
- * device under the new DID, prepared and saved but not started -- its query string goes to the Wallet's
- * save page (the person's password manager updates the saved account there), whose last page signs in
- * with the Passphrase it was given and returns to the wallet callback. The device keys stay; the
- * capability, the DID and the DIDComm key ids are the new ones (the login path resolves the DID from
- * the capability itself).
+ * The Wallet moved this identity to another address (the host its log is published at): the sign-in request for the
+ * same device at the new address, prepared and saved but not started -- its query string goes to the Wallet's save page
+ * (the person's password manager updates the saved account there), whose last page signs in with the Passphrase it was
+ * given and returns to the wallet callback. The DID, the device keys and the DIDComm key ids are the same; the handle is
+ * the new address, and the capability is a fresh one for it.
  */
-export async function prepareDidMdMovedDidLoginRequest(newDid: string, configured: DidMdWalletConfiguration = {}): Promise<string> {
-  const { client, pending } = await movedDidLoginPending(newDid, walletConfiguration(configured))
+export async function prepareDidMdMovedDidLoginRequest(did: string, host: string, configured: DidMdWalletConfiguration = {}): Promise<string> {
+  const { client, pending } = await movedDidLoginPending(did, host, walletConfiguration(configured))
   return new URL(await walletRequestUrl(client, pending)).search
 }
 
@@ -993,7 +1002,7 @@ export async function disconnectDidMdWallet(): Promise<void> {
 export async function openDidMdWalletVaultDevice(): Promise<DidMdVaultDevice> {
   const session = await readDidMdDeviceSession()
   if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Connect did.md Wallet again to use this Biset device')
-  return { did: session.did, deviceId: session.vaultDeviceId }
+  return { did: session.did, handle: session.handle, deviceId: session.vaultDeviceId }
 }
 
 /** Opens the optional Biset-owned DIDComm leaf. The corresponding public

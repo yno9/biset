@@ -12,11 +12,11 @@ import { didCommPost, packAuthcrypt, unpackAuthcrypt, parseJwe, type DidCommJWE 
 import { assertFromMatchesSender, buildPlaintext, type DidCommPlaintext } from './message.ts'
 import { isProblemReport, problemReportError } from './problems.ts'
 import { publicKeyOf, type PeerDidDoc } from './peer.ts'
-import { keyAgreementRecipients } from './webvh-route.ts'
-import { decodeMultikey } from '../webvh/multikey.ts'
+import { keyAgreementRecipients } from './doc-route.ts'
+import { decodeMultikey } from '../vh/multikey.ts'
 import { defaultFetch } from '../net-fetch.ts'
 
-/** A DIDComm key this device holds: its own device key of its did:webvh,
+/** A DIDComm key this device holds: its own device key of its did:vh,
  * or a relationship did:peer's key. */
 export interface DidCommSender { did: string; xKid: string; xPriv: Uint8Array }
 

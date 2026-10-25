@@ -7,9 +7,9 @@
 // `cb81.did.md/.well-known/did.jsonl`.
 import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
-import { didCommRouteFromDocument, keyAgreementRecipients } from '../../src/protocol/didcomm/webvh-route.ts'
+import { didCommRouteFromDocument, keyAgreementRecipients } from '../../src/protocol/didcomm/doc-route.ts'
 import { encodeX25519Multikey } from '../../src/protocol/didcomm/multikey.ts'
-import type { WebvhDidDocument } from '../../src/protocol/webvh/document.ts'
+import type { DidDocument } from '../../src/protocol/vh/document.ts'
 
 const DID = 'did:webvh:QmScid:alice.example'
 
@@ -27,7 +27,7 @@ function service(id: string, uri: string, routingKeys: string[] = []) {
   return { id: `${DID}${id}`, type: 'DIDCommMessaging', serviceEndpoint: { uri, accept: ['didcomm/v2'], routingKeys } }
 }
 
-function doc(parts: Partial<WebvhDidDocument>): WebvhDidDocument {
+function doc(parts: Partial<DidDocument>): DidDocument {
   return { '@context': [], id: DID, verificationMethod: [], authentication: [], service: [], alsoKnownAs: [], ...parts }
 }
 

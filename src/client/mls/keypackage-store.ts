@@ -97,15 +97,8 @@ export class IndexedDbMlsKeyPackageStore implements MlsKeyPackageStore {
     return undefined
   }
 
-  /** Domain move (identity/webvh/move.ts) support. Every already-minted
-   * package in the pool carries a `kid` baked into its own SIGNED credential
-   * (mls/group.ts's generateOwnKeyPackage) — unlike a plain JSON field, that
-   * can't be rewritten in place after a move: the credential would no
-   * longer match its own signature. The pool has no other identity-scoping
-   * (its keyPath is the package `ref`, not identityId — this store
-   * implicitly serves whichever one identity this device has), so the only
-   * correct move is to discard the whole pool and let ensureKeyPackagePool
-   * (identity/bootstrap.ts) refill it under the new kid on next boot. */
+  /** Discards every retained key package: each carries a `kid` baked into its own SIGNED credential, which cannot be rewritten in
+   * place, so a pool made for another kid is discarded whole and refilled (identity/bootstrap.ts's ensureKeyPackagePool). */
   async clear(): Promise<void> {
     const database = await this.database()
     const transaction = database.transaction([STORE_NAME], 'readwrite')

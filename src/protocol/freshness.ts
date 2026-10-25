@@ -1,12 +1,12 @@
 // Remembering the newest version of a log that was verified, so that an older copy, or another continuation of the same log, is
-// refused later (dito packages/webvh/src/freshness.ts, same rules).
+// refused later (dito packages/vh/src/freshness.ts, same rules).
 //
 // A log is verified by its SCID, hash chain and signatures; none of that says whether it is the *newest* log. A host, a cache
 // or a mirror can hand over a copy from before a key rotation (a removed device's key still listed, a rotated key still
 // trusted), and a party holding the update keys can write a second continuation of the same history. Both verify. What exposes
 // them is a comparison with what this party has already accepted.
 //
-// Method-neutral: it needs only `versionId` (`<number>-<hash>`), which did:webvh and did:vh logs share.
+// Method-neutral: it needs only `versionId` (`<number>-<hash>`), which every did:vh log has.
 export interface KnownVersion { versionNumber: number; versionId: string }
 
 /** Where a log stands against the newest version already accepted for its identity. */
@@ -59,7 +59,7 @@ export function standingOf(entries: ReadonlyArray<{ versionId: string }>, known?
   return entries.length === known.versionNumber ? 'same' : 'newer'
 }
 
-/** Storage for the newest accepted version of each identity, keyed by identityKey (`did:vh:<SCID>`, `did:webvh:<SCID>`). */
+/** Storage for the newest accepted version of each identity, keyed by identityKey (`did:vh:<SCID>`). */
 export interface VersionMemory {
   get(key: string): KnownVersion | undefined | Promise<KnownVersion | undefined>
   set(key: string, version: KnownVersion): void | Promise<void>

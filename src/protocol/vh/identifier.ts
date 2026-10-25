@@ -17,3 +17,22 @@ export function parseVhDid(did: string): { scid: string } {
   if (!isVhDid(did)) throw new Error('parseVhDid: not a did:vh identifier')
   return { scid: did.slice('did:vh:'.length) }
 }
+
+/** The SCID of a did:vh, from the DID or from a DID URL (the part before `#`, `?` or `/`); `undefined` for anything else. */
+export function vhScidOf(did: string): string | undefined {
+  if (!did.startsWith('did:vh:')) return undefined
+  const scid = did.slice('did:vh:'.length).split(/[#?/]/)[0]
+  return scid && isScid(scid) ? scid : undefined
+}
+
+/** What every local store is keyed by for `did`: `did:vh:<SCID>` for a did:vh or a DID URL of one (a did:vh names no host, so
+ * nothing in it moves), any other string (a bare mail address, a did:web, a did:peer) as it is. */
+export function identityKey(did: string): string {
+  const scid = vhScidOf(did)
+  return scid ? `did:vh:${scid}` : did
+}
+
+/** True when both name the same identity: the same string, or the same did:vh whatever fragment each carries. */
+export function sameIdentity(a: string, b: string): boolean {
+  return a === b || identityKey(a) === identityKey(b)
+}

@@ -2,11 +2,11 @@
 // (GET /log?scid=), with the same guards as a did:webvh's host. The log is dito's shared vector `valid/key-agreement`.
 import { describe, expect, test } from 'vitest'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
 import {
-  createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver, didStateFromLog, isLogDid, vhStateFromLog, webvhStateFromLog, WebvhUnavailable,
-} from '../src/server/mediator/webvh-state.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
+  createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver, didStateFromLog, isLogDid, vhStateFromLog, webvhStateFromLog, LogUnavailable,
+} from '../src/server/mediator/log-state.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import vectors from './fixtures/did-vh-vectors.json'
 
@@ -82,12 +82,12 @@ describe('createVhWatcherResolver', () => {
   })
 
   test('a watcher that could not be asked is "retry later", not "no such DID"; another watcher may still answer', async () => {
-    await expect(resolverOf({ fetch: serving(() => new Response('', { status: 503 })) })(did)).rejects.toThrow(WebvhUnavailable)
-    await expect(resolverOf({ fetch: (async () => { throw new TypeError('network') }) as typeof fetch })(did)).rejects.toThrow(WebvhUnavailable)
+    await expect(resolverOf({ fetch: serving(() => new Response('', { status: 503 })) })(did)).rejects.toThrow(LogUnavailable)
+    await expect(resolverOf({ fetch: (async () => { throw new TypeError('network') }) as typeof fetch })(did)).rejects.toThrow(LogUnavailable)
     const mixed = serving(url => url.startsWith('https://a.example/') ? new Response('', { status: 503 }) : new Response(text))
     expect((await resolverOf({ watchers: ['https://a.example', 'https://b.example'], fetch: mixed })(did))?.did).toBe(did)
     const mixedNotFound = serving(url => url.startsWith('https://a.example/') ? new Response('', { status: 503 }) : new Response('', { status: 404 }))
-    await expect(resolverOf({ watchers: ['https://a.example', 'https://b.example'], fetch: mixedNotFound })(did)).rejects.toThrow(WebvhUnavailable)
+    await expect(resolverOf({ watchers: ['https://a.example', 'https://b.example'], fetch: mixedNotFound })(did)).rejects.toThrow(LogUnavailable)
   })
 
   test('a log that does not verify, or is another DID\'s, says nothing about this DID (null); a watcher cannot make up keys', async () => {

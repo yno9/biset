@@ -4,7 +4,7 @@ import { contactAvatar, contactDisplayName, publicDidOf } from '../../store/proj
 import { setContactAvatars, setContactDids, setContactNames, setVerifiedAddresses } from './did-display.ts'
 import { rememberVhLocation } from '../../../protocol/did-resolve.ts'
 import { hostOfAddress } from '../../didcomm/address-resolver.ts'
-import { identityKey, vhScidOf } from '../../../protocol/webvh/identifier.ts'
+import { identityKey, vhScidOf } from '../../../protocol/vh/identifier.ts'
 import type { OpenedMail } from '../../pgp/open.ts'
 import { armorOfStoredBody } from '../../pgp/stored.ts'
 import { emailToMessageView } from './message/message-view.ts'

@@ -2,8 +2,7 @@
 // a Wallet approval (the Services tab), and the keys: this identity's devices, and its PGP key (the Keys tab).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
-import { didToHttpsUrl } from '../../../../protocol/webvh/identifier.ts'
-import { resolve } from '../../../../protocol/webvh/resolver.ts'
+import { resolveDidDocument, rememberVhLocation } from '../../../../protocol/did-resolve.ts'
 import { OnionIcon } from './onion-icon.tsx'
 import { requestText } from './text-card-dialog.tsx'
 import { PgpKeyRow } from './pgp-card.tsx'
@@ -26,7 +25,7 @@ export function AccountList() {
   const showMessage = (text: string) => config.showMessage?.(text)
   return (
     <>
-      {config.did ? <IdentityHostCard did={config.did} showMessage={showMessage} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
+      {config.did ? <IdentityHostCard did={config.did} host={wallet.handle} showMessage={showMessage} {...(wallet.reconnectRequired && wallet.onReconnect ? { onReconnect: () => { void wallet.onReconnect?.().catch(error => showMessage(errorText(error))) } } : {})} /> : null}
       {wallet.didComm ? <MediatorCard config={config} wallet={wallet} didComm={wallet.didComm} showMessage={showMessage} /> : null}
       {config.rotationKey ? <DidCommKeyNotice rotationKey={config.rotationKey} showMessage={showMessage} /> : null}
     </>
@@ -78,12 +77,12 @@ function DidText({ did }: { did: string }) {
     observer.observe(column)
     return () => observer.disconnect()
   }, [did])
-  // Only the SCID is shown (what the DID's `did:webvh:` and `:alias.did.md` leave out is in the tooltip, and is what a click copies);
-  // a DID that is not a did:webvh is shown as it is.
-  return <span className="acc-did-scid" ref={scid}>{parts.length < 4 ? did : ellipsizeScid(parts[2]!, chars)}</span>
+  // Only the SCID is shown (the `did:vh:` in front of it is in the tooltip, and is what a click copies);
+  // a DID that is not a did:vh is shown as it is.
+  return <span className="acc-did-scid" ref={scid}>{parts.length !== 3 || parts[1] !== 'vh' ? did : ellipsizeScid(parts[2]!, chars)}</span>
 }
 
-function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; showMessage: (text: string) => void; onReconnect?: () => void }) {
+function IdentityHostCard({ did, host, showMessage, onReconnect }: { did: string; host: string; showMessage: (text: string) => void; onReconnect?: () => void }) {
   const [resolved, setResolved] = useState<Resolution>(() => resolutions.get(did) ?? 'checking')
   useEffect(() => {
     const known = resolutions.get(did)
@@ -91,12 +90,13 @@ function IdentityHostCard({ did, showMessage, onReconnect }: { did: string; show
     let current = true
     setResolved('checking')
     const done = (result: Resolution) => { resolutions.set(did, result); if (current) setResolved(result) }
-    resolve(did).then(found => done(found ? 'ok' : 'error')).catch(() => done('error'))
+    // A did:vh names no host: the log is looked for at the identity's own address first.
+    rememberVhLocation(did, host)
+    resolveDidDocument(did).then(found => done(found ? 'ok' : 'error')).catch(() => done('error'))
     return () => { current = false }
-  }, [did])
-  const logUrl = (() => { try { return didToHttpsUrl(did) } catch { return undefined } })()
-  // The host that has the DID's log (`did.jsonl`): the one the DID names.
-  const host = (() => { try { return logUrl ? new URL(logUrl).host : undefined } catch { return undefined } })()
+  }, [did, host])
+  // The log (`did.jsonl`) is at the identity's own address.
+  const logUrl = host ? `https://${host}/.well-known/did.jsonl` : undefined
   const dotColor = resolved === 'ok' ? '#34c759' : resolved === 'error' ? '#ff3b30' : '#ff9f0a'
   // Both lines of the first row and the buttons on its right are one line high, so the buttons stay on the first line when the DID is the second.
   const LINE = 26

@@ -9,15 +9,15 @@ import { registerWithMediator } from '../src/client/didcomm/mediator-sync.ts'
 import { pickupDeliver, acknowledgeMessages } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/protocol/didcomm/peer.ts'
-import { serializeLog } from '../src/protocol/webvh/log.ts'
-import { buildDidCommLog } from './protocol/support/webvh-log-fixture.ts'
+import { serializeLog } from '../src/protocol/vh/log.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 import { freshMediator, MEDIATOR_URL, testWebvhResolver } from './support/mediator.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 
 describe('multi-device delivery', () => {
   test('one front-door message reaches every device of the recipient DID', async () => {
     const webvh = testWebvhResolver()
-    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveWebvh: webvh.resolveWebvh })
+    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveLog: webvh.resolveLog })
     const root = ed25519.utils.randomSecretKey()
     const phoneX = x25519.utils.randomSecretKey()
     const laptopX = x25519.utils.randomSecretKey()

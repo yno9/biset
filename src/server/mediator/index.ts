@@ -1,6 +1,6 @@
 // Production entrypoint for the standalone blind DIDComm mediator. Mail is a
 // separate service (didmail) the mediator knows nothing of. Its only durable
-// state is its own did:peer key, verified did:webvh key sets, per-device
+// state is its own did:peer key, verified did:vh key sets, per-device
 // inboxes, opaque JWE queues, and replay IDs in one SQLite database.
 import { createMediatorDeployment } from './deployment.ts'
 import { openLiveMediatorLimits } from './settings.ts'
@@ -44,18 +44,19 @@ const deployment = await createMediatorDeployment({
     replayTtlMs: envInteger('MEDIATOR_REPLAY_TTL_MS', 10 * 60 * 1000, 1000, 24 * 60 * 60 * 1000),
     maxReplayIds: envInteger('MEDIATOR_MAX_REPLAY_IDS', 50_000, 100, 10_000_000),
   },
-  // MEDIATOR_ALLOWED_DID_DOMAINS=did.md,biset.md: only a did:webvh on these domains (or below) may register.
-  // Unset: any DID whose owner can prove it. A did:peer is not limited by this.
+  // Who may register is the operator's choice of watchers (MEDIATOR_VH_WATCHERS below): a did:vh whose log none of them has is not known.
   registration: {
-    allowedDidDomains: (process.env.MEDIATOR_ALLOWED_DID_DOMAINS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
     newInboxesPerAddressPerHour,
   },
   relayUpstreamUrl: process.env.MEDIATOR_RELAY_UPSTREAM_URL,
-  // MEDIATOR_WEBVH_RESOLVE=0: dial out to nothing; only pushed did:webvh logs are known.
-  webvh: { resolve: process.env.MEDIATOR_WEBVH_RESOLVE !== '0', refreshSeconds: envInteger('MEDIATOR_WEBVH_REFRESH_SECONDS', 300, 10, 24 * 60 * 60) },
   // MEDIATOR_VH_WATCHERS=https://did.md: origins that serve GET /log?scid= (a did.md identity host does, under any name). A did:vh DID names
-  // no place, so this is where its log is looked for; unset, this mediator does not know a did:vh's keys.
-  vh: { watchers: (process.env.MEDIATOR_VH_WATCHERS ?? '').split(',').map(value => value.trim()).filter(Boolean) },
+  // no place, so this is where its log is looked for; unset, this mediator does not know a did:vh's keys (only logs pushed to POST /did-log).
+  // MEDIATOR_DID_RESOLVE=0: dial out to nothing even so. MEDIATOR_DID_REFRESH_SECONDS: how often every did:vh with an inbox is resolved again.
+  didLogs: {
+    watchers: (process.env.MEDIATOR_VH_WATCHERS ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    resolve: process.env.MEDIATOR_DID_RESOLVE !== '0',
+    refreshSeconds: envInteger('MEDIATOR_DID_REFRESH_SECONDS', 300, 10, 24 * 60 * 60),
+  },
 })
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

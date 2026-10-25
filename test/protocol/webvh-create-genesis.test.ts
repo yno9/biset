@@ -6,8 +6,8 @@ import { describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
 import { resolve } from '../../src/protocol/webvh/resolver.ts'
-import { decodeMultikey } from '../../src/protocol/webvh/multikey.ts'
-import { fakeAnchor } from './support/webvh-log-fixture.ts'
+import { decodeMultikey } from '../../src/protocol/vh/multikey.ts'
+import { fakeAnchor } from './support/did-log-fixture.ts'
 
 describe('createGenesis + resolve', () => {
   test('a genesis this module writes is exactly what the read-only resolver accepts', async () => {

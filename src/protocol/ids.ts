@@ -55,7 +55,7 @@ export function assertSegmentId(value: unknown): asserts value is SegmentId {
 }
 
 /**
- * The identity behind a device key id — `did:webvh:x#k1` → `did:webvh:x`.
+ * The identity behind a device key id — `did:vh:x#k1` → `did:vh:x`.
  * Lives here (not src/client/mls/identity.ts, which owns the MLS credential shape)
  * so that code with no business touching MLS state — core's DS authorizer,
  * in particular — never has to import src/protocol/mls/ just to parse a DID

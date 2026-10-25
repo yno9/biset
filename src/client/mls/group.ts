@@ -482,22 +482,15 @@ export function memberDids(state: ClientState): string[] {
 
 /** Every device key id a given identity has in this group.
  *
- * `sameIdentity`, not `===`: mid-migration (a did:webvh domain move,
- * identity/webvh/move.ts), some members' credentials already carry the new
- * did while others -- devices that haven't caught up yet -- still carry
- * the old one, same SCID either way. An exact match here would silently
- * drop the not-yet-migrated devices from every roster/vault-delivery
- * projection built from this list the moment the FIRST device migrated,
- * even though they are still cryptographically full members (found live,
- * 2026-08-26, chasing why an uninvolved second device got locked out of
- * vault delivery right after its sibling device performed a move). */
+ * `sameIdentity`, not `===`: two spellings of one did:vh (a DID URL fragment) are the same identity, and an exact match
+ * would silently drop a member's devices from the roster/vault-delivery projections built from this list. */
 export function memberKids(state: ClientState, did: string): string[] {
   return memberList(state).filter(m => sameIdentity(m.did, did)).map(m => m.kid)
 }
 
 /** The ACTUAL MLS leaf signature key a member kid currently holds, or
  * undefined if it is not (or no longer) in the group. Same access pattern
- * webvh-authentication-service.ts's AS callback gets handed by ts-mls
+ * did-authentication-service.ts's AS callback gets handed by ts-mls
  * itself; this is for a caller that instead needs to look one up by kid
  * directly — vault/crypto.ts's SegmentKeyWrap grantor verification
  * (`mls/segment-key-membership.ts`), which checks against CURRENT self-group

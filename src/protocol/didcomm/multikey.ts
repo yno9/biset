@@ -1,11 +1,11 @@
 // Multikey (did:key-style multibase+multicodec public key encoding) for the
 // X25519 key a DIDComm keyAgreement entry carries. Kept out of
-// identity/webvh/multikey.ts deliberately — that module's own header:
+// identity/vh/multikey.ts deliberately — that module's own header:
 // "device keyAgreement entries belong to the DIDComm transport layer,
 // not the signing-key resolution this module exists for" — Ed25519 (log
 // signing) and X25519 (transport encryption) are different concerns.
 //
-// Ported from src.bak/did/webvh/multikey.ts's X25519 half.
+// Ported from src.bak/did/vh/multikey.ts's X25519 half.
 import { base58 } from '@scure/base'
 
 const X25519_PUB_MULTICODEC = [0xec, 0x01] as const // varint(0xec01), registered X25519-pub code

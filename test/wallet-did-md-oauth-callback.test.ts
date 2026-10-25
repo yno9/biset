@@ -2,10 +2,10 @@ import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url, canonicalBytes } from '../src/protocol/canonical.ts'
-import { encodeMultikey } from '../src/protocol/webvh/multikey.ts'
-import { buildProof } from '../src/protocol/webvh/proof.ts'
+import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
+import { buildProof } from '../src/protocol/vh/proof.ts'
 import { didToHttpsUrl } from '../src/protocol/webvh/identifier.ts'
-import { buildGenesisLog } from './protocol/support/webvh-log-fixture.ts'
+import { buildGenesisLog } from './protocol/support/did-log-fixture.ts'
 import {
   clearDidMdPendingAuthorization,
   readDidMdDeviceSession,
