@@ -186,12 +186,12 @@ export function fromPriorKeyResolver(fetchImpl: typeof fetch = fetch): FromPrior
   return async (iss, kid) => {
     if (iss.startsWith('did:peer:2.')) return signingKeyOf(decodePeerDid2(iss) as unknown as DocumentMethods, kid)
     if (iss.startsWith('did:web:')) {
-      const trusted = await resolveTrustedDid(iss, { fetch: fetchImpl })
+      const trusted = await resolveTrustedDid(iss, { fetch: fetchImpl, checkWatchers: true })
       if (!trusted) throw new Error(`from_prior: ${iss} does not resolve`)
       return signingKeyOf(trusted.document as unknown as DocumentMethods, trusted.did === iss ? kid : `${trusted.did}${kid.slice(iss.length)}`)
     }
     if (!iss.startsWith('did:vh:')) throw new FromPriorError(`unsupported DID method for iss ${iss}`)
-    const found = await fetchDidLog(iss, { fetch: fetchImpl })
+    const found = await fetchDidLog(iss, { fetch: fetchImpl, checkWatchers: true })
     if (!found) throw new FromPriorError(`${iss} has no log`)
     const { entries, document } = found
     if (!document) throw new FromPriorError(`${iss} is deactivated`)

@@ -66,7 +66,7 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
     endpoint = { uri: published.uri, routingKeys: published.routing_keys ?? [] }
   } else if (toDid.startsWith('did:web:')) {
     // A did:web that points to a did:vh is only the way to find it: from there on the did:vh is the recipient (resolveTrustedDid).
-    const trusted = await resolveTrustedDid(toDid, { fetch: fetchImpl })
+    const trusted = await resolveTrustedDid(toDid, { fetch: fetchImpl, checkWatchers: true })
     if (!trusted) throw new Error(`${toDid} does not resolve to a published identity`)
     canonical = trusted.did
     if (trusted.linked) {
@@ -81,7 +81,7 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
       endpoint = { uri: route.uri, routingKeys: route.routingKeys }
     }
   } else {
-    const doc = await resolveDidDocument(toDid, { fetch: fetchImpl })
+    const doc = await resolveDidDocument(toDid, { fetch: fetchImpl, checkWatchers: true })
     if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
     // PLAN-tor.md D-5/D-6: dial the recipient's onion entrance only when this page is itself served over Tor.
     const route = didCommRouteFromDocument(doc, { preferOnion })

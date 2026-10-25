@@ -13,6 +13,9 @@ import type { VersionMemory } from './freshness.ts'
 export interface DidResolveContext {
   fetch?: typeof fetch
   links?: DidLinks
+  /** Ask the watchers for their copies of a did:vh's log and compare (a newer copy wins, a fork is refused): for a caller about to
+   * rely on the current keys (sending, verifying a signature). Off by default: showing a name should not ask several servers. */
+  checkWatchers?: boolean
   /** Where to look for the log of a did:vh. */
   vh?: Omit<VhLogSources, 'fetch'>
   /** Refuses an old or forked log. */
@@ -55,6 +58,9 @@ function vhSources(did: string, context: DidResolveContext): VhLogSources {
     locations: [...(context.vh?.locations ?? []), ...(configured.locationsOf?.(did) ?? []), ...(metAt.get(did) ?? [])],
     watchers: [...(context.vh?.watchers ?? []), ...(configured.watchers ?? [])],
     fetch: context.fetch ?? fetch,
+    // Only when asked (didvh-spec: the resolver retrieves further copies only when the client asks): the owner's watchers (in the
+    // log) and this client's are asked for their copies; a newer one replaces the one found, two continuations are refused.
+    compareCopies: context.checkWatchers === true,
   }
 }
 

@@ -43,7 +43,7 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
   const updateKey = encodeMultikey(rootPublicKey)
   const versionTime = '2026-08-23T00:00:00Z'
   const placeholderDid = 'did:vh:{SCID}'
-  const parameters: LogParameters = { method: 'did:vh:1.0', scid: '{SCID}', updateKeys: [updateKey], ...(didComm?.nextKeyHashes?.length ? { nextKeyHashes: didComm.nextKeyHashes } : {}) }
+  const parameters: LogParameters = { method: 'did:vh:1.0', scid: '{SCID}', updateKeys: [updateKey], ...(didComm?.nextKeyHashes?.length ? { nextKeyHashes: didComm.nextKeyHashes } : {}), ...(didComm?.watchers?.length ? { watchers: didComm.watchers } : {}) }
   const rootKeyId = `${placeholderDid}#key-1`
   const state = {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/multikey/v1'],
@@ -148,6 +148,8 @@ export interface DidCommStateExtras {
   services?: Array<{ id: string; uri: string; routingKeys?: string[] } | { id: string; serviceEndpoints: Array<{ uri: string; routingKeys?: string[] | null }> }>
   /** A Spare Key commitment (pre-rotation) in the genesis parameters. */
   nextKeyHashes?: string[]
+  /** The watchers the owner lists in the genesis parameters. */
+  watchers?: string[]
 }
 
 /** A DIDComm-capable single-entry log -- what replaced every

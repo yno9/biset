@@ -9,6 +9,7 @@ import { resolveVhEntries, type VhResolution } from './resolver.ts'
 import { isVhDid, parseVhDid } from './identifier.ts'
 import type { DidDocument } from './document.ts'
 import { checkAndRemember, type VersionMemory } from '../freshness.ts'
+import { checkCopies, LogForkedError, type Copy } from './copies.ts'
 
 export interface VhLogSources {
   /** Web hosts to ask for `https://<host>/.well-known/did.jsonl`, e.g. `alice.did.md`. */
@@ -16,6 +17,8 @@ export interface VhLogSources {
   /** Watcher base URLs, asked `GET /log?scid=<SCID>`. */
   watchers?: readonly string[]
   fetch?: typeof fetch
+  /** Ask the watchers (the owner's, from the log, and these) for their copies and compare: a newer copy replaces this one, a fork is refused. */
+  compareCopies?: boolean
 }
 
 async function textOf(url: string, fetchImpl: typeof fetch): Promise<string | undefined> {
@@ -53,11 +56,34 @@ export async function fetchVhResolution(did: string, sources: VhLogSources, memo
     } catch {
       continue
     }
+    if (sources.compareCopies) {
+      // The owner's own list first, then the ones this client adds; the place this copy came from is not asked again.
+      const skip = [new URL(url).origin]
+      const ours = [...resolution.watchers, ...(sources.watchers ?? [])]
+      const { copies, newest } = await cachedCheck(did, log, { watchers: ours, skip, fetch: fetchImpl })
+      if (copies.some(copy => copy.status === 'forked')) throw new LogForkedError(did, copies)
+      if (newest !== log) { log = [...newest]; resolution = resolveVhEntries(did, log) }
+    }
     if (memory) await checkAndRemember(memory, did, log)
     return { resolution, log }
   }
   return null
 }
+
+// A check asks several servers, and a DID is resolved for every message: the result of a check is reused for a few minutes
+// (the owner's `ttl` is guidance for how long a resolution may be cached, and is only an upper bound here).
+const CHECK_TTL_MS = 5 * 60 * 1000
+const checked = new Map<string, { at: number; versionId: string; result: { copies: Copy[]; newest: readonly LogEntry[] } }>()
+async function cachedCheck(did: string, log: LogEntry[], sources: Parameters<typeof checkCopies>[2]) {
+  const versionId = log[log.length - 1]!.versionId
+  const known = checked.get(did)
+  if (known && known.versionId === versionId && Date.now() - known.at < CHECK_TTL_MS) return known.result
+  const result = await checkCopies(did, log, sources)
+  checked.set(did, { at: Date.now(), versionId, result })
+  return result
+}
+/** Forgets what was checked (tests, and a client that wants to look again). */
+export function forgetCopyChecks(): void { checked.clear() }
 
 /**
  * The did:vh published at a host (`alice.did.md`) when only the host is known (a typed alias, a login hint): the log is at

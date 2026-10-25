@@ -124,6 +124,10 @@ export interface VhResolution {
   latestVersionId: string
   latestVersionNumber: number
   deactivated: boolean
+  /** The watchers the owner lists (`parameters.watchers`, as set by the last valid entry): https URLs that hold copies of the log. */
+  watchers: string[]
+  /** The owner's guidance on how long to cache a resolution, in seconds. */
+  ttl: number
 }
 
 const VERSION_ID = /^([1-9]\d*)-([1-9A-HJ-NP-Za-km-z]+)$/
@@ -238,5 +242,7 @@ export function resolveVhEntries(did: string, log: readonly LogEntry[], options:
     latestVersionId: latest.versionId,
     latestVersionNumber: entryVersionNumber(latest.versionId),
     deactivated: last.deactivated,
+    watchers: last.watchers,
+    ttl: last.ttl,
   }
 }

@@ -110,12 +110,12 @@ export function signingKeyResolver(fetchImpl: typeof fetch = fetch): SigningKeyR
     if (did.startsWith('did:peer:2.')) return authenticationSigningKey(decodePeerDid2(did) as unknown as DocumentMethods, kid)
     if (did.startsWith('did:web:')) {
       // A did:web that points to a did:vh is only the way to find it: the key is the did:vh's (resolveTrustedDid), under the same fragment.
-      const trusted = await resolveTrustedDid(did, { fetch: fetchImpl })
+      const trusted = await resolveTrustedDid(did, { fetch: fetchImpl, checkWatchers: true })
       if (!trusted) throw new SignatureError(`${did} does not resolve`)
       return authenticationSigningKey(trusted.document as unknown as DocumentMethods, trusted.did === did ? kid : `${trusted.did}${kid.slice(did.length)}`)
     }
     if (did.startsWith('did:vh:')) {
-      const document = await resolveDidDocument(did, { fetch: fetchImpl })
+      const document = await resolveDidDocument(did, { fetch: fetchImpl, checkWatchers: true })
       if (!document) throw new SignatureError(`${did} does not resolve`)
       return authenticationSigningKey(document as unknown as DocumentMethods, kid)
     }
