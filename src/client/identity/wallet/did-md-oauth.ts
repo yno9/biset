@@ -12,7 +12,7 @@ import { sameIdentity } from '../../../protocol/vh/identifier.ts'
 import { verifyProof, type DataIntegrityProof } from '../../../protocol/vh/proof.ts'
 import { freshFetch } from '../log-io.ts'
 import { resolveVhByHost } from '../../../protocol/vh/fetch.ts'
-import { resolveDidDocument } from '../../../protocol/did-resolve.ts'
+import { rememberVhLocation, resolveDidDocument } from '../../../protocol/did-resolve.ts'
 import { didWebCandidates } from '../../../protocol/vh/didweb.ts'
 import { deviceKid, deviceKidFragment } from '../../../protocol/didcomm/devicekid.ts'
 import { decodeX25519Multikey, encodeX25519Multikey } from '../../../protocol/didcomm/multikey.ts'
@@ -463,6 +463,8 @@ async function resolvedPendingAuthorization(pending: DidMdPendingAuthorization, 
     return pending as ResolvedPendingAuthorization
   }
   // A did:vh DID names no host: the handle is the place its own document says the log is published at.
+  // The login was started for a handle (`login_hint=alice.did.md`): that is where its log is looked for first.
+  if (pending.handle) rememberVhLocation(did, pending.handle)
   const resolved = await resolveDidDocument(did, { fetch: freshFetch() })
   if (!resolved) throw new Error(`No DID was found for ${did}`)
   const place = didWebCandidates(resolved as unknown as Record<string, unknown>)[0]
