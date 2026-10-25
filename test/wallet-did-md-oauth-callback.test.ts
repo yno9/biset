@@ -4,7 +4,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url, canonicalBytes } from '../src/protocol/canonical.ts'
 import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
 import { buildProof } from '../src/protocol/vh/proof.ts'
-import { didToHttpsUrl } from '../src/protocol/webvh/identifier.ts'
+import { didToHttpsUrl } from '../src/protocol/vh/identifier.ts'
 import { buildGenesisLog } from './protocol/support/did-log-fixture.ts'
 import {
   clearDidMdPendingAuthorization,

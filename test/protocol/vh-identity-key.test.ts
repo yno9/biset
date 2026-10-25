@@ -1,6 +1,6 @@
 // A did:vh DID is its own identity key: nothing in it moves. It is never the same identity as a did:webvh, whatever the SCIDs.
 import { expect, test } from 'vitest'
-import { identityKey, sameIdentity, scidOf } from '../../src/protocol/webvh/identifier.ts'
+import { identityKey, sameIdentity, scidOf } from '../../src/protocol/vh/identifier.ts'
 import { sameIdentity as sameClientIdentity } from '../../src/client/identity/idkey.ts'
 import { isScid, isVhDid, parseVhDid } from '../../src/protocol/vh/identifier.ts'
 

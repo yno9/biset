@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { ForkedLogError, InMemoryVersionMemory, StaleLogError, checkAndRemember, latestVersion, standingOf, versionNumberOf } from '../../src/protocol/freshness.ts'
 import { resolveVhEntries } from '../../src/protocol/vh/resolver.ts'
-import { identityKey } from '../../src/protocol/webvh/identifier.ts'
+import { identityKey } from '../../src/protocol/vh/identifier.ts'
 import type { LogEntry } from '../../src/protocol/vh/log.ts'
 import vectors from '../fixtures/did-vh-vectors.json'
 

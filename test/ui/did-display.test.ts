@@ -14,7 +14,7 @@ test('a did:webvh of this system is its address, anything else stays as it is', 
 // What a screen shows for an identity key (`did:webvh:<SCID>`, no host): the name, else the address, never the key.
 import { setContactDids, setContactNames, displayName, avatarOf, setContactAvatars } from '../../src/client/app/ui/did-display.ts'
 import { setOwnDid } from '../../src/client/app/ui/did-display.ts'
-import { identityKey } from '../../src/protocol/webvh/identifier.ts'
+import { identityKey } from '../../src/protocol/vh/identifier.ts'
 
 const SCID = 'QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi'
 const ALICE = `did:webvh:${SCID}:alice.did.md`

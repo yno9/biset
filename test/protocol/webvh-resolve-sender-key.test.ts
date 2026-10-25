@@ -11,7 +11,7 @@
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
-import { didToHttpsUrl } from '../../src/protocol/webvh/identifier.ts'
+import { didToHttpsUrl } from '../../src/protocol/vh/identifier.ts'
 import { serializeLog } from '../../src/protocol/vh/log.ts'
 import { encodeMultikey } from '../../src/protocol/vh/multikey.ts'
 import { multikeyHashBase58 } from '../../src/protocol/vh/hash.ts'
