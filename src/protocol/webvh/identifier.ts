@@ -87,16 +87,26 @@ export function scidOf(did: string): string | undefined {
   return scid && SCID_RE.test(scid) ? scid : undefined
 }
 
-/** True when both are the same did:webvh identity (same SCID), whatever host each names. */
+/** The SCID of a did:vh (a DID, or a DID URL: the part before `#`, `?` or `/`); `undefined` for any other DID. A did:vh names no
+ * host, so unlike a did:webvh its whole string is already the identity. */
+export function vhScidOf(did: string): string | undefined {
+  if (!did.startsWith('did:vh:')) return undefined
+  const scid = did.slice('did:vh:'.length).split(/[#?/]/)[0]
+  return scid && SCID_RE.test(scid) ? scid : undefined
+}
+
+/** True when both are the same identity: the same method and SCID, whatever host each names (a did:webvh) or whatever
+ * fragment each carries (a did:vh). A did:vh and a did:webvh never share a SCID, so they are never the same identity here;
+ * they are linked by alsoKnownAs in both directions, which a contact records, not this function. */
 export function sameIdentity(a: string, b: string): boolean {
-  if (a === b) return true
-  const scid = scidOf(a)
-  return scid !== undefined && scid === scidOf(b)
+  return a === b || identityKey(a) === identityKey(b)
 }
 
 /** What every local store is keyed by for `did`: the SCID form `did:webvh:<SCID>` of a did:webvh
- * (stable across an alias change), any other DID as it is. */
+ * (stable across an alias change), `did:vh:<SCID>` of a did:vh, any other DID as it is. */
 export function identityKey(did: string): string {
   const scid = scidOf(did)
-  return scid ? `did:webvh:${scid}` : did
+  if (scid) return `did:webvh:${scid}`
+  const vh = vhScidOf(did)
+  return vh ? `did:vh:${vh}` : did
 }

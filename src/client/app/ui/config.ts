@@ -18,6 +18,8 @@ declare const __BISET_CONFIG__: {
    * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
    * has no DID for it. */
   mailGateways?: string[]
+  /** Watcher base URLs asked for the log of a did:vh by SCID (`GET /log?scid=`), after the hosts a contact is known by. */
+  vhWatchers?: string[]
   /** This deployment's relying-party DID, the client_id of its requests to the Wallet; its document
    * must list the redirect URI. Required over https (a file:// build registers instead). */
   rpDid?: string
@@ -60,6 +62,7 @@ export interface BisetConfig {
   /** Mail gateways (WebFinger hosts), in the order they are asked. Empty: a
    * mail address reaches only a domain that publishes its own DIDs. */
   mailGateways: string[]
+  vhWatchers: string[]
   walletDeviceName: string
   didDocumentServices: DidDocumentServiceTemplate[]
 }
@@ -78,6 +81,7 @@ export function readBisetConfig(): BisetConfig {
     appOnionUrl: cfg.appOnionUrl ?? '',
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
     mailGateways: cfg.mailGateways ?? [],
+    vhWatchers: cfg.vhWatchers ?? [],
     walletDeviceName: cfg.walletDeviceName ?? 'Biset',
     didDocumentServices: cfg.didDocumentServices ?? defaultDidDocumentServices,
   }

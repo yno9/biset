@@ -12,6 +12,7 @@
 // place that data lives, published by did.md Wallet's
 // `urn:did-core:document-edit:v1`. A DIDComm caller therefore needs nothing
 // beyond this resolver plus didcomm/webvh-route.ts's route selection.
+import { checkAndRemember, type VersionMemory } from '../freshness.ts'
 import { didToHttpsUrl, domainDidJsonlUrl, parseWebvhDid } from './identifier.ts'
 import {
   parseLog, verifyEntryHash, entryVersionNumber, resolveParameters,
@@ -44,12 +45,17 @@ function findSigningKey(proof: LogEntry['proof'][number], candidateKeys: string[
  * and a Data Integrity proof valid against the updateKeys the PRIOR entry
  * authorized (the genesis entry authorizes itself). Returns the latest
  * non-deactivated state, or null if the DID has no log / is deactivated. */
-export async function resolve(did: string, init?: RequestInit, fetchImpl: typeof fetch = fetch): Promise<WebvhDidDocument | null> {
+export async function resolve(did: string, init?: RequestInit, fetchImpl: typeof fetch = fetch, memory?: VersionMemory): Promise<WebvhDidDocument | null> {
   const url = didToHttpsUrl(did)
   const resp = await fetchImpl(url, init)
   if (resp.status === 404) return null
   if (!resp.ok) throw new WebvhResolutionError(`resolve: HTTP ${resp.status} fetching ${url}`)
-  return resolveEntries(did, parseLog(await resp.text()))
+  const entries = parseLog(await resp.text())
+  const doc = resolveEntries(did, entries)
+  // Verified, so now compared with the newest log accepted before for this identity (freshness.ts): an old copy or another
+  // continuation of it is refused, and the newest version is remembered.
+  if (memory) await checkAndRemember(memory, `did:webvh:${parseWebvhDid(did).scid}`, entries)
+  return doc
 }
 
 /** Resolves a subdomain-per-identity did:webvh (no `pathSegments`) from its

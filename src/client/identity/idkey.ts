@@ -20,7 +20,7 @@
 // why the reverse direction matters: a stable key alone cannot address
 // anything, so whatever holds one must also keep the current DID string
 // alongside it (identity/record-store.ts's IdentityRecord.did).
-import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
+import { parseWebvhDid, vhScidOf } from '../../protocol/webvh/identifier.ts'
 
 /** Normalizes an identity string (a DID, or a plain email for a DID-less
  * relay) to the key biset indexes it under internally. Total and lossless for
@@ -28,6 +28,8 @@ import { parseWebvhDid } from '../../protocol/webvh/identifier.ts'
  * back unchanged, so callers can pass whatever identifier they hold without
  * pre-checking what it is. */
 function stableIdKey(id: string): string {
+  const vh = vhScidOf(id)
+  if (vh) return `vh:${vh}`
   if (!id.startsWith('did:webvh:')) return id
   try {
     return `webvh:${parseWebvhDid(id).scid}`
@@ -45,7 +47,7 @@ function stableIdKey(id: string): string {
  * became wrong once webvh identities normalize to a `webvh:` key — this is
  * the one place that knows every shape stableIdKey can produce. */
 function isDidIdentityKey(key: string): boolean {
-  return key.startsWith('did:') || key.startsWith('webvh:')
+  return key.startsWith('did:') || key.startsWith('webvh:') || key.startsWith('vh:')
 }
 
 /** True when the two identifiers name the same identity, tolerating a

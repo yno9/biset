@@ -463,9 +463,9 @@ const state = (path: string) => `${pointerToken(DIDCOMM_CONTACT_PROPERTY)}/${pat
 
 /** The patch making sure `did` has a card: written leaf by leaf, so writing
  * it again (another device, a later message) never undoes anything. */
-export function didContactPatch(did: string): ContactSetPayload {
+export function didContactPatch(did: string, verifiedAddress?: string): ContactSetPayload {
   const uid = didContactUid(did)
-  const identity = webvhIdentityPatch(did)
+  const identity = verifiedAddress ? vhIdentityPatch(verifiedAddress) : webvhIdentityPatch(did)
   return { cardId: contactCardId(uid), patch: { '@type': 'Card', version: '1.0', uid, [`addressBookIds/${DEFAULT_ADDRESS_BOOK_ID}`]: true, 'onlineServices/didcomm': { service: 'DIDComm', uri: did }, ...identity } }
 }
 
@@ -487,6 +487,12 @@ function aliasKey(address: string): string {
   return 'e' + bytesToBase64url(sha256(new TextEncoder().encode(`biset/contact-alias/v1\n${address}`))).slice(0, 22)
 }
 
+/** A did:vh has no host to read an address from: the one it goes by is known only once its did:web shadow was verified in both
+ * directions (did-resolve.ts verifiedVhAddress), and is written as an alias. The SCID needs no property: the DID is the key. */
+function vhIdentityPatch(address: string): Record<string, CanonicalValue> {
+  return { [`emails/${aliasKey(address)}`]: { address } }
+}
+
 function webvhIdentityPatch(did: string): Record<string, CanonicalValue> {
   const scid = scidOf(did)
   if (scid === undefined) return {}
@@ -496,13 +502,13 @@ function webvhIdentityPatch(did: string): Record<string, CanonicalValue> {
 
 /** The patch adding the address `did` stands for to `card`'s aliases (`emails`), when it is not there yet
  * (the contact changed its alias, or writes from a second one). */
-export function aliasPatch(card: LocalJmapContactCard, did: string): ContactSetPayload | undefined {
-  const address = mailAddressOfWebvhDid(did)
+export function aliasPatch(card: LocalJmapContactCard, did: string, verifiedAddress?: string): ContactSetPayload | undefined {
+  const address = verifiedAddress ?? mailAddressOfWebvhDid(did)
   if (!address) return undefined
   const emails = card.emails
   const known = isObject(emails) && Object.values(emails).some(email => isObject(email) && email.address === address)
   if (known) return undefined
-  return { cardId: card.id, patch: { [SCID_CONTACT_PROPERTY]: scidOf(did)!, [`emails/${aliasKey(address)}`]: { address } } }
+  return { cardId: card.id, patch: { ...(verifiedAddress ? {} : { [SCID_CONTACT_PROPERTY]: scidOf(did)! }), [`emails/${aliasKey(address)}`]: { address } } }
 }
 
 /** Records that the counterparty of `cardId` rotated to `did`. */

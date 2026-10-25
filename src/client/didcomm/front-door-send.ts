@@ -6,7 +6,7 @@
 // UI code (tsconfig.mediator.json's own header explains why: proving a
 // deploy unit stays free of Vault/UI coupling is the whole point of the
 // DOM-less check). send-message.ts builds chat messages on it.
-import { resolve } from '../../protocol/webvh/resolver.ts'
+import { resolveDidDocument } from '../../protocol/did-resolve.ts'
 import { didCommAccepted, didCommPost, packAuthcrypt, recipientsForSender, type DidCommJWE, type X25519Recipient } from '../../protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../../protocol/didcomm/message.ts'
 import { wrapForwardHops, type ForwardHop } from '../../protocol/didcomm/forward-wrap.ts'
@@ -66,7 +66,7 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
     recipients = route.recipients
     endpoint = { uri: route.uri, routingKeys: route.routingKeys }
   } else {
-    const doc = await resolve(toDid, undefined, fetchImpl)
+    const doc = await resolveDidDocument(toDid, { fetch: fetchImpl })
     if (!doc) throw new Error(`${toDid} does not resolve to a published identity`)
     // PLAN-tor.md D-5/D-6: dial the recipient's onion entrance only when this page is itself served over Tor.
     const route = didCommRouteFromDocument(doc, { preferOnion })

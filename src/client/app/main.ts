@@ -87,9 +87,14 @@ import type { ProfileConfig } from './ui/account/profile.ts'
 import { autocryptKeydata } from '../pgp/keyring.ts'
 import { openStoredMail } from '../pgp/open.ts'
 import { PGP_KEY_CHANGED, type PgpCardConfig } from './ui/account/pgp-card.tsx'
+import { configureDidResolution, verifiedVhAddress } from '../../protocol/did-resolve.ts'
+import { StoredVersionMemory } from '../identity/version-memory.ts'
 import { identityKey, parseWebvhDid, sameIdentity } from '../../protocol/webvh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
+
+// Where a did:vh's log is looked for, and the memory that refuses an older or forked copy of any log (did:webvh and did:vh).
+configureDidResolution({ watchers: readBisetConfig().vhWatchers, memory: new StoredVersionMemory() })
 
 function downloadFile(bytes: Uint8Array, filename: string): void { const url = URL.createObjectURL(new Blob([bytes.slice()])); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }
 function chooseFile(): Promise<Uint8Array> { return new Promise((resolve, reject) => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.json,.biset,application/json'; input.onchange = () => { const file = input.files?.[0]; if (!file) { reject(new Error('No import file selected')); return } void file.arrayBuffer().then(value => resolve(new Uint8Array(value)), reject) }; input.click() }) }
@@ -756,6 +761,7 @@ async function configureWalletAccountIfPresent(
           // Past the host's CDN: a stale document would accept a replaced key.
           verifyFromPrior: (jwt, from) => verifyFromPrior(jwt, from, fromPriorKeyResolver(freshFetch())),
           resolveSigningKey: kid => signingKeyResolver(freshFetch())(kid),
+          resolveAddress: did => verifiedVhAddress(did, { fetch: freshFetch() }),
           async alreadyProcessed() { return false },
           nextActorSeq: () => sequencer.nextActorSeq(),
           initialParents: () => sequencer.initialParents(),

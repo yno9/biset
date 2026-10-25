@@ -61,6 +61,8 @@ export interface DidCommIngressProjectorOptions {
   /** Resolves a signer's key (a signed message, jws.ts). Defaults to a live
    * resolution; the caller should bypass a host's CDN. */
   resolveSigningKey?: SigningKeyResolver
+  /** The address a did:vh sender goes by, once verified (did-resolve.ts verifiedVhAddress); kept on its contact card as an alias. */
+  resolveAddress?: (did: string) => Promise<string | undefined>
   now?: () => Date
 }
 
@@ -132,7 +134,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
   }
 
   private counterpartyOf(msg: DidCommPlaintext, senderKid: string, recipientKid: string, cards: readonly LocalJmapContactCard[], at: string) {
-    return resolveCounterparty(msg, senderKid, recipientKid, cards, at, this.verify)
+    return resolveCounterparty(msg, senderKid, recipientKid, cards, at, this.verify, this.options.resolveAddress)
   }
 
   async verifyAndProject(envelope: IngressEnvelopeV1): Promise<{
@@ -430,6 +432,7 @@ function problemOf(msg: DidCommPlaintext): { problemCode?: string; problemText?:
 async function resolveCounterparty(
   msg: DidCommPlaintext, senderKid: string, recipientKid: string, cards: readonly LocalJmapContactCard[], at: string,
   verify: (jwt: string, from: string) => Promise<DidRotation>,
+  addressOf?: (did: string) => Promise<string | undefined>,
 ): Promise<{ publicDid: string; writes: ContactSetPayload[] }> {
   const senderDid = didOfKid(senderKid)
   const writes: ContactSetPayload[] = []
@@ -462,10 +465,12 @@ async function resolveCounterparty(
   } else {
     publicDid = senderDid
     const known = contactCardForDid(cards, publicDid)
-    if (!known) writes.push(didContactPatch(publicDid))
+    // A did:vh names no host: the address it goes by is learned from its verified did:web shadow, when it has one.
+    const address = publicDid.startsWith('did:vh:') && addressOf ? await addressOf(publicDid) : undefined
+    if (!known) writes.push(didContactPatch(publicDid, address))
     else {
       // The same contact under another address: kept among its aliases.
-      const alias = aliasPatch(known, publicDid)
+      const alias = aliasPatch(known, publicDid, address)
       if (alias) writes.push(alias)
     }
   }

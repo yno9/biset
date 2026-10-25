@@ -13,7 +13,7 @@ import { base58 } from '@scure/base'
 import { base64urlToBytes, bytesToBase64url } from '../canonical.ts'
 import { decodePeerDid2 } from './peer.ts'
 import { resolveDidWeb } from './did-web.ts'
-import { resolve as resolveWebvh } from '../webvh/resolver.ts'
+import { resolveDidDocument } from '../did-resolve.ts'
 
 export const DIDCOMM_SIGNED_MEDIA_TYPE = 'application/didcomm-signed+json'
 
@@ -102,7 +102,7 @@ export function authenticationSigningKey(document: DocumentMethods, kid: string)
  * (SignatureError when the document answers no). */
 export type SigningKeyResolver = (kid: string) => Promise<SigningKey>
 
-/** did:peer:2 from the DID itself, did:web and did:webvh by resolution.
+/** did:peer:2 from the DID itself, did:web, did:webvh and did:vh by resolution.
  * `fetchImpl` should bypass a host's CDN. */
 export function signingKeyResolver(fetchImpl: typeof fetch = fetch): SigningKeyResolver {
   return async kid => {
@@ -114,8 +114,8 @@ export function signingKeyResolver(fetchImpl: typeof fetch = fetch): SigningKeyR
       if (!document) throw new SignatureError(`${did} does not resolve`)
       return authenticationSigningKey(document as DocumentMethods, kid)
     }
-    if (did.startsWith('did:webvh:')) {
-      const document = await resolveWebvh(did, undefined, fetchImpl)
+    if (did.startsWith('did:webvh:') || did.startsWith('did:vh:')) {
+      const document = await resolveDidDocument(did, { fetch: fetchImpl })
       if (!document) throw new SignatureError(`${did} does not resolve`)
       return authenticationSigningKey(document as unknown as DocumentMethods, kid)
     }

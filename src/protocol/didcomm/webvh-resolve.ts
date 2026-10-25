@@ -8,11 +8,10 @@
 // already returns everything a DIDComm sender needs. Callers that wanted a
 // route now call webvh-route.ts's `didCommRouteFromDocument` on that
 // document.
-import { resolve } from '../webvh/resolver.ts'
+import { resolveDidDocument } from '../did-resolve.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { keyAgreementRecipients } from './webvh-route.ts'
 import { didOfKid } from '../ids.ts'
-import { resolveDidWeb } from './did-web.ts'
 
 /** Resolves a DIDComm sender's kid (a full DID URL, `did:webvh:...#k_<hash>`)
  * to its published X25519 keyAgreement public key -- crypto.ts's
@@ -44,7 +43,7 @@ export async function resolveDidCommSenderKey(senderKid: string, fetchImpl: type
   if (hash < 0) throw new Error(`resolveDidCommSenderKey: not a DID URL: ${senderKid}`)
   const did = didOfKid(senderKid)
   const fragment = senderKid.slice(hash)
-  const doc = did.startsWith('did:web:') ? await resolveDidWeb(did, fetchImpl) : await resolve(did, undefined, fetchImpl)
+  const doc = await resolveDidDocument(did, { fetch: fetchImpl })
   if (!doc) throw new Error(`resolveDidCommSenderKey: sender identity ${did} does not resolve`)
   // The device list is `keyAgreement`; a verification method it does not
   // reference (a removed device's, left behind) authenticates nothing.

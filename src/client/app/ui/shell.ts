@@ -1,8 +1,10 @@
 // What the rest of the app calls to drive the mail UI: show it, and refresh what it lists.
 import type { LocalJmapEmail, LocalJmapReadModel, LocalJmapSnapshot } from '../../store/projection/gateway.ts'
 import { contactAvatar, contactDisplayName, publicDidOf } from '../../store/projection/contacts.ts'
-import { setContactAvatars, setContactDids, setContactNames } from './did-display.ts'
-import { identityKey } from '../../../protocol/webvh/identifier.ts'
+import { setContactAvatars, setContactDids, setContactNames, setVerifiedAddresses } from './did-display.ts'
+import { rememberVhLocation } from '../../../protocol/did-resolve.ts'
+import { hostOfAddress } from '../../didcomm/address-resolver.ts'
+import { identityKey, vhScidOf } from '../../../protocol/webvh/identifier.ts'
 import type { OpenedMail } from '../../pgp/open.ts'
 import { armorOfStoredBody } from '../../pgp/stored.ts'
 import { emailToMessageView } from './message/message-view.ts'
@@ -54,6 +56,15 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       if (did) dids.set(identityKey(did), did)
       if (did && name) { names.set(did, name); names.set(identityKey(did), name) }
     }
+    // A did:vh has no host in it: the address on its card (written only once verified, ingress-projector) is what it goes by.
+    const addresses = new Map<string, string>()
+    for (const card of snapshot.contactCards) {
+      const did = publicDidOf(card)
+      if (!did || !vhScidOf(did) || typeof card.emails !== 'object' || card.emails === null) continue
+      const address = Object.values(card.emails as Record<string, unknown>).map(email => (email as { address?: unknown } | null)?.address).find((value): value is string => typeof value === 'string')
+      if (address) { addresses.set(identityKey(did), address); rememberVhLocation(did, hostOfAddress(address)) }
+    }
+    setVerifiedAddresses(addresses)
     setContactNames(names)
     setContactDids(dids)
     const avatars = new Map<string, string>()

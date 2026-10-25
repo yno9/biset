@@ -9,7 +9,7 @@
 // the 46-char SCID and keeping `did:webvh:{domain}` is the whole rule, not
 // src.bak's more general prefix/hidden/suffix split (which existed to also
 // handle a foreign did:webvh's own path convention).
-import { identityKey, parseWebvhDid, sameIdentity, scidOf } from '../../../protocol/webvh/identifier.ts'
+import { identityKey, parseWebvhDid, sameIdentity, scidOf, vhScidOf } from '../../../protocol/webvh/identifier.ts'
 import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
 
 /** Elided display form -- `did:webvh:t.biset.md` for a did:webvh, the raw
@@ -37,6 +37,9 @@ export function shortWebvhDid(did: string): string {
 export function labelForDid(did: string): string {
   const bridged = mailAddressOfBridgeDid(did)
   if (bridged) return bridged
+  // A did:vh names no host, so its address is not in the string: it is the did:web DID its document names, once that DID's
+  // shadow was checked in both directions (protocol/vh/didweb.ts verifiedAddress). Without one the DID is shown as it is.
+  if (vhScidOf(did)) return verifiedAddresses.get(identityKey(did)) ?? did
   if (!did.startsWith('did:webvh:')) return did
   try {
     const domain = parseWebvhDid(did).domain
@@ -46,6 +49,10 @@ export function labelForDid(did: string): string {
     return did
   }
 }
+
+// The address a did:vh stands for, by identity key, where its did:web shadow was verified (set by whoever verified it).
+let verifiedAddresses: ReadonlyMap<string, string> = new Map()
+export function setVerifiedAddresses(addresses: ReadonlyMap<string, string>): void { verifiedAddresses = addresses }
 
 // ── Names ─────────────────────────────────────────────────────────────────────
 // Who someone is called, where there is a name: the contact list's (contacts.ts: a name written by hand, the one an invite gave,
@@ -67,8 +74,8 @@ export function setContactDids(dids: ReadonlyMap<string, string>): void {
   contactDids = new Map([...dids].filter(([, did]) => !isIdentityKey(did)))
 }
 
-/** A did:webvh with no host, the form identityKey makes: it names an identity, not a place. */
-const isIdentityKey = (did: string): boolean => scidOf(did) !== undefined && did.split(':').length === 3
+/** A DID with no host, the form identityKey makes (and every bare did:vh): it names an identity, not a place. */
+const isIdentityKey = (did: string): boolean => (scidOf(did) !== undefined && did.split(':').length === 3) || (vhScidOf(did) === did.slice('did:vh:'.length) && vhScidOf(did) !== undefined)
 
 // This identity's own DID, set when the app starts (before any message is drawn: a screen that read it from the account page's
 // state would draw the first messages before that state exists, and not draw them again).
