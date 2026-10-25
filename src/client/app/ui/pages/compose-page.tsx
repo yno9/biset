@@ -8,6 +8,9 @@ import type { ReplySendInput } from '../reply-box.tsx'
 import type { Proto } from '../did-display.ts'
 import { setPage } from '../state.ts'
 
+/** The From row. Hidden while a message can only be sent from the one identity there is; it comes back when there are several to choose from. */
+const SHOW_FROM = false
+
 export interface ComposePageConfig {
   selfAddress: string
   /** This identity's own DID -- undefined until enableDidComm has run (main.ts's boot). Needed so
@@ -104,13 +107,13 @@ export function ComposePage() {
                 })}
               </div>
             </div>
-            <div id="new-from-field" className="new-compose-field" style={{ alignItems: 'center' }}>
+            {SHOW_FROM ? <div id="new-from-field" className="new-compose-field" style={{ alignItems: 'center' }}>
               <span className="new-field-label">From</span>
               <button type="button" id="new-from" className="new-field-input new-from-btn">
                 {badge('did')}
                 <span style={{ whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={fromAddress}>{labelForDid(fromAddress)}</span>
               </button>
-            </div>
+            </div> : null}
             <div id="new-title-field" className="new-compose-field">
               <span id="new-title-label" className="new-field-label">Subject</span>
               <input id="new-title" className="new-field-input" placeholder="(no subject)" autoComplete="off" value={subject} onChange={event => setSubject(event.target.value)} />

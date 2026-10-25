@@ -43,7 +43,7 @@ const composeConfig = (over = {}) => ({ selfAddress: 'me@did.md', selfDid: ME, s
 test('compose: From is this identity\'s DID, the To row shows the transport its address uses', () => {
   configureComposePage(composeConfig())
   const { container } = render(<ComposePage />)
-  expect(container.querySelector('#new-from')!.textContent).toContain('me@did.md')
+  expect(container.querySelector('#new-from-field')).toBeNull() // one identity to send from: no From row
   const input = container.querySelector<HTMLInputElement>('#new-recipients .new-field-input')!
   expect(container.querySelector('.new-recip-protos')!.textContent).toBe('')
   fireEvent.change(input, { target: { value: 'bob@did.md' } })
