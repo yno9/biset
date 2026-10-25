@@ -847,7 +847,7 @@ async function configureWalletAccountIfPresent(
           const key = await pgp?.current()
           if (!key || !ownMailAddress) throw new Error('The key is not ready yet')
           const invite = parseInvite(text)
-          const did = await resolveMailAddressDid(invite.address, readBisetConfig().mailGateways)
+          const did = await resolveMailAddressDid(invite.address, readBisetConfig().mailGateways, fetch, readBisetConfig().identityDomains)
           await beginJoin(invite, { did, address: invite.address }, joinContext(key, await ownProfile()))
           return { name: invite.name, address: invite.address }
         }
@@ -1057,7 +1057,7 @@ async function configureWalletAccountIfPresent(
         return
       }
       // A mail address is another name for a DID (address-resolver.ts).
-      const toDids = await Promise.all(input.toAddrs.map(address => isMailAddress(address) ? resolveMailAddressDid(address, readBisetConfig().mailGateways) : address))
+      const toDids = await Promise.all(input.toAddrs.map(address => isMailAddress(address) ? resolveMailAddressDid(address, readBisetConfig().mailGateways, fetch, readBisetConfig().identityDomains) : address))
       if (toDids.length === 0 || !toDids.every(address => address.startsWith('did:'))) throw new Error('A did.md Wallet session composes to DID recipients or mail addresses only')
       const recipients = [...new Set(toDids)].filter(address => !sameIdentity(address, device.did))
       // Several recipients start a group conversation of its own.

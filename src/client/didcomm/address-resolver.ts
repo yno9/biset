@@ -12,7 +12,7 @@
 // to.
 
 import { rememberVhLocation } from '../../protocol/did-resolve.ts'
-import { fetchVhResolution } from '../../protocol/vh/fetch.ts'
+import { fetchVhResolution, resolveVhByHost } from '../../protocol/vh/fetch.ts'
 import { didWebDocumentUrl, verifiedAddress } from '../../protocol/vh/didweb.ts'
 
 // A circuit through Tor takes seconds longer than a direct connection: a page served at an onion address waits for it.
@@ -74,11 +74,31 @@ async function shadowOf(host: string, fetchImpl: typeof fetch): Promise<unknown>
   }
 }
 
-/** The DID `address` is reached at: its own domain's answer, else the first
- * gateway's. Throws when nobody answers. */
-export async function resolveMailAddressDid(address: string, gateways: readonly string[], fetchImpl: typeof fetch = fetch): Promise<string> {
+/** The identity published at the host of an address under a domain that gives each user a host of their own (`alice@did.md` at
+ * `alice.did.md`): its log is the host's `/.well-known/did.jsonl`, it must name `did:web:<host>`, and the did:web document served
+ * there must be the shadow the log derives. Nobody else is asked, so this works with every bridge down. undefined: no such identity
+ * (or the host could not be reached: the caller then asks the usual way). */
+async function identityAtHost(address: string, fetchImpl: typeof fetch): Promise<string | undefined> {
+  const host = hostOfAddress(address)
+  let found: Awaited<ReturnType<typeof resolveVhByHost>>
+  try { found = await resolveVhByHost(host, { fetch: fetchImpl }) } catch { return undefined }
+  if (!found) return undefined
+  if (verifiedAddress(found.document as unknown as Record<string, unknown>, `did:web:${host}`, await shadowOf(host, fetchImpl)) !== address.toLowerCase()) {
+    throw new Error(`${host} publishes ${found.did}, but that DID does not name ${address} (alsoKnownAs and its did:web document must agree)`)
+  }
+  rememberVhLocation(found.did, host)
+  return found.did
+}
+
+/** The DID `address` is reached at: a domain that gives each user a host of their own is read directly (`identityDomains`), else
+ * the address's own domain answers, else the first gateway. Throws when nobody answers. */
+export async function resolveMailAddressDid(address: string, gateways: readonly string[], fetchImpl: typeof fetch = fetch, identityDomains: readonly string[] = []): Promise<string> {
   if (!isMailAddress(address)) throw new TypeError(`${address} is not a mail address`)
   const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase()
+  if (identityDomains.includes(domain)) {
+    const direct = await identityAtHost(address, fetchImpl)
+    if (direct) return direct
+  }
   for (const host of [domain, ...gateways.filter(gateway => gateway.toLowerCase() !== domain)]) {
     const did = await webFinger(host, address, fetchImpl)
     if (did?.startsWith('did:vh:')) await confirmVhAnswer(address, did, fetchImpl)

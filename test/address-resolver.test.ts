@@ -84,3 +84,39 @@ describe('a did:vh answer is confirmed by its own log', () => {
     }))).rejects.toThrow('does not name alice@did.md')
   })
 })
+
+describe('a domain that gives each user a host of their own is read directly (identityDomains)', () => {
+  const alice = (() => { const priv = new Uint8Array(32).fill(8); return { priv, pub: ed25519.getPublicKey(priv) } })()
+  const { did, log } = buildVhDidCommLog({ rootPrivateKey: alice.priv, rootPublicKey: alice.pub, alsoKnownAs: ['did:web:alice.did.md', 'x'] })
+  const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [`${did}?src=https://alice.did.md`] }
+
+  const world = (asked: string[], overrides: Record<string, () => Response> = {}): typeof fetch => (async (input: string | URL | Request) => {
+    const url = String(input)
+    asked.push(url)
+    const make = overrides[url] ?? ({
+      'https://alice.did.md/.well-known/did.jsonl': () => new Response(serializeLog(log)),
+      'https://alice.did.md/.well-known/did.json': () => Response.json(shadow),
+    } as Record<string, () => Response>)[url]
+    return make ? make() : new Response('', { status: 404 })
+  }) as typeof fetch
+
+  test('alice@did.md is found at alice.did.md and nothing else is asked: no WebFinger, no gateway', async () => {
+    const asked: string[] = []
+    expect(await resolveMailAddressDid('alice@did.md', ['did.md'], world(asked), ['did.md'])).toBe(did)
+    expect(asked.some(url => url.includes('webfinger'))).toBe(false)
+    expect(asked).toEqual(['https://alice.did.md/.well-known/did.jsonl', 'https://alice.did.md/.well-known/did.json'])
+  })
+
+  test('a log whose did:web document is not what it derives is refused, not trusted', async () => {
+    await expect(resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json({ ...shadow, service: [], extra: true }) }), ['did.md'])).rejects.toThrow('does not name alice@did.md')
+  })
+
+  test('no identity at the host (or the host is down): the usual way is asked, and a domain not listed is not read this way', async () => {
+    const asked: string[] = []
+    await expect(resolveMailAddressDid('nobody@did.md', [], world(asked), ['did.md'])).rejects.toThrow('No DID answers')
+    expect(asked.some(url => url.includes('webfinger'))).toBe(true)
+    const other: string[] = []
+    await expect(resolveMailAddressDid('alice@did.md', [], world(other), [])).rejects.toThrow()
+    expect(other.some(url => url.includes('alice.did.md/.well-known/did.jsonl'))).toBe(false)
+  })
+})
