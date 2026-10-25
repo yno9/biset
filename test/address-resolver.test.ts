@@ -20,7 +20,7 @@ describe('mail address -> DID (WebFinger)', () => {
     const asked: string[] = []
     const did = await resolveMailAddressDid('bob@biset.md', ['did.md'], fetchFrom({ 'biset.md': { subject: 'acct:bob@biset.md', aliases: ['https://biset.md/@bob', 'did:web:bob.biset.md'] } }, asked))
     expect(did).toBe('did:web:bob.biset.md')
-    expect(asked).toEqual(['biset.md acct:bob@biset.md'])
+    expect(asked[0]).toBe('biset.md acct:bob@biset.md') // then the did:web document it names is followed (a plain did:web here: it is not found)
   })
 
   test('a domain without a DID for it (no answer, no CORS, no DID alias) falls back to the gateway', async () => {
@@ -47,84 +47,52 @@ describe('mail address -> DID (WebFinger)', () => {
   })
 })
 
-describe('a did:vh answer is confirmed by its own log', () => {
+describe('the domain answers with the identity\'s did:web, and the ladder leads on to the did:vh', () => {
   const alice = (() => { const priv = new Uint8Array(32).fill(7); return { priv, pub: ed25519.getPublicKey(priv) } })()
   const { did, log } = buildVhDidCommLog({ rootPrivateKey: alice.priv, rootPublicKey: alice.pub, alsoKnownAs: ['did:web:alice.did.md'] })
   const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [`${did}?src=https://alice.did.md`] }
 
-  const world = (overrides: Record<string, () => Response> = {}): typeof fetch => (async (input: string | URL | Request) => {
-    const url = String(input)
-    const make = overrides[url] ?? ({
-      'https://did.md/.well-known/webfinger?resource=acct%3Aalice%40did.md': () => Response.json({ aliases: [did] }),
-      'https://alice.did.md/.well-known/did.jsonl': () => new Response(serializeLog(log)),
-      'https://alice.did.md/.well-known/did.json': () => Response.json(shadow),
-    } as Record<string, () => Response>)[url]
-    return make ? make() : new Response('', { status: 404 })
-  }) as typeof fetch
-
-  test('alice@did.md is answered with a did:vh whose log names alice.did.md: accepted, and the log is found there afterwards', async () => {
-    const found = await resolveMailAddressDid('alice@did.md', [], world())
-    expect(found).toBe(did)
-    expect((await resolveDidDocument(did, { fetch: world() }))?.id).toBe(did)
-  })
-
-  test('refused when the did:web shadow is not what the log derives', async () => {
-    await expect(resolveMailAddressDid('alice@did.md', [], world({ 'https://alice.did.md/.well-known/did.json': () => Response.json({ ...shadow, service: [] , extra: true }) }))).rejects.toThrow('does not name alice@did.md')
-  })
-
-  test('refused when the log is not at the address\'s host', async () => {
-    await expect(resolveMailAddressDid('alice@did.md', [], world({ 'https://alice.did.md/.well-known/did.jsonl': () => new Response('', { status: 404 }) }))).rejects.toThrow('not found at alice.did.md')
-  })
-
-  test('refused when the log does not name the address (someone else\'s DID in the answer)', async () => {
-    const stranger = buildVhDidCommLog({ rootPrivateKey: alice.priv, rootPublicKey: alice.pub, alsoKnownAs: ['did:web:other.did.md'], versionTime: '2026-08-24T00:00:00Z' })
-    await expect(resolveMailAddressDid('alice@did.md', [], world({
-      'https://did.md/.well-known/webfinger?resource=acct%3Aalice%40did.md': () => Response.json({ aliases: [stranger.did] }),
-      'https://alice.did.md/.well-known/did.jsonl': () => new Response(serializeLog(stranger.log)),
-    }))).rejects.toThrow('does not name alice@did.md')
-  })
-})
-
-describe('a domain that gives each user a host of their own is read directly (identityDomains)', () => {
-  const alice = (() => { const priv = new Uint8Array(32).fill(8); return { priv, pub: ed25519.getPublicKey(priv) } })()
-  const { did, log } = buildVhDidCommLog({ rootPrivateKey: alice.priv, rootPublicKey: alice.pub, alsoKnownAs: ['did:web:alice.did.md', 'x'] })
-  const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [`${did}?src=https://alice.did.md`] }
-
   const world = (asked: string[], overrides: Record<string, () => Response> = {}): typeof fetch => (async (input: string | URL | Request) => {
     const url = String(input)
-    asked.push(url)
+    asked.push(url.replace(/\?_=.*/, ''))
     const make = overrides[url] ?? ({
-      'https://alice.did.md/.well-known/did.jsonl': () => new Response(serializeLog(log)),
+      'https://did.md/.well-known/webfinger?resource=acct%3Aalice%40did.md': () => Response.json({ subject: 'acct:alice@did.md', aliases: ['did:web:alice.did.md'] }),
       'https://alice.did.md/.well-known/did.json': () => Response.json(shadow),
+      'https://alice.did.md/.well-known/did.jsonl': () => new Response(serializeLog(log)),
     } as Record<string, () => Response>)[url]
     return make ? make() : new Response('', { status: 404 })
   }) as typeof fetch
 
-  test('alice@did.md is found at alice.did.md and nothing else is asked: no WebFinger, no gateway', async () => {
+  test('alice@did.md: WebFinger, then the did:web document, then the log it points to; no bridge, no guessing of a host', async () => {
     const asked: string[] = []
-    expect(await resolveMailAddressDid('alice@did.md', ['did.md'], world(asked), ['did.md'])).toBe(did)
-    expect(asked.some(url => url.includes('webfinger'))).toBe(false)
-    // the did:web document first (did:web), then the log it points to (did:vh: src); nothing else
-    expect(asked).toEqual(['https://alice.did.md/.well-known/did.json', 'https://alice.did.md/.well-known/did.jsonl'])
+    expect(await resolveMailAddressDid('alice@did.md', ['did.md'], world(asked))).toBe(did)
+    expect(asked).toEqual([
+      'https://did.md/.well-known/webfinger?resource=acct%3Aalice%40did.md',
+      'https://alice.did.md/.well-known/did.json',
+      'https://alice.did.md/.well-known/did.jsonl',
+    ])
   })
 
-  test('a log whose did:web document is not what it derives is refused, not trusted', async () => {
-    await expect(resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json({ ...shadow, service: [], extra: true }) }), ['did.md'])).rejects.toThrow('does not confirm it')
+  test('refused, not trusted as a did:web, when the did:web document is not what the log derives', async () => {
+    await expect(resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json({ ...shadow, service: [], extra: true }) }))).rejects.toThrow('does not confirm it')
   })
 
-  test('a did:web with no did:vh in alsoKnownAs is a plain did:web contact; a host that is down is asked the usual way', async () => {
-    const plain = { id: 'did:web:alice.did.md', service: [] }
-    expect(await resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json(plain) }), ['did.md'])).toBe('did:web:alice.did.md')
-    const down = (async () => { throw new TypeError('network') }) as typeof fetch
-    await expect(resolveMailAddressDid('alice@did.md', [], down, ['did.md'])).rejects.toThrow('No DID answers')
+  test('refused when the log it points to is nowhere', async () => {
+    await expect(resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.jsonl': () => new Response('', { status: 404 }) }))).rejects.toThrow('log was not found')
   })
 
-  test('no identity at the host (or the host is down): the usual way is asked, and a domain not listed is not read this way', async () => {
+  test('a did:web that points to no did:vh is a plain did:web contact; one that cannot be reached now is kept as it is', async () => {
+    expect(await resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => Response.json({ id: 'did:web:alice.did.md', service: [] }) }))).toBe('did:web:alice.did.md')
+    expect(await resolveMailAddressDid('alice@did.md', [], world([], { 'https://alice.did.md/.well-known/did.json': () => new Response('', { status: 503 }) }))).toBe('did:web:alice.did.md')
+  })
+
+  test('a domain that answers with a did:vh and the place of its log (?src=) is believed once the log is found and verifies', async () => {
+    const answer = (src: string) => ({ 'https://example.org/.well-known/webfinger?resource=acct%3Aalice%40example.org': () => Response.json({ aliases: [`${did}?src=${src}`] }), 'https://elsewhere.example/.well-known/did.jsonl': () => new Response(serializeLog(log)) })
+    expect(await resolveMailAddressDid('alice@example.org', [], world([], answer('https://elsewhere.example')))).toBe(did)
+    await expect(resolveMailAddressDid('alice@example.org', [], world([], { ...answer('https://nowhere.example'), 'https://elsewhere.example/.well-known/did.jsonl': () => new Response('', { status: 404 }) }))).rejects.toThrow('log was not found')
+    // a pointer to an address, or to a host that is not a domain name, is not followed
     const asked: string[] = []
-    await expect(resolveMailAddressDid('nobody@did.md', [], world(asked), ['did.md'])).rejects.toThrow('No DID answers')
-    expect(asked.some(url => url.includes('webfinger'))).toBe(true)
-    const other: string[] = []
-    await expect(resolveMailAddressDid('alice@did.md', [], world(other), [])).rejects.toThrow()
-    expect(other.some(url => url.includes('alice.did.md/.well-known/did.jsonl'))).toBe(false)
+    await expect(resolveMailAddressDid('alice@example.org', [], world(asked, answer('https://127.0.0.1')))).rejects.toThrow('log was not found')
+    expect(asked.some(url => url.includes('127.0.0.1'))).toBe(false)
   })
 })

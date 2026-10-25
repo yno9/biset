@@ -13,8 +13,7 @@
 
 import { DidRefused, rememberVhLocation, resolveTrustedDid } from '../../protocol/did-resolve.ts'
 import { fetchVhResolution } from '../../protocol/vh/fetch.ts'
-import { isDomainHost } from '../../protocol/vh/identifier.ts'
-import { didWebDocumentUrl, verifiedAddress } from '../../protocol/vh/didweb.ts'
+import { isDomainHost, isVhDid } from '../../protocol/vh/identifier.ts'
 
 // A circuit through Tor takes seconds longer than a direct connection: a page served at an onion address waits for it.
 const onionPage = (): boolean => typeof location !== 'undefined' && location.hostname.endsWith('.onion')
@@ -52,64 +51,44 @@ export function hostOfAddress(address: string): string {
   return `${address.slice(0, at)}.${address.slice(at + 1)}`.toLowerCase()
 }
 
-/** A did:vh names no host, so an answer naming one is only a claim until its own log agrees: the log (found at the host the
- * address is published at) must list `did:web:<host>` in `alsoKnownAs`, and the shadow there must be what the log derives. An
- * answer that fails is refused: whoever answered cannot make a DID speak for an address it does not name. */
-async function confirmVhAnswer(address: string, did: string, fetchImpl: typeof fetch): Promise<void> {
-  const host = hostOfAddress(address)
-  rememberVhLocation(did, host)
-  const found = await fetchVhResolution(did, { locations: [host], fetch: fetchImpl })
-  const doc = found?.resolution.doc
-  if (!doc) throw new Error(`${address} is answered with ${did}, but its log was not found at ${host}`)
-  if (verifiedAddress(doc as unknown as Record<string, unknown>, `did:web:${host}`, await shadowOf(host, fetchImpl)) !== address.toLowerCase()) {
-    throw new Error(`${address} is answered with ${did}, but that DID does not name ${address} (alsoKnownAs and its did:web document must agree)`)
+/** What the address's own domain answered. A domain is the authority over its own addresses (it is the one that says who `alice@did.md`
+ * is), but what it answers is only a pointer: the DID is read and confirmed before anything is sent to it.
+ *  - a did:web (what a domain that gives each user a host of their own answers): the first rung of the ladder, followed to the
+ *    did:vh its document points to and confirmed in both directions (`resolveTrustedDid`); one that points to no did:vh is a plain
+ *    did:web contact; one that points to a did:vh that does not confirm it is refused;
+ *  - a did:vh, with the place of its log as `?src=` when the domain knows it: the log must be found and verify. */
+async function settle(address: string, answer: string, fetchImpl: typeof fetch): Promise<string> {
+  const [did = '', query] = answer.split('?', 2) as [string, string | undefined]
+  if (did.startsWith('did:web:')) {
+    try {
+      const trusted = await resolveTrustedDid(did, { fetch: fetchImpl })
+      return trusted?.did ?? did
+    } catch (error) {
+      if (error instanceof DidRefused) throw new Error(`${address}: ${error.message}`)
+      return did // not reachable now: it is resolved again when the message is sent
+    }
   }
-}
-
-async function shadowOf(host: string, fetchImpl: typeof fetch): Promise<unknown> {
+  if (!isVhDid(did)) throw new Error(`${address} is answered with ${answer}, which is not a DID`)
+  let place: string | undefined
   try {
-    const response = await fetchImpl(didWebDocumentUrl(`did:web:${host}`))
-    return response.ok ? await response.json() : undefined
-  } catch {
-    return undefined
-  }
+    const src = query ? new URLSearchParams(query).get('src') : null
+    const url = src ? new URL(src) : undefined
+    if (url && url.protocol === 'https:' && isDomainHost(url.hostname)) place = url.hostname
+  } catch { /* an unreadable src names no place */ }
+  if (place) rememberVhLocation(did, place)
+  const found = await fetchVhResolution(did, { locations: place ? [place] : [], fetch: fetchImpl })
+  if (!found?.resolution.doc) throw new Error(`${address} is answered with ${did}, but its log was not found`)
+  return did
 }
 
-/** The identity of an address under a domain that gives each user a host of their own (`alice@did.md` at `alice.did.md`). Only the
- * naming is a convention (didmail's: `name@apex` is the did:web DID `did:web:name.apex`; neither did:web nor did:vh says anything
- * about mail addresses). From there every step is a specification's: the did:web document at `https://name.apex/.well-known/did.json`
- * (did:web), its `alsoKnownAs` pointing to the did:vh and where its log is (did:vh: Advertising DID Log Sources), the log read from
- * that location (did:vh: The src Option) and checked against the did:web document in both directions (`resolveTrustedDid`). Nobody
- * else is asked, so this works with every bridge down. A did:web that points to no did:vh is a plain did:web contact. undefined: no
- * such identity (or the host could not be reached: the caller then asks the usual way); a DID that does not confirm itself is refused. */
-async function identityAtHost(address: string, fetchImpl: typeof fetch): Promise<string | undefined> {
-  const host = hostOfAddress(address)
-  if (!isDomainHost(host)) return undefined // a name that is not a DNS label has no host of its own
-  let trusted: Awaited<ReturnType<typeof resolveTrustedDid>>
-  try {
-    trusted = await resolveTrustedDid(`did:web:${host}`, { fetch: fetchImpl })
-  } catch (error) {
-    if (error instanceof DidRefused) throw new Error(`${address}: ${error.message}`)
-    return undefined
-  }
-  if (!trusted) return undefined
-  if (trusted.linked) rememberVhLocation(trusted.did, host)
-  return trusted.did
-}
-
-/** The DID `address` is reached at: a domain that gives each user a host of their own is read directly (`identityDomains`), else
- * the address's own domain answers, else the first gateway. Throws when nobody answers. */
-export async function resolveMailAddressDid(address: string, gateways: readonly string[], fetchImpl: typeof fetch = fetch, identityDomains: readonly string[] = []): Promise<string> {
+/** The DID `address` is reached at: the address's own domain answers (WebFinger), else the first gateway (a mail bridge, which
+ * answers any address with its bridge DID). Throws when nobody answers. */
+export async function resolveMailAddressDid(address: string, gateways: readonly string[], fetchImpl: typeof fetch = fetch): Promise<string> {
   if (!isMailAddress(address)) throw new TypeError(`${address} is not a mail address`)
   const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase()
-  if (identityDomains.includes(domain)) {
-    const direct = await identityAtHost(address, fetchImpl)
-    if (direct) return direct
-  }
   for (const host of [domain, ...gateways.filter(gateway => gateway.toLowerCase() !== domain)]) {
-    const did = await webFinger(host, address, fetchImpl)
-    if (did?.startsWith('did:vh:')) await confirmVhAnswer(address, did, fetchImpl)
-    if (did) return did
+    const answer = await webFinger(host, address, fetchImpl)
+    if (answer) return host === domain ? await settle(address, answer, fetchImpl) : answer
   }
   throw new Error(gateways.length
     ? `No DID answers for ${address}: neither ${domain} nor the mail gateway knows it`

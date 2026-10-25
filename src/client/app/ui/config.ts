@@ -18,9 +18,6 @@ declare const __BISET_CONFIG__: {
    * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
    * has no DID for it. */
   mailGateways?: string[]
-  /** Domains that give each user a host of their own (`alice@did.md` is published at `alice.did.md`): an address under one is looked
-   * up there first, with no WebFinger and no gateway, so a message to such a user never depends on a bridge being up. */
-  identityDomains?: string[]
   /** Watcher base URLs asked for the log of a did:vh by SCID (`GET /log?scid=`), after the hosts a contact is known by. */
   vhWatchers?: string[]
   /** This deployment's relying-party DID, the client_id of its requests to the Wallet; its document
@@ -65,7 +62,6 @@ export interface BisetConfig {
   /** Mail gateways (WebFinger hosts), in the order they are asked. Empty: a
    * mail address reaches only a domain that publishes its own DIDs. */
   mailGateways: string[]
-  identityDomains: string[]
   vhWatchers: string[]
   walletDeviceName: string
   didDocumentServices: DidDocumentServiceTemplate[]
@@ -85,7 +81,6 @@ export function readBisetConfig(): BisetConfig {
     appOnionUrl: cfg.appOnionUrl ?? '',
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
     mailGateways: cfg.mailGateways ?? [],
-    identityDomains: (cfg.identityDomains ?? []).map(domain => domain.toLowerCase()),
     vhWatchers: cfg.vhWatchers ?? [],
     walletDeviceName: cfg.walletDeviceName ?? 'Biset',
     didDocumentServices: cfg.didDocumentServices ?? defaultDidDocumentServices,
