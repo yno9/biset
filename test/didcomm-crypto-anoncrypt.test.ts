@@ -14,8 +14,8 @@ import {
 
 const recipientPriv = x25519.utils.randomSecretKey()
 const recipientPub = x25519.getPublicKey(recipientPriv)
-const routingKid = 'did:webvh:mediator#routing-1'
-const plaintext = new TextEncoder().encode(JSON.stringify({ type: 'https://didcomm.org/routing/2.0/forward', body: { next: 'did:webvh:alice#k_devicehash' } }))
+const routingKid = 'did:vh:mediator#routing-1'
+const plaintext = new TextEncoder().encode(JSON.stringify({ type: 'https://didcomm.org/routing/2.0/forward', body: { next: 'did:vh:alice#k_devicehash' } }))
 
 describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
   test('round-trips plaintext with no sender to authenticate', async () => {

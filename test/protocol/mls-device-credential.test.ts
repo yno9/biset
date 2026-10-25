@@ -13,7 +13,7 @@ describe('Root-signed MLS device credential', () => {
     const root = ed25519.utils.randomSecretKey()
     const leaf = ed25519.utils.randomSecretKey()
     const leafPublic = ed25519.getPublicKey(leaf)
-    const did = 'did:webvh:QmRoot:alice.example'
+    const did = 'did:vh:QmRoot'
     const credential = createMlsDeviceCredential(did, '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafPublic, root, root)
     expect(credential.deviceKid).toBe(mlsDeviceKid(did, leafPublic))
     const decoded = decodeMlsDeviceCredential(encodeMlsDeviceCredential(credential))
@@ -23,7 +23,7 @@ describe('Root-signed MLS device credential', () => {
   test('rejects another leaf key, root, or non-canonical encoding', () => {
     const root = ed25519.utils.randomSecretKey()
     const leafPublic = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
-    const credential = createMlsDeviceCredential('did:webvh:QmRoot:alice.example', '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafPublic, root, root)
+    const credential = createMlsDeviceCredential('did:vh:QmRoot', '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafPublic, root, root)
     expect(verifyMlsDeviceCredential(credential, ed25519.getPublicKey(root), ed25519.getPublicKey(ed25519.utils.randomSecretKey()))).toBeFalse()
     expect(verifyMlsDeviceCredential(credential, ed25519.getPublicKey(ed25519.utils.randomSecretKey()))).toBeFalse()
     const parsed = JSON.parse(new TextDecoder().decode(encodeMlsDeviceCredential(credential)))

@@ -1,6 +1,6 @@
 // A mediator that serves did:vh recipients: the DID names no place, so their logs come from the operator's watchers
 // (GET /log?scid=), and everything else — registration, a key the DID lists, a key it no longer lists, a pushed log —
-// works as for a did:webvh. Logs are hand-built (support/vh-log-fixture.ts), not the resolver under test.
+// works the same whichever way the log arrived. Logs are hand-built (support/vh-log-fixture.ts), not the resolver under test.
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { serializeLog } from '../src/protocol/vh/log.ts'
@@ -8,7 +8,7 @@ import { T, deviceLabel, freshMediator, utf8 } from './support/mediator.ts'
 import { packAuthcrypt } from '../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
-import { createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver } from '../src/server/mediator/log-state.ts'
+import { createVhWatcherResolver } from '../src/server/mediator/log-state.ts'
 import { addKeyAgreement, buildVhDidCommLog, extendVhLog } from './protocol/support/vh-log-fixture.ts'
 
 const root = ed25519.utils.randomSecretKey()
@@ -32,11 +32,9 @@ function withWatcher(world: { log: typeof base.log | null; down?: boolean }, opt
     if (!new URL(String(input)).pathname.startsWith('/log') || world.log === null) return new Response('', { status: 404 })
     return new Response(serializeLog(world.log))
   }) as typeof fetch
-  const resolveLog = createDidStateResolver({
-    webvh: createNetworkWebvhResolver({ lookup: publicLookup, fetch: fetchImpl }),
-    ...((options.watchers ?? ['https://did.md']).length ? { vh: createVhWatcherResolver({ watchers: options.watchers ?? ['https://did.md'], lookup: publicLookup, fetch: fetchImpl }) } : {}),
-  })
-  const m = freshMediator({}, SqliteMediatorStore.memory(), { now: () => clock.now, logFreshMs: 300_000, logRetryMs: 10_000, logStaleMs: 3_600_000, resolveLog })
+  const watchers = options.watchers ?? ['https://did.md']
+  const resolveLog = watchers.length ? createVhWatcherResolver({ watchers, lookup: publicLookup, fetch: fetchImpl }) : undefined
+  const m = freshMediator({}, SqliteMediatorStore.memory(), { now: () => clock.now, logFreshMs: 300_000, logRetryMs: 10_000, logStaleMs: 3_600_000, ...(resolveLog ? { resolveLog } : {}) })
   return { ...m, calls, clock }
 }
 

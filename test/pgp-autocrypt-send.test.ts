@@ -16,7 +16,7 @@ describe('the key told to a mail bridge', () => {
     expect(isMailBridgeDid('did:web:did.md:gmail.com:bob%2Bnews')).toBe(true)
     expect(isMailBridgeDid('did:web:example.com')).toBe(false)
     expect(isMailBridgeDid('did:web:example.com:users:alice')).toBe(false)
-    expect(isMailBridgeDid('did:webvh:Qm123:alice.did.md')).toBe(false)
+    expect(isMailBridgeDid('did:vh:Qm123')).toBe(false)
     expect(isMailBridgeDid('did:peer:2.Ez6LS')).toBe(false)
   })
 
@@ -26,12 +26,12 @@ describe('the key told to a mail bridge', () => {
     const autocrypt = await ownAutocryptFor('did:web:did.md:4r.ma:n', own)
     expect(autocrypt?.preferEncrypt).toBe('mutual')
     expect(autocrypt?.keydata).toMatch(/^[A-Za-z0-9+/]+={0,2}$/)
-    expect(await ownAutocryptFor('did:webvh:Qm123:bob.did.md', own)).toBeUndefined()
+    expect(await ownAutocryptFor('did:vh:Qm123', own)).toBeUndefined()
     expect(await ownAutocryptFor('did:web:did.md:4r.ma:n', undefined)).toBeUndefined()
   })
 
   test('the chat message carries the key in body.autocrypt, and has none without it', async () => {
-    const opts = { fromKid: 'did:webvh:x:alice.did.md#k1', x25519PrivateKey: new Uint8Array(32) }
+    const opts = { fromKid: 'did:vh:x#k1', x25519PrivateKey: new Uint8Array(32) }
     await sendDidCommMessage('did:web:did.md:4r.ma:n', 'hi', { ...opts, autocrypt: { keydata: 'AAAA', preferEncrypt: 'mutual' } })
     await sendDidCommMessage('did:web:did.md:4r.ma:n', 'hi', opts)
     expect(sent[0]!.body).toMatchObject({ content: 'hi', autocrypt: { keydata: 'AAAA', preferEncrypt: 'mutual' } })

@@ -6,10 +6,10 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
 import { rootAuthority } from '../src/client/identity/wallet/did-md-oauth.ts'
 
-const DID = 'did:webvh:QmZdfGg8BAxEMLvHRC1RwDVcthg66akuBzJoeLvRdHXwQz:alice.did.md'
+const DID = 'did:vh:QmZdfGg8BAxEMLvHRC1RwDVcthg66akuBzJoeLvRdHXwQz'
 const key = () => encodeMultikey(ed25519.getPublicKey(ed25519.utils.randomSecretKey()))
 const document = (authentication: string[], methods: Array<{ id: string; publicKeyMultibase: string }>) =>
-  ({ id: DID, authentication, verificationMethod: methods.map(method => ({ ...method, type: 'Multikey', controller: DID })) }) as never
+  ({ id: DID, alsoKnownAs: ['did:web:alice.did.md'], authentication, verificationMethod: methods.map(method => ({ ...method, type: 'Multikey', controller: DID })) }) as never
 
 describe('rootAuthority', () => {
   test('picks #pass-1 even when another authentication key is listed first', async () => {

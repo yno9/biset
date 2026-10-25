@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest'
 import { VaultBackedLocalJmapMutationSink } from '../src/client/store/projection/vault-mutation-sink.ts'
 import type { ActiveVaultSegment } from '../src/client/store/vault/active-segment.ts'
 
-const identityId = 'did:webvh:test:alice.example'
+const identityId = 'did:vh:test'
 const segmentId = 'segment-1'
 
 function sinkWith(segment: ActiveVaultSegment): VaultBackedLocalJmapMutationSink {

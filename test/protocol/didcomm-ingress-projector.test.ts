@@ -18,9 +18,9 @@ import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { ingestIngress } from '../../src/client/store/vault/ingress-ingest.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 
-const identityId = 'did:webvh:abc123:alice.test.example'
+const identityId = 'did:vh:abc123'
 const recipientKid = `${identityId}#k_devicehash`
-const senderKid = 'did:webvh:def456:bob.test.example#k_senderhash'
+const senderKid = 'did:vh:def456#k_senderhash'
 
 const signer: VaultEventAuthor = {
   deviceId: recipientKid,
@@ -150,7 +150,7 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('a group thread id in other case is the same thread', async () => {
-    const carol = 'did:webvh:ghi789:carol.test.example'
+    const carol = 'did:vh:ghi789'
     const pack = (thid: string) => envelopeFor(new TextEncoder().encode(JSON.stringify(packAuthcrypt(new TextEncoder().encode(JSON.stringify(buildPlaintext(BASIC_MESSAGE, { content: 'hi' }, didOfKid(senderKid), [identityId, carol], { thid }))), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }]))), crypto.randomUUID())
     const upper = await buildProjector().verifyAndProject(pack('Group-ABC'))
     const lower = await buildProjector().verifyAndProject(pack('group-abc'))
@@ -252,7 +252,7 @@ describe('DIDComm ingress projector', () => {
 
   test('an anoncrypt message signed by its sender (DIDComm v2.1 signed messages) is recorded as the signer\'s', async () => {
     const signingKey = ed25519.utils.randomSecretKey()
-    const signerKid = 'did:webvh:def456:bob.test.example#signing'
+    const signerKid = 'did:vh:def456#signing'
     const message = buildPlaintext(BASIC_MESSAGE, { content: 'signed, not authcrypted' }, didOfKid(senderKid), identityId)
     const signed = signDidCommMessage(message, signerKid, signingKey)
     const jwe = packAnoncrypt(new TextEncoder().encode(JSON.stringify(signed)), [{ kid: recipientKid, publicKey: recipientXPub }])
@@ -294,7 +294,7 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('a basicmessage addressed to several parties lands in the group thread its thid names, with every recipient in `to`', async () => {
-    const carol = 'did:webvh:ghi789:carol.test.example'
+    const carol = 'did:vh:ghi789'
     const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hello, both of you', subject: 'Planning' }, didOfKid(senderKid), [identityId, carol], { thid: 'group-1' })
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
@@ -305,14 +305,14 @@ describe('DIDComm ingress projector', () => {
   })
 
   test('a group message that starts its own thread (no thid) is threaded by its id', async () => {
-    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'new group' }, didOfKid(senderKid), [identityId, 'did:webvh:ghi789:carol.test.example'], { id: 'first-message' })
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'new group' }, didOfKid(senderKid), [identityId, 'did:vh:ghi789'], { id: 'first-message' })
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     const result = await buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
     expect(result.projection.emails[0]!.threadId).toBe(didcommGroupAddress('first-message'))
   })
 
   test('a group message that does not name this identity among its recipients is rejected', async () => {
-    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'not for you' }, didOfKid(senderKid), ['did:webvh:x:carol.test.example', 'did:webvh:y:dave.test.example'], { thid: 'group-2' })
+    const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'not for you' }, didOfKid(senderKid), ['did:vh:x', 'did:vh:y'], { thid: 'group-2' })
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
     await expect(buildProjector().verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toThrow(/does not name this identity/)
   })

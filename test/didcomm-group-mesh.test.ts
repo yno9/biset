@@ -4,7 +4,7 @@
 // for that participant alone. Every recipient device records it identically,
 // so two devices of one identity merging their records through Vault Sync
 // cannot make the projection rebuild fail (§9.1).
-import { testWebvhResolver } from './support/mediator.ts'
+import { testVhResolver } from './support/mediator.ts'
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { sha256Bytes } from '../src/protocol/canonical.ts'
@@ -85,8 +85,8 @@ describe('DIDComm group chat', () => {
     const carol = makeIdentity('carol', 1, mediatorUrl, mediator.xKid)
     const identities = [alice, bob, carol]
 
-    const webvh = testWebvhResolver()
-    const { handle } = createMediator({ mediator, store, resolveLog: webvh.resolveLog })
+    const vh = testVhResolver()
+    const { handle } = createMediator({ mediator, store, resolveLog: vh.resolveLog })
     const fetchImpl = (async (input, init) => {
       const url = new URL(String(input))
       if (url.origin === mediatorUrl) return (await handle(new Request(url, init), url)) ?? new Response('not found', { status: 404 })
@@ -94,7 +94,7 @@ describe('DIDComm group chat', () => {
       if (url.pathname.endsWith('/did.jsonl') && owner) return new Response(owner.log.map(value => JSON.stringify(value)).join('\n') + '\n')
       return new Response(`unexpected request: ${url}`, { status: 500 })
     }) as typeof fetch
-    webvh.useNetwork(fetchImpl)
+    vh.useNetwork(fetchImpl)
     const realFetch = globalThis.fetch
     globalThis.fetch = fetchImpl
     try {

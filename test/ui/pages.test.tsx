@@ -8,7 +8,7 @@ vi.mock('../../src/client/identity/wallet/did-md-oauth.ts', () => ({
 }))
 vi.mock('../../src/client/app/ui/account/profile.ts', async importOriginal => ({ ...await importOriginal<typeof import('../../src/client/app/ui/account/profile.ts')>(), chooseImage: vi.fn(async () => new File(['x'], 'me.png', { type: 'image/png' })) }))
 vi.mock('../../src/client/app/ui/account/avatar-crop.tsx', async importOriginal => ({ ...await importOriginal<typeof import('../../src/client/app/ui/account/avatar-crop.tsx')>(), cropAvatar: vi.fn(async () => 'data:image/jpeg;base64,/9j/AAAA') }))
-vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ name: 'Alice' })) }))
+vi.mock('../../src/protocol/did-resolve.ts', async importOriginal => ({ ...await importOriginal<typeof import('../../src/protocol/did-resolve.ts')>(), resolveDidDocument: vi.fn(async () => ({ name: 'Alice' })) }))
 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 import { AccountPage } from '../../src/client/app/ui/pages/account-page.tsx'
@@ -16,8 +16,11 @@ import { ComposePage, configureComposePage } from '../../src/client/app/ui/pages
 import { TextCardDialog } from '../../src/client/app/ui/account/text-card-dialog.tsx'
 import { ConfigPanel, configureMarkdownVaultToggle } from '../../src/client/app/ui/pages/config-page.tsx'
 import { setPage, uiPage } from '../../src/client/app/ui/state.ts'
+import { setVerifiedAddresses } from '../../src/client/app/ui/did-display.ts'
 
-const DID = 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:alice.did.md'
+const DID = 'did:vh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi'
+const ME = 'did:vh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv'
+beforeEach(() => { setVerifiedAddresses(new Map([[DID, 'alice@did.md'], [ME, 'me@did.md']])) })
 const messages: string[] = []
 
 beforeEach(() => {
@@ -35,7 +38,7 @@ const account = (over: Partial<AccountPageConfig> = {}): AccountPageConfig => ({
 
 // ── compose ──────────────────────────────────────────────────────────────────
 
-const composeConfig = (over = {}) => ({ selfAddress: 'me@did.md', selfDid: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:me.did.md', sendMessage: vi.fn(async () => {}), onError: vi.fn(), ...over })
+const composeConfig = (over = {}) => ({ selfAddress: 'me@did.md', selfDid: ME, sendMessage: vi.fn(async () => {}), onError: vi.fn(), ...over })
 
 test('compose: From is this identity\'s DID, the To row shows the transport its address uses', () => {
   configureComposePage(composeConfig())
@@ -49,7 +52,7 @@ test('compose: From is this identity\'s DID, the To row shows the transport its 
   expect(container.querySelector('.new-recip-protos')!.textContent).toBe('DID')
 })
 
-test('compose: a typed did:webvh shows as its address on blur and is sent as the DID', async () => {
+test('compose: a typed did:vh shows as its address on blur and is sent as the DID', async () => {
   const config = composeConfig()
   configureComposePage(config)
   const { container } = render(<ComposePage />)
@@ -71,8 +74,8 @@ test('compose: rows can be added, and an edit drops an elided DID\'s real addres
   fireEvent.change(inputs()[1]!, { target: { value: DID } })
   fireEvent.blur(inputs()[1]!)
   expect(inputs()[1]!.value).toBe('alice@did.md')
-  fireEvent.change(inputs()[1]!, { target: { value: 'did:webvh:alice.did.m' } })
-  expect(inputs()[1]!.value).toBe('did:webvh:alice.did.m')
+  fireEvent.change(inputs()[1]!, { target: { value: DID.slice(0, 40) } })
+  expect(inputs()[1]!.value).toBe(DID.slice(0, 40))
 })
 
 test('compose: asks for a recipient, a body, and a DID to send from', async () => {

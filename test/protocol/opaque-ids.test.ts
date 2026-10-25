@@ -20,7 +20,7 @@ const signer: VaultEventAuthor = { deviceId: 'device-a' }
 
 describe('assertOpaqueId (general bound)', () => {
   test('accepts realistic DID-, UUID-, and hash-shaped values', () => {
-    for (const value of ['did:web:alice.example', 'did:webvh:z6Mk...#device-1', crypto.randomUUID(), 'sha256:' + 'A'.repeat(43), 'device-a']) {
+    for (const value of ['did:web:alice.example', 'did:vh:z6Mk...#device-1', crypto.randomUUID(), 'sha256:' + 'A'.repeat(43), 'device-a']) {
       expect(() => assertOpaqueId(value, 'id')).not.toThrow()
     }
   })

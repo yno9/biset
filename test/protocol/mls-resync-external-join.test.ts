@@ -5,7 +5,7 @@
 // without validating range, so a resync request with no actual match
 // silently produced `nodeToLeafIndex(-1)` === -0.5 -- a corrupt Remove
 // proposal, never exercised because resync's only prior caller (a
-// did:webvh domain move, removed with native login) always had a
+// move of the identity to another DID, removed with native login) always had a
 // guaranteed match.
 //
 // The new caller this fix is for (vault-room.ts's joinMimiVaultRoom,

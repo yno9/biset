@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import { createWalletDidCommOutbox } from '../src/client/identity/wallet/didcomm-outbox.ts'
 
-const identityId = 'did:webvh:wallet:alice.test.example'
+const identityId = 'did:vh:wallet'
 
 describe('Wallet DIDComm outbox', () => {
   test('retains a failed send, then retries the same message id and removes it only after success', async () => {
     const item = {
       identityId, outboundEventId: 'event-1' as never, emailId: 'email-1', messageId: 'message-1',
-      toDid: 'did:webvh:wallet:bob.test.example', createdAt: '2026-09-05T12:00:00.000Z', attempts: 0,
+      toDid: 'did:vh:wallet', createdAt: '2026-09-05T12:00:00.000Z', attempts: 0,
     }
     const queued = [item]
     const attempts: string[] = []

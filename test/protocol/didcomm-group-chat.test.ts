@@ -10,10 +10,10 @@ import {
 } from '../../src/client/didcomm/group-chat.ts'
 import type { LocalJmapEmail } from '../../src/client/store/projection/gateway.ts'
 
-const ALICE = 'did:webvh:QmA:alice.example'
-const BOB = 'did:webvh:QmB:bob.example'
-const CAROL = 'did:webvh:QmC:carol.example'
-const DAVE = 'did:webvh:QmD:dave.example'
+const ALICE = 'did:vh:QmA'
+const BOB = 'did:vh:QmB'
+const CAROL = 'did:vh:QmC'
+const DAVE = 'did:vh:QmD'
 
 const email = (id: string, sentAt: string, from: string, to: string[], extra: Partial<LocalJmapEmail> = {}): LocalJmapEmail => ({
   id, threadId: didcommGroupAddress('g1'), mailboxIds: { inbox: true }, keywords: {}, receivedAt: sentAt, sentAt,

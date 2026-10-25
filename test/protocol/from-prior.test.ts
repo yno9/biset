@@ -79,7 +79,7 @@ describe('a key published before a device was removed (§7-2)', () => {
   const entry = (keys: string[], published = true) => ({
     versionId: 'x', versionTime: '2026-10-08T00:00:00Z', parameters: {},
     state: {
-      id: 'did:webvh:s:a.example', keyAgreement: keys.map(key => `#${key}`),
+      id: 'did:vh:s', keyAgreement: keys.map(key => `#${key}`),
       authentication: published ? ['#biset-generation'] : [],
       verificationMethod: [{ id: '#biset-generation', publicKeyMultibase: encodeMultikey(rotation.publicKey) }],
     },

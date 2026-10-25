@@ -4,7 +4,7 @@ import { reduceLocalJmapProjection } from '../src/client/store/projection/reduce
 import { encodeVaultMutationObject } from '../src/client/store/vault/mutations.ts'
 import type { VaultEventV1 } from '../src/protocol/vault.ts'
 
-const identityId = 'did:webvh:alice.example'
+const identityId = 'did:vh:alice.example'
 const email: LocalJmapEmail = {
   id: 'message-1',
   blobId: 'local-blob',

@@ -1,4 +1,4 @@
-// Route selection out of a resolved did:webvh document -- what replaced
+// Route selection out of a resolved did:vh document -- what replaced
 // buildRoutingDoc's mediator branches when routing.json was retired
 // (2026-09-16). biset no longer BUILDS this document: did.md Wallet writes
 // the `#didcomm` service and the device keys through
@@ -11,7 +11,7 @@ import { didCommRouteFromDocument, keyAgreementRecipients } from '../../src/prot
 import { encodeX25519Multikey } from '../../src/protocol/didcomm/multikey.ts'
 import type { DidDocument } from '../../src/protocol/vh/document.ts'
 
-const DID = 'did:webvh:QmScid:alice.example'
+const DID = 'did:vh:QmScid'
 
 const KEYS = new Map<string, Uint8Array>()
 function keyOf(fragment: string): Uint8Array {

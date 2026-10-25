@@ -12,12 +12,11 @@ import { pickupDeliver } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
 import { serializeLog } from '../src/protocol/vh/log.ts'
 import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
-import { freshMediator, MEDIATOR_URL } from './support/mediator.ts'
-import { createNetworkWebvhResolver } from '../src/server/mediator/log-state.ts'
+import { freshMediator, MEDIATOR_URL, testVhResolver } from './support/mediator.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import type { IncomingVaultRecords } from '../src/client/store/vault/store.ts'
 
-const DID = 'did:webvh:scid:alice.example'
+const DID = 'did:vh:scid'
 const signer: VaultEventAuthor = { deviceId: 'device-a' }
 
 function memoryStore() {
@@ -43,7 +42,7 @@ describe('VaultSyncClient', () => {
     expect(store.committed).toHaveLength(0)
     await client.receive(message, `${DID}#k_sibling`)
     expect(store.committed[0]!.segmentKeys).toEqual(segmentKeys)
-    await expect(client.receive(message, 'did:webvh:scid:mallory.example#k_x')).rejects.toThrow('this identity')
+    await expect(client.receive(message, 'did:vh:mallory#k_x')).rejects.toThrow('this identity')
   })
 
   test('isolates one invalid event without rejecting valid records in the same batch', async () => {
@@ -66,8 +65,8 @@ describe('VaultSyncClient', () => {
 describe('walletVaultSyncTransport', () => {
   test('one send reaches every device of the identity through the mediator, each able to open it', async () => {
     // The mediator resolves the identity's DID itself, over the same network the devices use.
-    let network: typeof fetch = async () => new Response('not ready', { status: 500 })
-    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveLog: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }) })
+    const vh = testVhResolver()
+    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveLog: vh.resolveLog })
     const root = ed25519.utils.randomSecretKey()
     const phoneX = x25519.utils.randomSecretKey(); const laptopX = x25519.utils.randomSecretKey()
     const { did, log } = buildDidCommLog({
@@ -81,7 +80,7 @@ describe('walletVaultSyncTransport', () => {
       if (url.hostname === 'alice.example') return new Response(serializeLog(log))
       return new Response('unexpected', { status: 500 })
     }) as typeof fetch
-    network = fetchImpl
+    vh.useNetwork(fetchImpl)
     const phone = mediatorInbox({ did, xKid: `${did}#k_phone`, xPriv: phoneX }, new Uint8Array(32).fill(1))
     const laptop = mediatorInbox({ did, xKid: `${did}#k_laptop`, xPriv: laptopX }, new Uint8Array(32).fill(2))
     const info = await registerWithMediator(MEDIATOR_URL, phone, fetchImpl)

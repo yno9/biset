@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://biset.md/.well-known/capability-schema.json",
   "title": "biset.md/MessengerCapability",
-  "description": "Biset's own capability credential type, presented by a did:webvh wallet (dito or any other implementation) as a VC-DM 2.0 Verifiable Credential (see ~/did.md/PLAN3-oid4vp-transport.md -- the transport envelope moved from a flat {document,proof} pair to this VC-DM wrapping). Biset owns the credentialSubject content, not did.md -- did.md's OAuth server only checks the generic transport envelope (@context/id/type/issuer/credentialSubject/proof, and within credentialSubject: audience/expiresAt/issuedAt/scope, deviceJkt/authorizationDetails present-or-absent) and a Data Integrity Proof over the whole credential; it does not interpret credentialSubject's contents. This file is imported directly by did-md-oauth.ts (see json-schema.ts) and is the single source of truth for the credential SHAPE -- checks that depend on the pending authorization request (audience match, deviceJkt match, expiry-in-the-past, required scope membership) are NOT expressible here and remain in did-md-oauth.ts itself. See ~/did.md/PLAN2-capability-ownership.md and ~/did.md/SPEC.md §5.3 for the design rationale.",
+  "description": "Biset's own capability credential type, presented by a did:vh wallet (dito or any other implementation) as a VC-DM 2.0 Verifiable Credential (see ~/did.md/PLAN3-oid4vp-transport.md -- the transport envelope moved from a flat {document,proof} pair to this VC-DM wrapping). Biset owns the credentialSubject content, not did.md -- did.md's OAuth server only checks the generic transport envelope (@context/id/type/issuer/credentialSubject/proof, and within credentialSubject: audience/expiresAt/issuedAt/scope, deviceJkt/authorizationDetails present-or-absent) and a Data Integrity Proof over the whole credential; it does not interpret credentialSubject's contents. This file is imported directly by did-md-oauth.ts (see json-schema.ts) and is the single source of truth for the credential SHAPE -- checks that depend on the pending authorization request (audience match, deviceJkt match, expiry-in-the-past, required scope membership) are NOT expressible here and remain in did-md-oauth.ts itself. See ~/did.md/PLAN2-capability-ownership.md and ~/did.md/SPEC.md §5.3 for the design rationale.",
   "type": "object",
   "required": ["@context", "id", "type", "issuer", "credentialSubject", "proof"],
   "additionalProperties": false,
@@ -32,8 +32,8 @@
     },
     "issuer": {
       "type": "string",
-      "pattern": "^did:webvh:",
-      "description": "The subject's own did:webvh -- the DID whose authentication key signed this credential's Data Integrity Proof."
+      "pattern": "^did:vh:",
+      "description": "The subject's own did:vh -- the DID whose authentication key signed this credential's Data Integrity Proof."
     },
     "credentialSubject": {
       "type": "object",
@@ -43,7 +43,7 @@
         "audience": {
           "type": "string",
           "pattern": "^redirect_uri:(https://[^\\s]+|http://[a-z2-7]{56}\\.onion/[^\\s]*)$",
-          "description": "did.md's OAuth client_id for this Biset registration: either an RFC 7591 Dynamic Client Registration id, or (PLAN6) the did:webvh DID Biset authenticated itself with via JAR when running at https://t.biset.md."
+          "description": "did.md's OAuth client_id for this Biset registration: either an RFC 7591 Dynamic Client Registration id, or (PLAN6) the did:vh DID Biset authenticated itself with via JAR when running at https://t.biset.md."
         },
         "deviceJkt": {
           "type": "string",

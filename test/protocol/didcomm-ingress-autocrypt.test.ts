@@ -12,7 +12,7 @@ import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { armorOfStoredBody } from '../../src/client/pgp/stored.ts'
 import { AUTOCRYPT_CONTACT_PROPERTY, autocryptKeyId, contactDisplayName, currentAutocryptKey } from '../../src/client/store/projection/contacts.ts'
 
-const identityId = 'did:webvh:abc123:alice.test.example'
+const identityId = 'did:vh:abc123'
 const recipientKid = `${identityId}#k_devicehash`
 // What a mail bridge's sender looks like: the DID of the address n@4r.ma.
 const bridgeDid = 'did:web:did.md:4r.ma:n'

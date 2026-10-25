@@ -1,4 +1,4 @@
-// P1 end to end: a sender resolves a did:webvh recipient with two devices,
+// P1 end to end: a sender resolves a did:vh recipient with two devices,
 // encrypts ONE message to both keyAgreement keys, Forwards it to the
 // recipient's DID, and the mediator copies it into both device inboxes --
 // each device opens it with its own key.
@@ -11,13 +11,13 @@ import { mediatorInbox } from '../src/protocol/didcomm/mediator-device.ts'
 import { decodePeerDid2, generatePeerIdentity, publicKeyOf } from '../src/protocol/didcomm/peer.ts'
 import { serializeLog } from '../src/protocol/vh/log.ts'
 import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
-import { freshMediator, MEDIATOR_URL, testWebvhResolver } from './support/mediator.ts'
+import { freshMediator, MEDIATOR_URL, testVhResolver } from './support/mediator.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 
 describe('multi-device delivery', () => {
   test('one front-door message reaches every device of the recipient DID', async () => {
-    const webvh = testWebvhResolver()
-    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveLog: webvh.resolveLog })
+    const vh = testVhResolver()
+    const { mediator, handle, store } = freshMediator({}, SqliteMediatorStore.memory(), { resolveLog: vh.resolveLog })
     const root = ed25519.utils.randomSecretKey()
     const phoneX = x25519.utils.randomSecretKey()
     const laptopX = x25519.utils.randomSecretKey()
@@ -37,7 +37,7 @@ describe('multi-device delivery', () => {
       if (url.hostname === 'bob.test.example' && url.pathname.endsWith('/did.jsonl')) return new Response(serializeLog(log))
       return new Response(`unexpected request: ${url}`, { status: 500 })
     }) as typeof fetch
-    webvh.useNetwork(fetchImpl)
+    vh.useNetwork(fetchImpl)
 
     const phone = mediatorInbox({ did, xKid: `${did}#k_phone`, xPriv: phoneX }, crypto.getRandomValues(new Uint8Array(32)))
     const laptop = mediatorInbox({ did, xKid: `${did}#k_laptop`, xPriv: laptopX }, crypto.getRandomValues(new Uint8Array(32)))

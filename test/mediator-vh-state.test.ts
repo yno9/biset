@@ -1,13 +1,10 @@
 // How the mediator reads a did:vh's keys: a did:vh names no place, so its log is looked for at the operator's watchers
-// (GET /log?scid=), with the same guards as a did:webvh's host. The log is dito's shared vector `valid/key-agreement`.
+// (GET /log?scid=), with guards on what it dials. The log is dito's shared vector `valid/key-agreement`.
 import { describe, expect, test } from 'vitest'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { serializeLog } from '../src/protocol/vh/log.ts'
 import {
-  createDidStateResolver, createNetworkWebvhResolver, createVhWatcherResolver, didStateFromLog, isLogDid, vhStateFromLog, webvhStateFromLog, LogUnavailable,
+  createVhWatcherResolver, isLogDid, vhStateFromLog, LogUnavailable,
 } from '../src/server/mediator/log-state.ts'
-import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
-import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import vectors from './fixtures/did-vh-vectors.json'
 
 const file = vectors as unknown as { now: string; vectors: Array<{ name: string; did: string; log: unknown[] }> }
@@ -30,28 +27,17 @@ describe('vhStateFromLog', () => {
     expect(state.keys).toEqual({ [`${did}#ka`]: agreementHex })
     expect(Object.keys(state.authentication!)).toEqual([`${did}#k`])
   })
-  test('refuses a log that does not verify, a deactivated DID, and a log of another method', () => {
+  test('refuses a log that does not verify, and a deactivated DID', () => {
     expect(() => vhStateFromLog(text.replace('mediator.example', 'mallory.example'))).toThrow()
     expect(() => vhStateFromLog('not json')).toThrow()
     const deactivated = file.vectors.find(v => v.name === 'valid/deactivated')!
     expect(() => vhStateFromLog(`${deactivated.log.map(entry => JSON.stringify(entry)).join('\n')}\n`)).toThrow(/deactivated/)
-    const root = ed25519.utils.randomSecretKey()
-    const web = buildDidCommLog({ rootPrivateKey: root, rootPublicKey: ed25519.getPublicKey(root), keyAgreementKeys: [{ fragment: 'k', x25519PublicKey: x25519.getPublicKey(x25519.utils.randomSecretKey()) }], endpointUri: 'https://m.example', domain: 'alice.example' })
-    expect(() => vhStateFromLog(serializeLog(web.log))).toThrow(/did:vh/)
   })
 })
 
-describe('didStateFromLog / isLogDid', () => {
-  test('the method is what the log\'s own DID says', () => {
-    expect(didStateFromLog(text).did).toBe(did)
-    const root = ed25519.utils.randomSecretKey()
-    const web = buildDidCommLog({ rootPrivateKey: root, rootPublicKey: ed25519.getPublicKey(root), keyAgreementKeys: [{ fragment: 'k', x25519PublicKey: x25519.getPublicKey(x25519.utils.randomSecretKey()) }], endpointUri: 'https://m.example', domain: 'alice.example' })
-    expect(didStateFromLog(serializeLog(web.log)).did).toBe(web.did)
-    expect(webvhStateFromLog(serializeLog(web.log)).did).toBe(web.did)
-  })
-  test('a DID whose state is read from a log is a did:webvh or a did:vh', () => {
+describe('isLogDid', () => {
+  test('a DID whose state is read from a log is a did:vh', () => {
     expect(isLogDid(did)).toBe(true)
-    expect(isLogDid('did:webvh:Qm:example.com')).toBe(true)
     expect(isLogDid('did:peer:2.Ez6')).toBe(false)
     expect(isLogDid('did:web:example.com')).toBe(false)
   })
@@ -96,7 +82,7 @@ describe('createVhWatcherResolver', () => {
     const other = file.vectors.find(v => v.name === 'valid/single-entry')!
     expect(await resolverOf({ fetch: serving(() => new Response(`${other.log.map(entry => JSON.stringify(entry)).join('\n')}\n`)) })(did)).toBeNull()
     expect(await resolverOf({ fetch: serving(() => new Response(text)) })('did:vh:nope')).toBeNull()
-    expect(await resolverOf({ fetch: serving(() => new Response(text)) })('did:webvh:Qm:example.com')).toBeNull()
+    expect(await resolverOf({ fetch: serving(() => new Response(text)) })('did:web:example.com')).toBeNull()
   })
 
   test('never dials a watcher that is not a public https host, or a port; the answer is bounded', async () => {
@@ -109,15 +95,5 @@ describe('createVhWatcherResolver', () => {
     expect(await resolverOf({ maxLogBytes: 100, fetch: serving(() => new Response(text, { headers: { 'content-length': String(text.length) } })) })(did)).toBeNull()
     expect(await resolverOf({ lookup: async () => ['10.0.0.1'], fetch: fetchImpl })(did)).toBeNull()
     expect(seen).toEqual([])
-  })
-})
-
-describe('createDidStateResolver', () => {
-  test('a did:webvh goes to its host\'s resolver, a did:vh to the watchers\'; without watchers a did:vh is unknown', async () => {
-    const webvh = createNetworkWebvhResolver({ lookup: publicLookup, fetch: serving(() => new Response('', { status: 404 })) })
-    const vh = createVhWatcherResolver({ watchers: ['https://did.md'], lookup: publicLookup, fetch: serving(() => new Response(text)) })
-    expect((await createDidStateResolver({ webvh, vh })(did))?.did).toBe(did)
-    expect(await createDidStateResolver({ webvh, vh })('did:webvh:Qm:example.com')).toBeNull()
-    expect(await createDidStateResolver({ webvh })(did)).toBeNull()
   })
 })

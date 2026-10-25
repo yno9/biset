@@ -53,7 +53,7 @@ import { createSegmentKey } from '../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../src/client/store/vault/events.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
-const identityId = 'did:webvh:abc123:wallet.test.example'
+const identityId = 'did:vh:abc123'
 const recipientKid = `${identityId}#k_walletdevice`
 
 const signer: VaultEventAuthor = { deviceId: recipientKid }
@@ -88,7 +88,7 @@ function envelopeFor(payload: Uint8Array, ingressId: string): IngressEnvelopeV1 
 describe('DidCommIngressProjector allow-list (isProjectableDidCommIngress)', () => {
   const senderX = x25519.utils.randomSecretKey()
   const senderXPub = x25519.getPublicKey(senderX)
-  const senderKid = 'did:webvh:def456:bob.test.example#k_sender'
+  const senderKid = 'did:vh:def456#k_sender'
   const recipientX = x25519.utils.randomSecretKey()
   const recipientXPub = x25519.getPublicKey(recipientX)
 

@@ -7,7 +7,8 @@ import { createMediator, type LiveSocket, type MediatorHandler, type MediatorOpt
 import { SqliteMediatorStore, type SqliteMediatorLimits } from '../../src/server/mediator/sqlite-store.ts'
 import { packAnoncrypt, packAuthcrypt, parseJwe, unpackAuthcrypt, didCommPost } from '../../src/protocol/didcomm/crypto.ts'
 import { buildPlaintext, type DidCommPlaintext } from '../../src/protocol/didcomm/message.ts'
-import { createNetworkWebvhResolver } from '../../src/server/mediator/log-state.ts'
+import { createVhWatcherResolver } from '../../src/server/mediator/log-state.ts'
+import { fixtureDomains } from '../protocol/support/did-log-fixture.ts'
 import { webMediatorIdentity } from '../../src/server/mediator/identity.ts'
 
 export const MEDIATOR_URL = 'https://mediator.test.example'
@@ -49,14 +50,21 @@ export function freshMediator(limits: Partial<SqliteMediatorLimits> = {}, store 
   return { mediator, store, handle, call, post, request, forward, pushLog, refreshLogs, client }
 }
 
-/** How a mediator under test learns a did:webvh's keys: by resolving it, as in
- * production, over the test's own network. The test builds that network
- * after the mediator (it routes to the mediator too), so it is handed over
- * afterwards with `useNetwork`. */
-export function testWebvhResolver() {
+/** How a mediator under test learns a did:vh's keys: by asking its watcher, as in production, over the test's own network.
+ * The watcher is a stand-in that forwards `GET /log?scid=` to the place the fixture published that log (`buildGenesisLog`'s
+ * domain). The test builds the network after the mediator (it routes to the mediator too), so it is handed over afterwards
+ * with `useNetwork`. */
+export const TEST_WATCHER = 'https://watcher.test.example'
+export function testVhResolver() {
   let network: typeof fetch = async () => new Response('the test network is not set up yet', { status: 500 })
+  const watcherFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    if (url.origin !== TEST_WATCHER || url.pathname !== '/log') return network(input, init)
+    const domain = fixtureDomains.get(`did:vh:${url.searchParams.get('scid')}`)
+    return domain ? network(`https://${domain}/.well-known/did.jsonl`, init) : new Response('', { status: 404 })
+  }) as typeof fetch
   return {
-    resolveLog: createNetworkWebvhResolver({ fetch: (input, init) => network(input, init), lookup: async () => ['93.184.216.34'] }),
+    resolveLog: createVhWatcherResolver({ watchers: [TEST_WATCHER], fetch: watcherFetch, lookup: async () => ['93.184.216.34'] }),
     useNetwork(fetchImpl: typeof fetch) { network = fetchImpl },
   }
 }

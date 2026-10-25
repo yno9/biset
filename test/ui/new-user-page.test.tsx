@@ -15,7 +15,7 @@ vi.mock('../../src/client/identity/wallet/did-md-oauth.ts', () => ({
 import * as oauth from '../../src/client/identity/wallet/did-md-oauth.ts'
 import { NewUserPage, setOnWalletConnected } from '../../src/client/app/ui/pages/new-user-page.tsx'
 
-const DID = 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:alice.did.md'
+const DID = 'did:vh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi'
 afterEach(() => { cleanup(); document.body.innerHTML = '' })
 
 // The sign-up page consumes a wallet callback / restores a stored session once per page load, so

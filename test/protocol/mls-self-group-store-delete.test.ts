@@ -1,5 +1,4 @@
-// IndexedDbMlsSelfGroupStore.delete (identity/webvh/move.ts's own
-// domain-move support): after mls/self-group.ts's migrateSelfGroupCredential
+// IndexedDbMlsSelfGroupStore.delete (a move of the identity from one DID to another): after mls/self-group.ts's migrateSelfGroupCredential
 // has already saved this identity's migrated state under the NEW
 // identityId, the now-stale row still sitting under the OLD one needs to
 // be dropped explicitly.
@@ -10,7 +9,7 @@ import { IndexedDbMlsSelfGroupStore } from '../../src/client/mls/store.ts'
 import { mlsDeviceFixture } from './support/mls-device-fixture.ts'
 
 const DATABASE_NAME = 'biset-mls-self-group'
-const oldId = 'did:webvh:2222222222222222222222222222222222222222222222:old.example'
+const oldId = 'did:vh:2222222222222222222222222222222222222222222222'
 const device = await mlsDeviceFixture(oldId)
 
 afterEach(async () => {

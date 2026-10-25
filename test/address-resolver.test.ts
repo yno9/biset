@@ -18,8 +18,8 @@ function fetchFrom(answers: Record<string, unknown>, asked: string[] = []): type
 describe('mail address -> DID (WebFinger)', () => {
   test('the address\'s own domain is asked first, and its DID wins', async () => {
     const asked: string[] = []
-    const did = await resolveMailAddressDid('bob@biset.md', ['did.md'], fetchFrom({ 'biset.md': { subject: 'acct:bob@biset.md', aliases: ['https://biset.md/@bob', 'did:webvh:Qm:bob.biset.md'] } }, asked))
-    expect(did).toBe('did:webvh:Qm:bob.biset.md')
+    const did = await resolveMailAddressDid('bob@biset.md', ['did.md'], fetchFrom({ 'biset.md': { subject: 'acct:bob@biset.md', aliases: ['https://biset.md/@bob', 'did:web:bob.biset.md'] } }, asked))
+    expect(did).toBe('did:web:bob.biset.md')
     expect(asked).toEqual(['biset.md acct:bob@biset.md'])
   })
 

@@ -58,11 +58,11 @@ describe('computeReplyContext', () => {
   // to a DID string (the core rejected it: "invalid recipient address").
   test('multiple self-identifiers: excludes both this identity\'s mail address and its own DID', () => {
     const thread = [
-      msg({ from: 'did:webvh:abc:me.biset.md', to_addrs: ['did:webvh:xyz:them.biset.md'], message_id: 'm1', ts: 1 }),
-      msg({ from: 'did:webvh:xyz:them.biset.md', to_addrs: ['did:webvh:abc:me.biset.md'], message_id: 'm2', ts: 2 }),
+      msg({ from: 'did:vh:abc', to_addrs: ['did:vh:xyz'], message_id: 'm1', ts: 1 }),
+      msg({ from: 'did:vh:xyz', to_addrs: ['did:vh:abc'], message_id: 'm2', ts: 2 }),
     ]
-    const { toAddrs } = computeReplyContext(thread, ['me@mail.biset.md', 'did:webvh:abc:me.biset.md'])
-    expect(toAddrs).toEqual(['did:webvh:xyz:them.biset.md'])
+    const { toAddrs } = computeReplyContext(thread, ['me@mail.biset.md', 'did:vh:abc'])
+    expect(toAddrs).toEqual(['did:vh:xyz'])
   })
 
   // An OLD Conversation Group thread (mls: threadId, retired from active
@@ -76,10 +76,10 @@ describe('computeReplyContext', () => {
   // forward-migration off a retired transport.
   test('an old Conversation Group thread (mls: threadId) replies to its participants, not the dead group address', () => {
     const thread = [
-      msg({ from: 'did:webvh:abc:alice.biset.md', to_addrs: ['did:webvh:xyz:bob.biset.md', 'did:webvh:def:carol.biset.md'], thread_id: 'mls:group-1', message_id: 'm1', ts: 1 }),
-      msg({ from: 'did:webvh:xyz:bob.biset.md', to_addrs: ['did:webvh:abc:alice.biset.md', 'did:webvh:def:carol.biset.md'], thread_id: 'mls:group-1', message_id: 'm2', ts: 2 }),
+      msg({ from: 'did:vh:abc', to_addrs: ['did:vh:xyz', 'did:vh:def'], thread_id: 'mls:group-1', message_id: 'm1', ts: 1 }),
+      msg({ from: 'did:vh:xyz', to_addrs: ['did:vh:abc', 'did:vh:def'], thread_id: 'mls:group-1', message_id: 'm2', ts: 2 }),
     ]
-    const { toAddrs } = computeReplyContext(thread, ['me@mail.biset.md', 'did:webvh:abc:alice.biset.md'])
-    expect(toAddrs.sort()).toEqual(['did:webvh:def:carol.biset.md', 'did:webvh:xyz:bob.biset.md'])
+    const { toAddrs } = computeReplyContext(thread, ['me@mail.biset.md', 'did:vh:abc'])
+    expect(toAddrs.sort()).toEqual(['did:vh:def', 'did:vh:xyz'])
   })
 })

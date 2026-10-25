@@ -12,16 +12,11 @@ import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
 import { buildPlaintext } from '../src/protocol/didcomm/message.ts'
 import { queuedMessageOf } from '../src/protocol/didcomm/mediator-pickup.ts'
 import { defaultDeviceLabel } from '../src/protocol/didcomm/mediator-device.ts'
-import { LogUnavailable, type WebvhState } from '../src/server/mediator/log-state.ts'
+import { LogUnavailable, type LogState } from '../src/server/mediator/log-state.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import { serializeLog } from '../src/protocol/vh/log.ts'
-import { buildDidCommLog, fakeAnchor } from './protocol/support/did-log-fixture.ts'
-import { pushWebvhLog } from '../src/protocol/didcomm/mediator-coordinate.ts'
-import { createGenesis } from '../src/client/identity/webvh/create-genesis.ts'
-import { migrateWebvhLocation } from '../src/client/identity/webvh/migrate.ts'
-import { fetchCurrentLog } from '../src/client/identity/webvh/log-io.ts'
-import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
-import { multikeyHashBase58 } from '../src/protocol/vh/hash.ts'
+import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
+import { pushDidLog } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { deviceLabel, freshMediator, peer, T, utf8 } from './support/mediator.ts'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -191,30 +186,6 @@ describe('blind mediator', () => {
     expect(report.lang).toBe('en')
   })
 
-  test('did:webvh: a log of a DID that moved domains (genesis names the old one) is accepted under its current DID', async () => {
-    // Found live 2026-10-03: did.md creates the identity under an alias and
-    // later moves it to its real hostname. The genesis entry keeps the old
-    // domain; the DID is whatever the latest entry says.
-    const { pushLog } = freshMediator()
-    const rootPrivateKey = ed25519.utils.randomSecretKey()
-    const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
-    const spare = ed25519.utils.randomSecretKey()
-    const nextSpare = ed25519.utils.randomSecretKey()
-    const anchor = fakeAnchor()
-    const { did: oldDid } = await createGenesis({
-      domain: 'ex.alias', rootPrivateKey, rootPublicKey,
-      nextKeyHash: multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(spare))), fetch: anchor.fetch,
-    })
-    const { newDid } = await migrateWebvhLocation({
-      oldDid, newDomain: 'c8de.did.md',
-      signingPrivateKey: spare, signingPublicKey: ed25519.getPublicKey(spare),
-      nextKeyHash: multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(nextSpare))), fetch: anchor.fetch,
-    })
-    const { entries } = await fetchCurrentLog(newDid, anchor.fetch)
-    expect((entries[0]!.state as { id: string }).id).toBe(oldDid)
-    expect(await (await pushLog(serializeLog(entries))).json()).toMatchObject({ did: newDid, outcome: 'stored' })
-  })
-
   test('dormant inboxes get no copies and are told they missed some; with every inbox dormant the latest still collects', async () => {
     const { request, forward, store } = freshMediator()
     const bob = peer()
@@ -253,35 +224,6 @@ describe('blind mediator', () => {
     expect((await forward(bob.did, { n: 3 })).status).toBe(503)
   })
 
-  test('registration: a did:webvh outside the allowed domains is refused before anything is resolved; a did:peer and an allowed domain are not', async () => {
-    const rootPrivateKey = new Uint8Array(32).fill(9)
-    const deviceX = x25519.utils.randomSecretKey()
-    const logOn = (domain: string) => buildDidCommLog({
-      rootPrivateKey, rootPublicKey: ed25519.getPublicKey(rootPrivateKey), domain,
-      keyAgreementKeys: [{ fragment: 'k_device', x25519PublicKey: x25519.getPublicKey(deviceX) }],
-    })
-    const { mediator, post, request, pushLog } = freshMediator({}, undefined, { registration: { allowedDidDomains: ['did.md'] } })
-
-    const outside = logOn('someone.example.org')
-    expect((await pushLog(serializeLog(outside.log))).status).toBe(403)
-    const blind = buildPlaintext(T.MEDIATE_REQUEST, {}, outside.did, mediator.did)
-    const refused = await post(packAuthcrypt(utf8(JSON.stringify(blind)), { kid: `${outside.did}#k_device`, privateKey: deviceX }, [{ kid: mediator.xKid, publicKey: mediator.xPub }]))
-    expect(refused.status).toBe(403)
-    expect((await refused.json()).body.code).toBe('e.m.trust.did-not-allowed')
-
-    for (const domain of ['c8de.did.md', 'did.md']) {
-      const inside = logOn(domain)
-      expect(await (await pushLog(serializeLog(inside.log))).json()).toMatchObject({ did: inside.did, outcome: 'stored' })
-    }
-    const lookalike = logOn('evil-did.md')
-    expect((await pushLog(serializeLog(lookalike.log))).status).toBe(403)
-
-    // a relationship's did:peer names no owner: not limited by the domains
-    const bob = peer()
-    const added = await request(bob, T.RECIPIENT_UPDATE, { device: deviceLabel(1), updates: [{ recipient_did: bob.did, action: 'add' }] })
-    expect((added.body as any).updated[0].result).toBe('success')
-  })
-
   test('registration: one address may open only so many new inboxes; renewing one is free; no address (a relay poller) is not counted', async () => {
     let admitted = 0
     const { request, client } = freshMediator({}, undefined, { registration: { admitNewInbox: () => ++admitted <= 2 } })
@@ -299,7 +241,7 @@ describe('blind mediator', () => {
     expect(((await add(c)).body as any).updated[0].result).toBe('success')
   })
 
-  test('did:webvh: authenticated only against a pushed log; a stale log is ignored', async () => {
+  test('did:vh: authenticated only against a pushed log; a stale log is ignored', async () => {
     const { mediator, post, request, pushLog } = freshMediator()
     const rootPrivateKey = new Uint8Array(32).fill(7)
     const deviceX = x25519.utils.randomSecretKey()
@@ -322,9 +264,9 @@ describe('blind mediator', () => {
     expect((added.body as any).updated[0].result).toBe('success')
   })
 
-  test('a newer did:webvh state revokes inboxes registered with a key it no longer lists', () => {
+  test('a newer did:vh state revokes inboxes registered with a key it no longer lists', () => {
     const { store } = freshMediator()
-    const did = 'did:webvh:scid:example.test'
+    const did = 'did:vh:Qmexample'
     expect(store.recordLogState(did, 1, { [`${did}#k_a`]: '00', [`${did}#k_b`]: '01' })).toBe('stored')
     store.addInbox(did, deviceLabel(1), `${did}#k_a`)
     store.addInbox(did, deviceLabel(2), `${did}#k_b`)
@@ -426,20 +368,20 @@ describe('a standard client of the mediator', () => {
   })
 })
 
-// did:webvh keys, learned the way a DIDComm agent learns a sender's keys: the
+// did:vh keys, learned the way a DIDComm agent learns a sender's keys: the
 // mediator resolves the DID itself (log-state.ts) -- nothing is pushed.
-describe('a mediator that resolves did:webvh', () => {
-  const DID = 'did:webvh:scid:alice.example'
+describe('a mediator that resolves did:vh', () => {
+  const DID = 'did:vh:Qmalice'
   const hex = (key: Uint8Array) => [...key].map(x => x.toString(16).padStart(2, '0')).join('')
   const device = (fragment: string) => {
     const xPriv = x25519.utils.randomSecretKey()
     return { holder: { did: DID, xKid: `${DID}#${fragment}`, xPriv }, hex: hex(x25519.getPublicKey(xPriv)) }
   }
   const add = { updates: [{ recipient_did: DID, action: 'add' }] }
-  const stateWith = (version: number, keys: Record<string, string>): WebvhState => ({ did: DID, versionNumber: version, keys })
+  const stateWith = (version: number, keys: Record<string, string>): LogState => ({ did: DID, versionNumber: version, keys, versionIds: Array.from({ length: version }, (_, i) => `${i + 1}-v`) })
 
   /** A mediator whose resolver answers from `world`, counts its calls, and runs on a clock the test moves. */
-  function resolving(world: { state: WebvhState | null; down?: boolean }, options: { fresh?: number; retry?: number; stale?: number } = {}) {
+  function resolving(world: { state: LogState | null; down?: boolean }, options: { fresh?: number; retry?: number; stale?: number } = {}) {
     const calls = { n: 0 }
     const clock = { now: Date.now() } // the store stamps real time, so the test clock starts there
     const m = freshMediator({}, SqliteMediatorStore.memory(), {
@@ -485,7 +427,7 @@ describe('a mediator that resolves did:webvh', () => {
 
   test('a key added to the DID later is found: an unlisted key triggers a fresh resolve', async () => {
     const a = device('k_a'); const b = device('k_b')
-    const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex }) as WebvhState | null }
+    const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex }) as LogState | null }
     const m = resolving(world)
     await m.request(a.holder, T.RECIPIENT_UPDATE, add)
     world.state = stateWith(2, { [`${DID}#k_a`]: a.hex, [`${DID}#k_b`]: b.hex })
@@ -508,7 +450,7 @@ describe('a mediator that resolves did:webvh', () => {
 
   test('refreshLogs revokes the inbox of a device its DID no longer lists, with what it held', async () => {
     const a = device('k_a'); const b = device('k_b')
-    const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex, [`${DID}#k_b`]: b.hex }) as WebvhState | null }
+    const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex, [`${DID}#k_b`]: b.hex }) as LogState | null }
     const m = resolving(world, { retry: 0 })
     await m.request(a.holder, T.RECIPIENT_UPDATE, { device: deviceLabel(1), ...add })
     await m.request(b.holder, T.RECIPIENT_UPDATE, { device: deviceLabel(2), ...add })
@@ -525,7 +467,7 @@ describe('a mediator that resolves did:webvh', () => {
 
   test('when the network is down: 503 for a DID never seen, and a recently confirmed state still stands', async () => {
     const a = device('k_a')
-    const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex }) as WebvhState | null, down: true }
+    const world = { state: stateWith(1, { [`${DID}#k_a`]: a.hex }) as LogState | null, down: true }
     const m = resolving(world, { fresh: 60_000, retry: 0, stale: 3_600_000 })
     const unknown = await raw(m, a.holder, T.RECIPIENT_UPDATE, add)
     expect(unknown.status).toBe(503)
@@ -546,7 +488,7 @@ describe('a mediator that resolves did:webvh', () => {
     const { did, log } = buildDidCommLog({ rootPrivateKey: root, rootPublicKey: ed25519.getPublicKey(root), keyAgreementKeys: [{ fragment: 'k_a', x25519PublicKey: x25519.getPublicKey(xPriv) }], endpointUri: 'https://x.example', domain: 'alice.example' })
     const m = resolving({ state: null })
     // The client's own helper, through the mediator's HTTP handler.
-    await pushWebvhLog({ url: 'https://mediator.test' } as never, serializeLog(log), ((input: string | URL | Request, init?: RequestInit) => m.call(new URL(String(input)).pathname, init)) as typeof fetch)
+    await pushDidLog({ url: 'https://mediator.test' } as never, serializeLog(log), ((input: string | URL | Request, init?: RequestInit) => m.call(new URL(String(input)).pathname, init)) as typeof fetch)
     const reply = await m.request({ did, xKid: `${did}#k_a`, xPriv }, T.RECIPIENT_UPDATE, { updates: [{ recipient_did: did, action: 'add' }] })
     expect((reply.body as any).updated[0].result).toBe('success')
     expect(m.calls.n).toBe(1) // it asked, found no log, and the pushed state stood

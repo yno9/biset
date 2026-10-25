@@ -4,10 +4,10 @@
 // itself everywhere it would otherwise appear.
 import { jcsMultihashBase58 } from './hash.ts'
 
-export const SCID_PLACEHOLDER = '{SCID}'
+const SCID_PLACEHOLDER = '{SCID}'
 
 /** SCID = base58btc(multihash(JCS(preliminary_entry_with_placeholders), sha256)). */
-export function generateScid(preliminaryEntry: unknown): string {
+function generateScid(preliminaryEntry: unknown): string {
   return jcsMultihashBase58(preliminaryEntry)
 }
 

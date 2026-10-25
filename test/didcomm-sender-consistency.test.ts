@@ -15,14 +15,14 @@ const utf8 = (s: string) => new TextEncoder().encode(s)
 type Peer = ReturnType<typeof generatePeerIdentity>
 
 describe('assertFromMatchesSender', () => {
-  const kid = 'did:webvh:Qm1:alice.example#k_abc'
+  const kid = 'did:vh:Qm1#k_abc'
   test('accepts a `from` that is the DID of the authenticated sender kid', () => {
-    expect(() => assertFromMatchesSender({ from: 'did:webvh:Qm1:alice.example' }, kid)).not.toThrow()
+    expect(() => assertFromMatchesSender({ from: 'did:vh:Qm1' }, kid)).not.toThrow()
   })
   test('rejects a missing `from`, a `from` with a fragment, and another DID', () => {
     expect(() => assertFromMatchesSender({}, kid)).toThrow(DidCommSenderMismatchError)
     expect(() => assertFromMatchesSender({ from: kid }, kid)).toThrow('without a fragment')
-    expect(() => assertFromMatchesSender({ from: 'did:webvh:Qm2:mallory.example' }, kid)).toThrow('does not match')
+    expect(() => assertFromMatchesSender({ from: 'did:vh:Qm2' }, kid)).toThrow('does not match')
   })
 })
 

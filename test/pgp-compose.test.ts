@@ -50,7 +50,7 @@ describe('writing an encrypted mail', () => {
   test('a bridge DID gives its host and its address; only a key that asks for mutual encryption is written to encrypted', () => {
     expect(bridgeHostOf('did:web:did.md:4r.ma:n')).toBe('did.md')
     expect(mailAddressOfBridgeDid('did:web:did.md:gmail.com:bob%2Bnews')).toBe('bob+news@gmail.com')
-    expect(bridgeHostOf('did:webvh:Qm1:alice.did.md')).toBeUndefined()
+    expect(bridgeHostOf('did:vh:Qm1')).toBeUndefined()
     expect(shouldEncrypt({ preferEncrypt: 'mutual' })).toBe(true)
     expect(shouldEncrypt({})).toBe(false)
     expect(shouldEncrypt(undefined)).toBe(false)
@@ -58,7 +58,7 @@ describe('writing an encrypted mail', () => {
 })
 
 describe('sending it', () => {
-  const opts = { fromKid: 'did:webvh:x:alice.did.md#k1', x25519PrivateKey: new Uint8Array(32) }
+  const opts = { fromKid: 'did:vh:x#k1', x25519PrivateKey: new Uint8Array(32) }
 
   test('an encrypted message is a basicmessage with encryption=openpgp and the armor as the one `pgp` attachment, no content', async () => {
     sent.length = 0

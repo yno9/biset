@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { Favicon, generatedAvatarSvg } from '../../src/client/app/ui/favicon.tsx'
 import { accountConfig } from '../../src/client/app/ui/account/state.ts'
 
-const DID = 'did:webvh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv:alice.did.md'
+const DID = 'did:vh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv'
 const link = () => document.querySelector<HTMLLinkElement>('link[rel~="icon"]')!
 const profile = (current: { name?: string; avatar?: string }) => ({ current: async () => current, setName: async () => {}, setAvatar: async () => {} })
 

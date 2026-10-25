@@ -6,12 +6,12 @@ describe('vault delivery pack', () => {
   test.each(VAULT_EVENT_KINDS)('round-trips the %s event kind', (kind: VaultEventKind) => {
     const payload = encodeVaultDeliveryPack({
       version: 1,
-      identityId: 'did:webvh:alice.example',
+      identityId: 'did:vh:alice.example',
       objects: [],
       events: [{
         version: 1,
         id: `event:${kind}`,
-        identityId: 'did:webvh:alice.example',
+        identityId: 'did:vh:alice.example',
         actorDeviceId: 'device-a',
         actorSeq: 1,
         kind,

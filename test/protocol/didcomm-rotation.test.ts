@@ -23,7 +23,7 @@ import {
 } from '../../src/client/store/projection/contacts.ts'
 import { createSegmentKey, decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
-import { buildDidCommLog } from './support/did-log-fixture.ts'
+import { buildDidCommLog, fixtureDomains } from './support/did-log-fixture.ts'
 import { freshMediatorFetch } from '../support/mediator.ts'
 import { mediatorInbox } from '../../src/protocol/didcomm/mediator-device.ts'
 import { registerWithMediator } from '../../src/client/didcomm/mediator-sync.ts'
@@ -32,7 +32,7 @@ import { sendFrontDoorMessage } from '../../src/client/didcomm/front-door-send.t
 
 const MEDIATOR = 'did:web:mediator.example'
 
-/** A biset identity: a did:webvh with one front-door device key and the
+/** A biset identity: a did:vh with one front-door device key and the
  * rotation key of its seed published under authentication. */
 function identity(domain: string) {
   const root = ed25519.keygen()
@@ -50,7 +50,7 @@ const alice = identity('alice.example')
 const bob = identity('bob.example')
 const logs = new Map<string, LogEntry[]>([[alice.did, alice.log], [bob.did, bob.log]])
 const serving = (async (url: string) => {
-  const entry = [...logs.entries()].find(([did]) => url.includes(did.split(':').at(-1)!))
+  const entry = [...logs.entries()].find(([did]) => new URL(String(url)).host === fixtureDomains.get(did))
   return entry ? new Response(entry[1].map(value => JSON.stringify(value)).join('\n') + '\n') : new Response('', { status: 404 })
 }) as unknown as typeof fetch
 const verify = (jwt: string, from: string) => verifyFromPrior(jwt, from, fromPriorKeyResolver(serving))
@@ -100,7 +100,7 @@ describe('the route of a message', () => {
 })
 
 describe('a group message to a participant that moved (Message Layer Addressing Consistency)', () => {
-  const carol = 'did:webvh:QmCarol:carol.example'
+  const carol = 'did:vh:QmCarol'
   test('the copy to the moved participant names it by the DID it is encrypted to; the others stay named by their public DIDs', () => {
     expect(audienceOfCopy([bob.did, carol], bob.did, bobY.did)).toEqual([bobY.did, carol])
     expect(audienceOfCopy([bob.did, carol], carol, carol)).toEqual([bob.did, carol])
@@ -171,7 +171,7 @@ describe('ingress of a moved counterparty', () => {
   })
 
   test('a group copy naming Alice by her Y is hers, recorded with her public DID -- the same on every device', async () => {
-    const carol = 'did:webvh:QmCarol:carol.example'
+    const carol = 'did:vh:QmCarol'
     const known = cards(bobCard, rotationPatch(bobCard.cardId, { did: bobY.did, prior: bob.did, iat: 100 }))
     const message = buildPlaintext(BASIC_MESSAGE, { content: 'hello group' }, bob.did, [aliceY.did, carol], { thid: 'group-9' })
     const toAliceY = { kid: aliceY.xKid, publicKey: aliceY.xPub }

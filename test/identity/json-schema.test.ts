@@ -11,7 +11,7 @@ function validCapabilityCredential(overrides: { type?: string; topLevel?: Record
     '@context': ['https://www.w3.org/ns/credentials/v2'],
     id: 'urn:uuid:11111111-1111-4111-8111-111111111111',
     type: ['VerifiableCredential', overrides.type ?? 'biset.md/MessengerCapability'],
-    issuer: 'did:webvh:abc:alice.did.md',
+    issuer: 'did:vh:abc',
     credentialSubject: {
       audience: 'redirect_uri:https://biset.example/wallet/callback',
       deviceJkt: 'A'.repeat(43),
@@ -25,7 +25,7 @@ function validCapabilityCredential(overrides: { type?: string; topLevel?: Record
     },
     proof: {
       type: 'DataIntegrityProof', cryptosuite: 'eddsa-jcs-2022', proofPurpose: 'authentication',
-      verificationMethod: 'did:webvh:abc:alice.did.md#pass-1', proofValue: 'zStubProofValue',
+      verificationMethod: 'did:vh:abc#pass-1', proofValue: 'zStubProofValue',
     },
     ...overrides.topLevel,
   }
@@ -47,7 +47,7 @@ describe('json-schema.ts (interpretive validator, used against biset-messenger-c
   })
 
   test('only a redirect_uri Client Identifier is an audience', () => {
-    for (const audience of ['client_abcdefghijklmnopqrstuvwxyzABCDEF', 'did:webvh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6:t.biset.md', 'redirect_uri:http://biset.example/wallet/callback']) {
+    for (const audience of ['client_abcdefghijklmnopqrstuvwxyzABCDEF', 'did:vh:QmaQdf3VFoXtk7WjfP2rhmKAvMNinLh4qU1bjZ4mPDzVr6', 'redirect_uri:http://biset.example/wallet/callback']) {
       expect(() => assertMatchesSchema(capabilitySchema as JSONSchema, validCapabilityCredential({ subject: { audience } }), 'credential')).toThrow()
     }
   })

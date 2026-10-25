@@ -6,13 +6,10 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { credentialFor } from '../../src/client/mls/identity.ts'
 import { createMlsDeviceCredential } from '../../src/client/mls/device-credential.ts'
 import { didAuthenticationService } from '../../src/client/mls/did-authentication-service.ts'
-import { createGenesis } from '../../src/client/identity/webvh/create-genesis.ts'
-import { migrateWebvhLocation } from '../../src/client/identity/webvh/migrate.ts'
-import { encodeMultikey } from '../../src/protocol/vh/multikey.ts'
-import { multikeyHashBase58 } from '../../src/protocol/vh/hash.ts'
-import { buildGenesisLog, fakeAnchor, withFetch } from './support/did-log-fixture.ts'
+import { buildGenesisLog, withFetch } from './support/did-log-fixture.ts'
+import { extendVhLog } from './support/vh-log-fixture.ts'
 
-describe('webvh Authentication Service', () => {
+describe('did:vh Authentication Service', () => {
   test('accepts a Root-signed credential whose embedded key matches the leaf signature key', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
@@ -53,7 +50,7 @@ describe('webvh Authentication Service', () => {
   test('fails closed when the DID cannot be resolved', async () => {
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
     const authority = ed25519.utils.randomSecretKey()
-    const credential = credentialFor(createMlsDeviceCredential('did:webvh:deadbeef:test.example', '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafSignaturePublicKey, authority, authority))
+    const credential = credentialFor(createMlsDeviceCredential(`did:vh:${'Q'.repeat(46)}`, '1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', leafSignaturePublicKey, authority, authority))
     await withFetch(null, async () => {
       expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(false)
     })
@@ -66,39 +63,21 @@ describe('webvh Authentication Service', () => {
   // Root-cause regression guard: `validateRatchetTree` (vendor/clientState.ts)
   // re-validates EVERY leaf's credential -- not just a changed one -- on a
   // new device's join. A device that never re-issued its own credential
-  // (never moved) must keep validating under its OWN unchanged (old-did
-  // -prefixed) credential after a SIBLING device moves, or every future
-  // join to the self-group would fail the moment ANY device has moved.
-  test('a previously admitted device credential remains valid after a later DID generation', async () => {
+  // must keep validating under its OWN unchanged credential (it names the
+  // version it was issued at) after the DID's log moved on -- a sibling's
+  // update, or the log moving to another host -- or every future join to
+  // the self-group would fail the moment ANY update was published.
+  test('a previously admitted device credential remains valid after a later version of the DID', async () => {
     const rootPrivateKey = ed25519.utils.randomSecretKey()
     const rootPublicKey = ed25519.getPublicKey(rootPrivateKey)
     const leafSignaturePublicKey = ed25519.getPublicKey(ed25519.utils.randomSecretKey())
-    const anchor = fakeAnchor()
-    const currentSparePrivateKey = ed25519.utils.randomSecretKey()
-    const currentSparePublicKey = ed25519.getPublicKey(currentSparePrivateKey)
-    const currentSpareHash = multikeyHashBase58(encodeMultikey(currentSparePublicKey))
+    const { did, log } = buildGenesisLog(rootPrivateKey, rootPublicKey, [], 'move-src.example')
+    const credential = credentialFor(createMlsDeviceCredential(did, log[0]!.versionId, leafSignaturePublicKey, rootPrivateKey, rootPrivateKey))
 
-    const { did: oldDid, versionId } = await createGenesis({
-      domain: 'move-src.example', rootPrivateKey, rootPublicKey,
-      nextKeyHash: currentSpareHash, fetch: anchor.fetch,
-    })
-    const credential = credentialFor(createMlsDeviceCredential(oldDid, versionId, leafSignaturePublicKey, rootPrivateKey, rootPrivateKey))
-
-    // Someone else's move: only the domain changes, device-b never re-issues its credential.
-    const nextSparePrivateKey = ed25519.utils.randomSecretKey()
-    const nextKeyHash = multikeyHashBase58(encodeMultikey(ed25519.getPublicKey(nextSparePrivateKey)))
-    await migrateWebvhLocation({
-      oldDid, newDomain: 'move-dst.example',
-      signingPrivateKey: currentSparePrivateKey, signingPublicKey: currentSparePublicKey,
-      nextKeyHash, fetch: anchor.fetch,
-    })
-
-    const realFetch = globalThis.fetch
-    globalThis.fetch = anchor.fetch
-    try {
+    // Someone else's update: the log moves to another host; this device never re-issues its credential.
+    const moved = extendVhLog(log, rootPrivateKey, rootPublicKey, state => { state.alsoKnownAs = ['did:web:move-dst.example', `${did}?src=https://move-dst.example`] }, '2026-08-24T00:00:00Z')
+    await withFetch(moved, async () => {
       expect(await didAuthenticationService.validateCredential(credential, leafSignaturePublicKey)).toBe(true)
-    } finally {
-      globalThis.fetch = realFetch
-    }
+    })
   })
 })

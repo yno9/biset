@@ -15,10 +15,10 @@ import {
 } from '../src/protocol/didcomm/crypto.ts'
 
 const senderX = x25519.utils.randomSecretKey()
-const senderKid = 'did:webvh:alice#k1'
+const senderKid = 'did:vh:alice#k1'
 const recipientX = x25519.utils.randomSecretKey()
 const recipientXPub = x25519.getPublicKey(recipientX)
-const recipientKid = 'did:webvh:bob#k1'
+const recipientKid = 'did:vh:bob#k1'
 const plaintext = new TextEncoder().encode(JSON.stringify({ hello: 'world' }))
 
 function withTamperedEnc(jwe: DidCommJWE): DidCommJWE {
@@ -37,7 +37,7 @@ describe('unpack rejects an unsupported enc before resolving the sender key', ()
 
   test('unpackAuthcrypt: never calls resolveSenderKey for an apv that disagrees with the recipients', async () => {
     const other = x25519.getPublicKey(x25519.utils.randomSecretKey())
-    const packed = packAuthcrypt(plaintext, { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }, { kid: 'did:webvh:bob#k2', publicKey: other }])
+    const packed = packAuthcrypt(plaintext, { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }, { kid: 'did:vh:bob#k2', publicKey: other }])
     const jwe = { ...packed, recipients: packed.recipients.slice(0, 1) }
     let called = false
     const resolveSenderKey = async () => { called = true; return new Uint8Array(32) }

@@ -8,7 +8,7 @@ import { assertMatchesSchema, type JSONSchema } from '../src/client/identity/wal
 import capabilitySchema from '../src/client/identity/wallet/schemas/biset-messenger-capability.schema.json' with { type: 'json' }
 import { rotationKeyEditMethod } from '../src/client/didcomm/rotation-key.ts'
 
-const DID = 'did:webvh:QmScid:alice.example'
+const DID = 'did:vh:QmScid'
 const device = (extra: Record<string, unknown> = {}) => ({
   x25519PublicKey: x25519.getPublicKey(x25519.utils.randomSecretKey()),
   mediatorUrl: 'https://mediator.example', routingKid: 'did:web:mediator.example#key-1', mediatorDid: 'did:web:mediator.example', xKid: `${DID}#k_x`,

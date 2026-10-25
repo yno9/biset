@@ -88,7 +88,7 @@ describe('JMAP history export merge', () => {
       const payloads = await Promise.all(objects.map(async object => JSON.parse(new TextDecoder().decode(await decryptVaultObject(key, object))).payload))
       return { result, committed, payloads }
     }
-    const routed = card({ [DIDCOMM_CONTACT_PROPERTY]: { rotations: { 'did:peer:2.P': { prior: 'did:webvh:x:bob.example', iat: 1 } } } })
+    const routed = card({ [DIDCOMM_CONTACT_PROPERTY]: { rotations: { 'did:peer:2.P': { prior: 'did:vh:x', iat: 1 } } } })
 
     test('a card is exported with its state rank, and the file round-trips', async () => {
       const event = { version: 1, id: 'ev', identityId, actorDeviceId: 'device-b', actorSeq: 7, kind: 'contact.set', targetIds: [`contact:${id}`], objectRefs: ['o'], parents: [], createdAt: '2026-05-01T00:00:00.000Z', signature: new Uint8Array([1]) } as VaultEventV1

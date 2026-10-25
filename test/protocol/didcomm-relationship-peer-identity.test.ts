@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { deriveRelationshipPeerIdentity, decodePeerDid2 } from '../../src/protocol/didcomm/peer.ts'
 
-const counterpartyDid = 'did:webvh:QmCounterparty:bob.example'
+const counterpartyDid = 'did:vh:QmCounterparty'
 const secretA = new Uint8Array(32).fill(1)
 const secretB = new Uint8Array(32).fill(2)
 
@@ -19,7 +19,7 @@ describe('deriveRelationshipPeerIdentity', () => {
 
   test('different counterparties derive independent peers from the same secret', () => {
     const toBob = deriveRelationshipPeerIdentity(secretA, counterpartyDid)
-    const toCarol = deriveRelationshipPeerIdentity(secretA, 'did:webvh:QmCarol:carol.example')
+    const toCarol = deriveRelationshipPeerIdentity(secretA, 'did:vh:QmCarol')
     expect(toCarol.did).not.toBe(toBob.did)
   })
 

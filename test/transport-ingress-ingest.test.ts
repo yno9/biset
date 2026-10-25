@@ -4,7 +4,7 @@ import type { IngressEnvelopeV1 } from '../src/protocol/ingress.ts'
 import type { IngressVaultCommit, VaultEventRecord } from '../src/client/store/vault/store.ts'
 import { ingestTransportIngress } from '../src/client/store/vault/ingress-ingest.ts'
 
-const identityId = 'did:webvh:test:alice.example'
+const identityId = 'did:vh:test'
 const payload = new TextEncoder().encode('{"ciphertext":"opaque"}')
 const envelope: IngressEnvelopeV1 = {
   version: 1,

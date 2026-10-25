@@ -17,7 +17,7 @@ const generation2 = `2-${'b'.repeat(32)}`
 
 describe('Sign generation MLS transition', () => {
   test('updates the executing leaf and removes every sibling in one commit', async () => {
-    const did = 'did:webvh:QmGeneration:alice.example'
+    const did = 'did:vh:QmGeneration'
     const root = ed25519.utils.randomSecretKey()
     const sign1 = root
     const sign2 = ed25519.utils.randomSecretKey()

@@ -5,7 +5,7 @@ import { chooseRoute, ownRotationIdentity } from '../src/client/didcomm/did-rota
 import { applyContactSet, didContactPatch, ownRotationPatch, type LocalJmapContactCard } from '../src/client/store/projection/contacts.ts'
 import { fromPriorClaims } from '../src/protocol/didcomm/from-prior.ts'
 
-const DID = 'did:webvh:scid:alice.example'
+const DID = 'did:vh:scid'
 const seed = crypto.getRandomValues(new Uint8Array(32))
 
 describe('the key\'s id', () => {
@@ -22,7 +22,7 @@ describe('the key\'s id', () => {
   })
 
   test('from_prior is signed under it', () => {
-    const mediatorDid = 'did:web:mediator.example', peerDid = 'did:webvh:scid2:bob.example'
+    const mediatorDid = 'did:web:mediator.example', peerDid = 'did:vh:scid2'
     let card = applyContactSet(undefined, didContactPatch(peerDid))! as LocalJmapContactCard
     card = applyContactSet(card, ownRotationPatch(card.id, ownRotationIdentity(seed, peerDid, mediatorDid).did, 'startedAt', '2026-10-08T00:00:00Z'))!
     const route = chooseRoute(peerDid, { identityDid: DID, frontDoor: { fromKid: `${DID}#a`, x25519PrivateKey: new Uint8Array(32) }, cards: [card], rotation: { seed, mediatorDid }, now: () => 1_800_000_000_000 })

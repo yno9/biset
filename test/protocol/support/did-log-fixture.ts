@@ -1,6 +1,6 @@
-// Test-only helper for building a hand-signed did:webvh log, shared by every
+// Test-only helper for building a hand-signed did:vh log, shared by every
 // test that needs a resolvable DID document without an anchor server. This
-// mirrors src.bak/did/webvh/publish.ts's createGenesis just enough to
+// builds just enough of a genesis entry to
 // produce a log resolveEntries() accepts; it is deliberately not a second
 // implementation of that flow — only genesis, only what verification needs.
 import { ed25519 } from '@noble/curves/ed25519.js'
@@ -10,6 +10,10 @@ import { canonicalize } from '../../../src/protocol/vh/jcs.ts'
 import { multihashSha256 } from '../../../src/protocol/vh/multihash.ts'
 import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'
 import type { LogEntry, LogParameters } from '../../../src/protocol/vh/log.ts'
+import { rememberVhLocation } from '../../../src/protocol/did-resolve.ts'
+
+/** Where each fixture log is "published" (for a test watcher to forward to). */
+export const fixtureDomains = new Map<string, string>()
 
 export function jcsMultihashBase58(value: unknown): string {
   return base58.encode(multihashSha256(new TextEncoder().encode(canonicalize(value))))
@@ -32,15 +36,14 @@ export function signProof(document: object, verificationMethod: string, privateK
   return { ...config, proofValue: 'z' + base58.encode(signature) }
 }
 
-/** Builds a single-entry signed log for `did:webvh:{scid}:test.example`, with
- * `verificationMethod` carrying the root key at #key-1 plus every extra
- * verification method the caller supplies (device signing keys, MLS leaf
- * signature keys, etc). */
+/** Builds a single-entry signed did:vh log: the root key at #key-1 plus every extra verification method the caller
+ * supplies (device signing keys, MLS leaf signature keys, etc). `domain` is the place it is published at: the document
+ * names `did:web:<domain>` as an alias. */
 export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8Array, extraVerificationMethods: Array<{ fragment: string; publicKey: Uint8Array }>, domain = 'test.example', didComm?: DidCommStateExtras): { did: string; log: LogEntry[] } {
   const updateKey = encodeMultikey(rootPublicKey)
-  const versionTime = '2026-08-23T00:00:00.000Z'
-  const placeholderDid = `did:webvh:{SCID}:${domain}`
-  const parameters: LogParameters = { method: 'did:webvh:1.0', scid: '{SCID}', updateKeys: [updateKey], nextKeyHashes: didComm?.nextKeyHashes ?? [], portable: didComm?.portable ?? false, witness: {}, watchers: [], deactivated: false, ttl: 3600 }
+  const versionTime = '2026-08-23T00:00:00Z'
+  const placeholderDid = 'did:vh:{SCID}'
+  const parameters: LogParameters = { method: 'did:vh:1.0', scid: '{SCID}', updateKeys: [updateKey], ...(didComm?.nextKeyHashes?.length ? { nextKeyHashes: didComm.nextKeyHashes } : {}) }
   const rootKeyId = `${placeholderDid}#key-1`
   const state = {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/multikey/v1'],
@@ -59,7 +62,7 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
           ? entry.serviceEndpoints.map(e => ({ uri: e.uri, accept: ['didcomm/v2'], ...(e.routingKeys === null ? {} : { routingKeys: e.routingKeys ?? [] }) }))
           : { uri: entry.uri, accept: ['didcomm/v2'], routingKeys: entry.routingKeys ?? [] },
       })),
-    alsoKnownAs: [],
+    alsoKnownAs: [`did:web:${domain}`],
   }
   for (const key of didComm?.keyAgreementKeys ?? []) {
     state.verificationMethod.push({ id: `${placeholderDid}#${key.fragment}`, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: encodeX25519Multikey(key.x25519PublicKey) })
@@ -67,14 +70,15 @@ export function buildGenesisLog(rootPrivateKey: Uint8Array, rootPublicKey: Uint8
   for (const vm of didComm?.rawVerificationMethods ?? []) {
     state.verificationMethod.push({ id: `${placeholderDid}#${vm.fragment}`, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: vm.publicKeyMultibase })
   }
-  const preliminary = { versionId: '{SCID}', versionTime, parameters, state }
-  const scid = jcsMultihashBase58(preliminary)
+  const scid = jcsMultihashBase58({ versionId: '{SCID}', versionTime, parameters, state })
   const did = placeholderDid.replace('{SCID}', scid)
   const real = JSON.parse(JSON.stringify({ parameters, state }).split('{SCID}').join(scid)) as { parameters: LogParameters; state: object }
   const entryHash = jcsMultihashBase58({ versionId: scid, versionTime, parameters: real.parameters, state: real.state })
-  const versionId = `1-${entryHash}`
-  const unsigned = { versionId, versionTime, parameters: real.parameters, state: real.state }
+  const unsigned = { versionId: `1-${entryHash}`, versionTime, parameters: real.parameters, state: real.state }
   const proof = signProof(unsigned, `did:key:${updateKey}#${updateKey}`, rootPrivateKey, versionTime)
+  // A did:vh names no host: the fixture says where the log is published, as a contact's address would.
+  rememberVhLocation(did, domain)
+  fixtureDomains.set(did, domain)
   return { did, log: [{ ...unsigned, proof: [proof] }] }
 }
 
@@ -142,10 +146,7 @@ export interface DidCommStateExtras {
    * clearnet+onion array), bypassing the `{uri, accept, routingKeys}` map
    * shorthand entirely. */
   services?: Array<{ id: string; uri: string; routingKeys?: string[] } | { id: string; serviceEndpoints: Array<{ uri: string; routingKeys?: string[] | null }> }>
-  /** Genesis-only parameters a later append needs: `portable: true` to allow
-   * a domain move at all, and a Spare Key commitment to sign one with
-   * (migrate.ts enforces both). */
-  portable?: boolean
+  /** A Spare Key commitment (pre-rotation) in the genesis parameters. */
   nextKeyHashes?: string[]
 }
 

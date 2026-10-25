@@ -1,4 +1,4 @@
-// Test-only helper for building a hand-signed did:vh log: the counterpart of webvh-log-fixture.ts. Built from the same
+// Test-only helper for building a hand-signed did:vh log: built from the same
 // primitives (JCS, multihash, Ed25519 data-integrity proofs), not from the resolver under test. A genesis entry and
 // appended entries signed by the key the entry before authorised (no pre-rotation), whole-second UTC times.
 import { encodeX25519Multikey } from '../../../src/protocol/didcomm/multikey.ts'

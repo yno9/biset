@@ -7,7 +7,7 @@ const signer: VaultEventAuthor = { deviceId: 'device-a' }
 describe('vault events', () => {
   test('binds the ID to the canonical event content', async () => {
     const event = await createVaultEvent({
-      identityId: 'did:webvh:example:alice',
+      identityId: 'did:vh:example:alice',
       actorDeviceId: 'device-a',
       actorSeq: 1,
       kind: 'message.add',
@@ -24,15 +24,15 @@ describe('vault events', () => {
 
 describe('vault manifests', () => {
   test('has a stable root independent of input ordering and duplicates', () => {
-    const first = buildVaultManifest('did:webvh:example:alice', ['event-b', 'event-a', 'event-a'], ['object-b', 'object-a'], '2026-08-21T00:00:00.000Z')
-    const second = buildVaultManifest('did:webvh:example:alice', ['event-a', 'event-b'], ['object-a', 'object-b'], '2026-08-21T01:00:00.000Z')
+    const first = buildVaultManifest('did:vh:example:alice', ['event-b', 'event-a', 'event-a'], ['object-b', 'object-a'], '2026-08-21T00:00:00.000Z')
+    const second = buildVaultManifest('did:vh:example:alice', ['event-a', 'event-b'], ['object-a', 'object-b'], '2026-08-21T01:00:00.000Z')
     expect(first.root).toBe(second.root)
     expect(verifyVaultManifest(first)).toBe(true)
   })
 
   test('returns only objects and events absent from the target', () => {
-    const source = buildVaultManifest('did:webvh:example:alice', ['event-a', 'event-b'], ['object-a', 'object-b'], '2026-08-21T00:00:00.000Z')
-    const target = buildVaultManifest('did:webvh:example:alice', ['event-a'], ['object-b'], '2026-08-21T00:00:00.000Z')
+    const source = buildVaultManifest('did:vh:example:alice', ['event-a', 'event-b'], ['object-a', 'object-b'], '2026-08-21T00:00:00.000Z')
+    const target = buildVaultManifest('did:vh:example:alice', ['event-a'], ['object-b'], '2026-08-21T00:00:00.000Z')
     expect(diffVaultManifests(source, target)).toEqual({ missingEvents: ['event-b'], missingObjects: ['object-a'] })
   })
 })

@@ -12,6 +12,10 @@ import { RightCol } from '../../src/client/app/ui/right-col.tsx'
 import { refreshInbox, showApp } from '../../src/client/app/ui/shell.ts'
 import { setPage, uiPage } from '../../src/client/app/ui/state.ts'
 import { mail, shell } from '../../src/client/app/ui/stores.ts'
+import { setVerifiedAddresses } from '../../src/client/app/ui/did-display.ts'
+
+/** A did:vh for a test person: a valid SCID (46 base58 characters) made from the name. */
+const vhOf = (name: string) => `did:vh:${('Qm' + name).padEnd(46, 'Z')}`
 
 const ME = 'me@did.md'
 const T0 = Date.parse('2026-10-16T12:00:00Z')
@@ -81,7 +85,8 @@ test('a message body is text: markup in it is shown, not run, and links are link
 })
 
 test('a DIDComm sender is shown by its short name; badges mark what is wrong with a mail', () => {
-  setMessages([message({ from: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:dave.did.md', from_name: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:dave.did.md', thread_id: 'D' }),
+  setVerifiedAddresses(new Map([[vhOf('dave'), 'dave@did.md']]))
+  setMessages([message({ from: vhOf('dave'), from_name: vhOf('dave'), thread_id: 'D' }),
     message({ auth: { dmarc: 'fail', domain: 'evil.example' } as never, edited: true, reactions: [{ from: 'a', emoji: '👍' }], sourceUrl: 'javascript:alert(1)', thread_id: 'E', ts: T0 + 1000 })])
   const { container, rerender } = app(<RightCol />)
   expect(container.querySelector('.t-sender')!.textContent).toBe('Bob')
@@ -131,7 +136,8 @@ test('a thread shows who it is with, over which transport, and its headers on a 
 
 test('a group chat is titled by its name and lists its members', async () => {
   const G = 'didcomm-group:g1'
-  const did = (n: string) => `did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:${n}.did.md`
+  const did = vhOf
+  setVerifiedAddresses(new Map(['me', 'zed', 'amy'].map(n => [did(n), `${n}@did.md`])))
   act(() => composeConfig.set(config({ selfDid: did('me'), didcommGroup: { groupName: async () => 'Book club', membersOf: async () => [did('me'), did('zed'), did('amy')] } })))
   setMessages([message({ from: did('zed'), from_name: did('zed'), thread_id: G, subject: 'subject' })])
   const { container } = app(<RightCol />)
@@ -315,7 +321,7 @@ test('the pane toggle collapses and reopens it, and remembers on a wide screen',
 // ── the shell ────────────────────────────────────────────────────────────────
 
 test('the menu opens under its button and goes to the page chosen', () => {
-  accountConfig.set({ did: 'did:webvh:QmafKp1jjhnP1vjDYZs6rpQ7bk3mQBS2hQvwGbqc2UAEYi:me.did.md' } as never)
+  accountConfig.set({ did: vhOf('me') } as never)
   const { container } = app(<><RightCol /><HamburgerMenu /></>)
   const menu = container.querySelector('#lp-hamburger-menu')!
   expect(menu.classList.contains('open')).toBe(false)

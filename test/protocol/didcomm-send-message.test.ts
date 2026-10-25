@@ -9,7 +9,7 @@ import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { buildDidCommLog, type DidCommStateExtras } from '../protocol/support/did-log-fixture.ts'
 import type { LogEntry } from '../../src/protocol/vh/log.ts'
 
-const senderKid = 'did:webvh:def456:bob.test.example#k_senderhash'
+const senderKid = 'did:vh:Qmsender#k_senderhash'
 const senderX = x25519.utils.randomSecretKey()
 const recipientX = x25519.utils.randomSecretKey()
 const recipientXPub = x25519.getPublicKey(recipientX)
@@ -118,7 +118,7 @@ describe('sendDidCommMessage', () => {
   test('a queued message keeps its id and time; a group message carries its thread and every participant in `to`', () => {
     const to = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
     const captured: { body?: string; url?: string } = {}
-    const carol = 'did:webvh:QmCarol:carol.test.example'
+    const carol = 'did:vh:QmCarol'
     return withCombinedFetch(testFetch({ log: to.log, postCapture: captured }), async (fetchImpl) => {
       const result = await sendDidCommMessage(to.did, 'to the group', {
         fromKid: senderKid, x25519PrivateKey: senderX, fetch: fetchImpl,
@@ -231,13 +231,13 @@ describe('sendDidCommMessage', () => {
   })
 
   // Regression guard for the 2026-09-09 fix: a recipient identified only by
-  // a did:peer:2 (no domain of its own to publish a did:webvh log at --
+  // a did:peer:2 (no place of its own to publish a log at --
   // e.g. an outside DIDComm agent/bot) used to crash resolution with
-  // `parseWebvhDid: not a did:webvh identifier` the instant
+  // `not a did:vh identifier` the instant
   // sendFrontDoorMessage/frontDoorMediatorRoute tried to treat it as a
-  // did:webvh. did:peer:2 is self-certifying, so no fetch should happen at
+  // did:vh. did:peer:2 is self-certifying, so no fetch should happen at
   // all for the recipient side -- only the mediator POST itself.
-  test('sends directly to a did:peer:2 recipient with no did:webvh resolution', () => {
+  test('sends directly to a did:peer:2 recipient with no did:vh resolution', () => {
     const mediator = generatePeerIdentity({ uri: 'https://mediator.test.example', accept: ['didcomm/v2'] })
     const recipient = generatePeerIdentity({ uri: 'https://mediator.test.example', routingKeys: [mediator.xKid] })
     const captured: { body?: string; url?: string } = {}
@@ -285,7 +285,7 @@ describe('answerTrustPing (Trust Ping 2.0)', () => {
 
   test('answers a ping on the front door with a ping-response threaded to it, sent as application/didcomm-encrypted+json', async () => {
     const pinger = oneDevice('https://recipient-core.test.example/v1/didcomm/ingress')
-    const ping = buildPlaintext(PING, {}, pinger.did, 'did:webvh:def456:bob.test.example')
+    const ping = buildPlaintext(PING, {}, pinger.did, 'did:vh:def456')
     let contentType: string | null = null
     let body: string | undefined
     const handler = testFetch({ log: pinger.log })
@@ -305,7 +305,7 @@ describe('answerTrustPing (Trust Ping 2.0)', () => {
   })
 
   test('owes nothing for response_requested: false, or for anything but a ping', async () => {
-    const pinger = 'did:webvh:abc:alice.test.example'
+    const pinger = 'did:vh:abc'
     expect(await answerTrustPing(buildPlaintext(PING, { response_requested: false }, pinger), frontDoor)).toBeNull()
     expect(await answerTrustPing(buildPlaintext(BASIC_MESSAGE, { content: 'hi' }, pinger), frontDoor)).toBeNull()
   })

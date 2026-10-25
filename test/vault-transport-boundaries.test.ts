@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, test } from 'vitest'
 import { IndexedDbVaultStore, type VaultEventRecord } from '../src/client/store/vault/store.ts'
 
-const identityId = 'did:webvh:test:alice.example'
+const identityId = 'did:vh:test'
 const eventId = 'sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const createdAt = '2026-08-27T00:00:00.000Z'
 const event: VaultEventRecord = {

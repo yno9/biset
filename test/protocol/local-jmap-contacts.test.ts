@@ -14,7 +14,7 @@ import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import { createSegmentKey } from '../../src/client/store/vault/objects.ts'
 
 const IDENTITY = 'did:web:alice.example'
-const BOB = 'did:webvh:QmScid:bob.example'
+const BOB = 'did:vh:QmScid'
 const bobUid = didContactUid(BOB)
 const bobId = contactCardId(bobUid)
 
@@ -33,7 +33,7 @@ const bobCard = (extra: Record<string, unknown> = {}) => creatingPatch({ '@type'
 
 describe('contact ids', () => {
   test('a public DID\'s card uid is RFC 9562 name-based (v5, URL namespace), so every device makes the same card', () => {
-    expect(bobUid).toBe('urn:uuid:26a9163a-ad74-586e-8597-abb16d5094fd')
+    expect(bobUid).toBe('urn:uuid:c3f5f93e-8880-5a16-bec2-118e3bb8a6c0')
     expect(contactCardId(bobUid)).toBe(bobId)
     expect(contactCardId('urn:uuid:other')).not.toBe(bobId)
   })

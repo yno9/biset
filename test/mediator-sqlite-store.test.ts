@@ -48,8 +48,8 @@ describe('SqliteMediatorStore', () => {
     second.close()
   }))
 
-  test('mediator identity, inboxes, did:webvh state, opaque queue, and replay IDs survive restart', () => withDatabase(path => {
-    const did = 'did:webvh:scid:example.test'
+  test('mediator identity, inboxes, did:vh state, opaque queue, and replay IDs survive restart', () => withDatabase(path => {
+    const did = 'did:vh:scid'
     const first = SqliteMediatorStore.open(path)
     const identity = first.loadIdentity('https://mediator.example')
     first.recordLogState(did, 3, { [`${did}#k_a`]: '010203' })

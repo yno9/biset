@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-vi.mock('../../src/protocol/webvh/resolver.ts', () => ({ resolve: vi.fn(async () => ({ id: 'did:webvh:SCID:alice.did.md' })) }))
+vi.mock('../../src/protocol/did-resolve.ts', async importOriginal => ({ ...await importOriginal<typeof import('../../src/protocol/did-resolve.ts')>(), resolveDidDocument: vi.fn(async () => ({ id: 'did:vh:SCID' })) }))
 
 import { AccountList, KeysPanel, ellipsizeScid } from '../../src/client/app/ui/account/account-list.tsx'
 import { TextCardDialog } from '../../src/client/app/ui/account/text-card-dialog.tsx'
@@ -9,19 +9,19 @@ import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from 
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 
 const messages: string[] = []
-const REAL_DID = 'did:webvh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv:alice.did.md'
+const REAL_DID = 'did:vh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv'
 function config(over: Partial<AccountPageConfig> = {}, didComm: Partial<NonNullable<NonNullable<AccountPageConfig['wallet']>['didComm']>> = {}): AccountPageConfig {
   return {
-    did: 'did:webvh:SCID:alice.did.md',
+    did: 'did:vh:SCID',
     wallet: {
       handle: 'alice.did.md', deviceJkt: 'jkt', capabilityExpiresAt: '2030-01-01T00:00:00Z',
-      didComm: { xKid: 'did:webvh:SCID:alice.did.md#me', mediatorUrl: 'https://mediator.biset.md/', ...didComm },
+      didComm: { xKid: 'did:vh:SCID#me', mediatorUrl: 'https://mediator.biset.md/', ...didComm },
       onDisconnect: async () => {},
       onEditMediator: vi.fn(async () => {}), onEnableTor: vi.fn(async () => {}), onLogOutMediator: vi.fn(async () => {}), onEnableMessaging: vi.fn(async () => {}),
     },
     vault: { state: 'connected', coordinatorUrl: 'didcomm', devices: [
-      { deviceId: 'did:webvh:SCID:alice.did.md#bbbbbbbbbbbbbbbbbbbbbbbb', current: false },
-      { deviceId: 'did:webvh:SCID:alice.did.md#me', current: true },
+      { deviceId: 'did:vh:SCID#bbbbbbbbbbbbbbbbbbbbbbbb', current: false },
+      { deviceId: 'did:vh:SCID#me', current: true },
     ] },
     showMessage: text => { messages.push(text) },
     ...over,
@@ -40,7 +40,7 @@ test('no mediator card is drawn before there is a mediator (the Identity host ca
 })
 
 test('the Identity host card: green when the DID resolves, red when not, a link on the host, and the DID log in a new tab', async () => {
-  const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
+  const { resolveDidDocument: resolve } = await import('../../src/protocol/did-resolve.ts')
   const next = config({ did: REAL_DID })
   const { container } = render(<AccountList />)
   set({ ...next, wallet: { ...next.wallet! } })
@@ -71,7 +71,7 @@ test('the Identity host card names where the wallet is, with or without a mediat
 })
 
 test('the Identity host dot is not looked up again when the card is shown again (a tab switch)', async () => {
-  const { resolve } = await import('../../src/protocol/webvh/resolver.ts')
+  const { resolveDidDocument: resolve } = await import('../../src/protocol/did-resolve.ts')
   const did = REAL_DID.replace('QmPLLK', 'QmPLLM')
   const next = config({ did })
   const first = render(<AccountList />)

@@ -5,7 +5,7 @@ devices, so no server holds a permanent mailbox or message history.
 
 ## How it is put together
 
-- **Identity lives elsewhere.** did:webvh identities are issued and hosted by an external
+- **Identity lives elsewhere.** did:vh identities are issued and hosted by an external
   provider (did.md). Biset resolves public documents and never writes them.
 - **The log is the source of truth.** Each device keeps an encrypted Vault in IndexedDB:
   signed immutable events, content-addressed ciphertext objects, and segment key wraps.

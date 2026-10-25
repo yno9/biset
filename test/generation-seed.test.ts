@@ -1,4 +1,4 @@
-// The generation seed and its authority, read off the did:webvh log
+// The generation seed and its authority, read off the did:vh log
 // (PLAN-refactor.md §4.2, §7-1, §7-2, §9.2): the seed in use is the one whose
 // rotation key the DID document publishes; a removed device may not use any.
 import { describe, expect, test } from 'vitest'
@@ -9,7 +9,7 @@ import {
 import { generationSeedRecord } from '../src/client/store/vault/generation-seed.ts'
 import { publishedRotationKey, rotationKeyEditMethod, rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../src/client/didcomm/rotation-key.ts'
 
-const DID = 'did:webvh:scid:alice.example'
+const DID = 'did:vh:scid'
 const kid = (fragment: string) => `${DID}#${fragment}`
 const T0 = Date.parse('2026-10-08T00:00:00Z')
 const at = (ms: number) => new Date(T0 + ms).toISOString()

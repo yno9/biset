@@ -134,7 +134,7 @@ describe('wrapForwardHops', () => {
 })
 
 describe('sending to a DID whose endpoint names its mediator by DID', () => {
-  /** A did:webvh recipient whose `#didcomm` service is `uri: did:web:mediator.example`, no routingKeys. */
+  /** A did:vh recipient whose `#didcomm` service is `uri: did:web:mediator.example`, no routingKeys. */
   function recipient(m: ReturnType<typeof mediator>) {
     const root = ed25519.utils.randomSecretKey()
     const xPriv = x25519.utils.randomSecretKey()
@@ -154,7 +154,7 @@ describe('sending to a DID whose endpoint names its mediator by DID', () => {
     const m = mediator()
     const bob = recipient(m)
     const aliceX = x25519.utils.randomSecretKey()
-    const sent = await sendFrontDoorMessage(bob.did, 'https://didcomm.org/basicmessage/2.0/message', { content: 'hi' }, { fromKid: 'did:webvh:scid:alice.example#k_a', x25519PrivateKey: aliceX, fetch: bob.fetchImpl })
+    const sent = await sendFrontDoorMessage(bob.did, 'https://didcomm.org/basicmessage/2.0/message', { content: 'hi' }, { fromKid: 'did:vh:scid#k_a', x25519PrivateKey: aliceX, fetch: bob.fetchImpl })
     expect(sent).toEqual({ ok: true })
     expect(bob.posted).toHaveLength(1)
     expect(bob.posted[0]!.url).toBe(URL_)
@@ -167,7 +167,7 @@ describe('sending to a DID whose endpoint names its mediator by DID', () => {
     const m = mediator()
     const bob = recipient(m)
     const aliceX = x25519.utils.randomSecretKey()
-    expect(await sendDidCommMessage(bob.did, 'hi', { fromKid: 'did:webvh:scid:alice.example#k_a', x25519PrivateKey: aliceX, fetch: bob.fetchImpl, subject: 'Greeting' })).toEqual({ ok: true })
+    expect(await sendDidCommMessage(bob.did, 'hi', { fromKid: 'did:vh:scid#k_a', x25519PrivateKey: aliceX, fetch: bob.fetchImpl, subject: 'Greeting' })).toEqual({ ok: true })
     const forward = JSON.parse(new TextDecoder().decode(await unpackAnoncrypt(parseJwe(JSON.parse(bob.posted[0]!.body))!, { kid: m.kid, privateKey: m.xPriv })))
     const { plaintext } = await unpackAuthcrypt(forward.attachments[0].data.json, { kid: bob.kid, privateKey: bob.xPriv }, async () => x25519.getPublicKey(aliceX))
     const message = JSON.parse(new TextDecoder().decode(plaintext))

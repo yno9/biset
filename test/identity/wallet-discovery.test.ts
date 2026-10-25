@@ -4,26 +4,26 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { resolveWalletFromSuffix } from '../../src/client/identity/wallet/did-md-oauth.ts'
 import { jcsMultihashBase58, signProof, encodeMultikey } from '../protocol/support/did-log-fixture.ts'
 
-// Wallet discovery by did:webvh suffix (atproto-style: resolve the
+// Wallet discovery by suffix (the did:vh published at that host) (atproto-style: resolve the
 // identity's own DID document, read its "SelfIssuedOPAuthorizationEndpoint" service entry --
 // the same pattern atproto's #atproto_pds/AtprotoPersonalDataServer entry
 // uses for PDS discovery, applied to wallet discovery instead of data
-// hosting). See ~/did.md/client/did-webvh.ts's buildGenesis, which publishes
-// this entry, and ~/did.md/ARC.md §3.4 / §4.4 for the design rationale.
+// hosting). See dito's ARC.md for the design rationale.
 
 function genesisLog(domain: string, service: Array<{ id: string; type: string; serviceEndpoint: string }>) {
   const privateKey = ed25519.utils.randomSecretKey()
   const publicKey = ed25519.getPublicKey(privateKey)
   const updateKey = encodeMultikey(publicKey)
-  const versionTime = '2026-09-21T00:00:00.000Z'
-  const placeholderDid = `did:webvh:{SCID}:${domain}`
-  const parameters = { method: 'did:webvh:1.0', scid: '{SCID}', updateKeys: [updateKey], nextKeyHashes: [], portable: false, witness: {}, watchers: [], deactivated: false, ttl: 3600 }
+  const versionTime = '2026-09-21T00:00:00Z'
+  const placeholderDid = 'did:vh:{SCID}'
+  const parameters = { method: 'did:vh:1.0', scid: '{SCID}', updateKeys: [updateKey] }
   const rootKeyId = `${placeholderDid}#pass-1`
   const state = {
     '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/multikey/v1'],
     id: placeholderDid,
     verificationMethod: [{ id: rootKeyId, type: 'Multikey' as const, controller: placeholderDid, publicKeyMultibase: updateKey }],
     authentication: [rootKeyId],
+    alsoKnownAs: [`did:web:${domain}`],
     service: service.map(entry => ({ id: `${placeholderDid}${entry.id}`, type: entry.type, serviceEndpoint: entry.serviceEndpoint })),
   }
   const preliminary = { versionId: '{SCID}', versionTime, parameters, state }
@@ -55,9 +55,9 @@ test('resolveWalletFromSuffix reads the SelfIssuedOPAuthorizationEndpoint servic
   expect(requested).toEqual(['https://alice.did.md/.well-known/did.jsonl'])
 })
 
-test('resolveWalletFromSuffix rejects a domain with no did:webvh identity', async () => {
+test('resolveWalletFromSuffix rejects a domain with no did:vh identity', async () => {
   globalThis.fetch = (async () => new Response('not found', { status: 404 })) as typeof fetch
-  await expect(resolveWalletFromSuffix('nobody.example')).rejects.toThrow(/no did:webvh identity/)
+  await expect(resolveWalletFromSuffix('nobody.example')).rejects.toThrow(/no did:vh identity/)
 })
 
 test('resolveWalletFromSuffix rejects an identity that does not publish a wallet', async () => {

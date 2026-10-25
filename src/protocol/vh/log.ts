@@ -3,6 +3,7 @@
 import { jcsMultihashBase58 } from './hash.ts'
 import type { DataIntegrityProof } from './proof.ts'
 
+/** @public Used by the test fixtures that build logs. */
 export interface LogParameters {
   method?: string
   scid?: string
@@ -36,7 +37,7 @@ function entryHashOf(versionId: string): string {
 
 /** Computes the entryHash for a new entry not yet given its final versionId.
  * `predecessorVersionId` is the SCID itself for the genesis entry, or the
- * full previous entry's versionId otherwise. */
+ * full previous entry's versionId otherwise. @public Used by the test fixtures that build logs. */
 export function generateEntryHash(predecessorVersionId: string, versionTime: string, parameters: LogParameters, state: object): string {
   return jcsMultihashBase58({ versionId: predecessorVersionId, versionTime, parameters, state })
 }

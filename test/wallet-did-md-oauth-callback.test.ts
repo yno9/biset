@@ -4,8 +4,7 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { bytesToBase64url, canonicalBytes } from '../src/protocol/canonical.ts'
 import { encodeMultikey } from '../src/protocol/vh/multikey.ts'
 import { buildProof } from '../src/protocol/vh/proof.ts'
-import { didToHttpsUrl } from '../src/protocol/vh/identifier.ts'
-import { buildGenesisLog } from './protocol/support/did-log-fixture.ts'
+import { buildGenesisLog, fixtureDomains } from './protocol/support/did-log-fixture.ts'
 import {
   clearDidMdPendingAuthorization,
   readDidMdDeviceSession,
@@ -60,9 +59,9 @@ async function pendingFixture(overrides: Partial<DidMdPendingAuthorization> = {}
     clientId: CLIENT_ID,
     state: 'expected-state',
     nonce: NONCE,
-    did: 'did:webvh:111111111111111111111111111111111111111111111111:test.example',
+    did: 'did:vh:1111111111111111111111111111111111111111111111',
     handle: 'alice.did.md',
-    verificationMethod: 'did:webvh:111111111111111111111111111111111111111111111111:test.example#key-1',
+    verificationMethod: 'did:vh:1111111111111111111111111111111111111111111111#key-1',
     rootPublicKey: bytes(1),
     deviceJkt: 'A'.repeat(43),
     privateKey: pair.privateKey,
@@ -95,7 +94,7 @@ function serveLog(did: string, log: unknown[]): void {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = input.toString()
     // The log is read with a unique query string (log-io.ts's freshFetch: a CDN must not answer for a just-published edit).
-    if (url.split('?')[0] === didToHttpsUrl(did)) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
+    if (url.split('?')[0] === `https://${fixtureDomains.get(did)}/.well-known/did.jsonl`) return new Response(log.map(entry => JSON.stringify(entry)).join('\n') + '\n')
     return new Response('unexpected request', { status: 500 })
   }) as typeof fetch
 }
@@ -159,7 +158,7 @@ describe('did.md SIOPv2 callback validation', () => {
     ['a presentation bound to another nonce', { nonce: 'x'.repeat(32) }, 'presentation proof is invalid'],
     ['a presentation bound to another verifier', { domain: 'redirect_uri:https://evil.example/wallet/callback' }, 'presentation proof is invalid'],
     ['an id_token for another audience', { aud: 'redirect_uri:https://evil.example/wallet/callback' }, 'id_token is invalid'],
-    ['an id_token whose issuer is not the holder', { iss: 'did:webvh:222222222222222222222222222222222222222222222222:other.example' }, 'id_token is invalid'],
+    ['an id_token whose issuer is not the holder', { iss: 'did:vh:2222222222222222222222222222222222222222222222' }, 'id_token is invalid'],
   ] as const)('rejects %s', async (_label, tamper, message) => {
     await deliver(tamper)
     await expect(completeDidMdWalletCallback()).rejects.toThrow(message)

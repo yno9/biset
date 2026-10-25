@@ -95,7 +95,7 @@ export function isLogDid(did: string): boolean {
  * can send, so the mediator never connects to
  * itself, a private network, or a literal address. This looks at the name
  * only; `isPublicAddress` checks what the name resolves to. */
-export function isPublicHostname(hostname: string): boolean {
+function isPublicHostname(hostname: string): boolean {
   // A trailing dot is the same name (`localhost.` is `localhost`).
   const host = hostname.toLowerCase().replace(/\.+$/, '')
   if (!host.includes('.') || host.includes(':') || host.startsWith('[')) return false
@@ -136,7 +136,7 @@ function ipv6Bytes(ip: string): number[] | undefined {
  * address inside an IPv6 one (IPv4-mapped, or a NAT64 `64:ff9b::/96`
  * address, which an IPv6-only host sees for any IPv4 site) is judged as the
  * IPv4 address it carries. */
-export function isPublicAddress(ip: string): boolean {
+function isPublicAddress(ip: string): boolean {
   const v4 = ipv4Bytes(ip)
   if (v4) {
     const [a, b, c] = v4 as [number, number, number, number]
@@ -153,7 +153,7 @@ export function isPublicAddress(ip: string): boolean {
   return !((v6[0]! & 0xfe) === 0xfc || (v6[0] === 0xfe && (v6[1]! & 0xc0) === 0x80) || v6[0] === 0xff) // fc00::/7, fe80::/10, ff00::/8
 }
 
-export interface NetworkResolverOptions {
+interface NetworkResolverOptions {
   fetch?: typeof fetch
   timeoutMs?: number
   maxLogBytes?: number

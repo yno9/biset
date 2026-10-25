@@ -28,9 +28,9 @@ const ok = (name: string, cond: boolean, detail = '') => {
 const enc = new TextEncoder(), dec = new TextDecoder()
 const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i])
 
-const ALICE_DID = 'did:webvh:example.com:alice'
-const BOB_DID = 'did:webvh:example.com:bob'
-const CAROL_DID = 'did:webvh:example.com:carol'
+const ALICE_DID = 'did:vh:example.com:alice'
+const BOB_DID = 'did:vh:example.com:bob'
+const CAROL_DID = 'did:vh:example.com:carol'
 const aliceRoot = ed25519.utils.randomSecretKey()
 const bobRoot = ed25519.utils.randomSecretKey()
 const carolRoot = ed25519.utils.randomSecretKey()
@@ -113,7 +113,7 @@ let carolGroup = await joinMlsGroup(bobAdds.welcome!, carol, bobGroup.ratchetTre
 ok('carol joined at epoch 2', epochOf(carolGroup) === 2n)
 
 // Removing an identity means removing every device it has in the group.
-const removal = await removeMembers(aliceGroup, memberKids(aliceGroup, 'did:webvh:example.com:bob'), false)
+const removal = await removeMembers(aliceGroup, memberKids(aliceGroup, 'did:vh:example.com:bob'), false)
 aliceGroup = removal.state
 ok('remove advanced the epoch', epochOf(aliceGroup) === 3n)
 ok('both of bobs devices are gone', memberDids(aliceGroup).join(',') === `${ALICE_DID},${CAROL_DID}`, memberDids(aliceGroup).join(','))
@@ -142,7 +142,7 @@ ok('remaining member still can', carolReads.kind === 'message' && dec.decode(car
 // member derives too — so it keeps reading. The removal above happened to
 // remove TWO leaves at once and therefore took the correct path by accident,
 // which is exactly why this case is written out separately.
-const ERIN_DID = 'did:webvh:example.com:erin'
+const ERIN_DID = 'did:vh:example.com:erin'
 const erinOwn = await own(ERIN_DID, ed25519.utils.randomSecretKey())
 const ERIN = erinOwn.credential.deviceKid
 const erin = erinOwn.package

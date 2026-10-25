@@ -32,8 +32,10 @@ test('the contact card of a did:vh is the same under any fragment, and keeps the
   // without a verified address nothing is invented
   expect(Object.keys(didContactPatch(did).patch).some(key => key.startsWith('emails/'))).toBe(false)
   const card = { id: created.cardId, emails: {} } as Parameters<typeof aliasPatch>[0]
-  expect(aliasPatch(card, did)).toBeUndefined()
-  expect(aliasPatch(card, did, 'alice@did.md')).toBeDefined()
+  expect(aliasPatch(card, undefined)).toBeUndefined()
+  expect(aliasPatch(card, 'alice@did.md')).toBeDefined()
+  const known = { ...card, emails: { e1: { address: 'alice@did.md' } } } as Parameters<typeof aliasPatch>[0]
+  expect(aliasPatch(known, 'alice@did.md')).toBeUndefined()
 })
 
 test('verifiedVhAddress: only when the did:web shadow is what the log derives', async () => {
