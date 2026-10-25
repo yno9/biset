@@ -12,17 +12,7 @@ import { decodeMultikey } from './multikey.ts'
 import { multikeyHashBase58 } from './hash.ts'
 import type { DidDocument } from './document.ts'
 import { VH_METHOD, isScid, parseVhDid } from './identifier.ts'
-
-type VhErrorCode = 'invalidDid' | 'invalidOptions' | 'invalidLog' | 'notFound' | 'featureNotSupported'
-
-class VhResolutionError extends Error {
-  readonly code: VhErrorCode
-  constructor(code: VhErrorCode, message: string) {
-    super(message)
-    this.name = 'VhResolutionError'
-    this.code = code
-  }
-}
+import { VhResolutionError } from './errors.ts'
 
 const invalid = (message: string) => new VhResolutionError('invalidLog', message)
 

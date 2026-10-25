@@ -92,7 +92,7 @@ describe('the domain answers with the identity\'s did:web, and the ladder leads 
     await expect(resolveMailAddressDid('alice@example.org', [], world([], { ...answer('https://nowhere.example'), 'https://elsewhere.example/.well-known/did.jsonl': () => new Response('', { status: 404 }) }))).rejects.toThrow('log was not found')
     // a pointer to an address, or to a host that is not a domain name, is not followed
     const asked: string[] = []
-    await expect(resolveMailAddressDid('alice@example.org', [], world(asked, answer('https://127.0.0.1')))).rejects.toThrow('log was not found')
+    await expect(resolveMailAddressDid('alice@example.org', [], world(asked, answer('https://127.0.0.1')))).rejects.toThrow('which is not a DID')
     expect(asked.some(url => url.includes('127.0.0.1'))).toBe(false)
   })
 })

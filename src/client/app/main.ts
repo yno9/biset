@@ -76,7 +76,7 @@ import { createWalletDidCommOutbox, type WalletDidCommOutbox } from '../identity
 import { MarkdownDirectoryConnection, observeMarkdownDirectory, removeMarkdownMirrorFile, scanMarkdownProjection, writeMarkdownProjection, type MarkdownMirrorFile } from '../store/vault/markdown-directory.ts'
 import { MarkdownSelfWriteGuard, markdownStatusMutation } from '../store/vault/markdown-mirror.ts'
 import { createJmapExport, decodeJmapExport, encodeJmapExport, importJmapExport } from '../store/vault/jmap-export.ts'
-import { isMailAddress, resolveMailAddressDid } from '../didcomm/address-resolver.ts'
+import { resolveMailAddressDid, resolveRecipient } from '../didcomm/address-resolver.ts'
 import { ownPgp, type OwnPgp } from '../pgp/own.ts'
 import { handleSecureJoin, inviteUrl, SECURE_JOIN_SUBJECT } from '../pgp/securejoin.ts'
 import { beginJoin, handleJoinStep, localPendingJoins, parseInvite, type JoinContext } from '../pgp/securejoin-join.ts'
@@ -90,12 +90,13 @@ import { PGP_KEY_CHANGED, type PgpCardConfig } from './ui/account/pgp-card.tsx'
 import { configureDidResolution, verifiedVhAddress } from '../../protocol/did-resolve.ts'
 import { StoredVersionMemory } from '../identity/version-memory.ts'
 import { StoredDidLinks } from '../identity/did-links.ts'
+import { StoredVhPlaces } from '../identity/vh-places.ts'
 import { identityKey, sameIdentity } from '../../protocol/vh/identifier.ts'
 
 let mediatorPollHandles: MediatorPollHandle[] = []
 
 // Where a did:vh's log is looked for, and the memory that refuses an older or forked copy of any log.
-configureDidResolution({ watchers: readBisetConfig().vhWatchers, memory: new StoredVersionMemory(), links: new StoredDidLinks() })
+configureDidResolution({ watchers: readBisetConfig().vhWatchers, memory: new StoredVersionMemory(), links: new StoredDidLinks(), places: new StoredVhPlaces() })
 
 function downloadFile(bytes: Uint8Array, filename: string): void { const url = URL.createObjectURL(new Blob([bytes.slice()])); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }
 function chooseFile(): Promise<Uint8Array> { return new Promise((resolve, reject) => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.json,.biset,application/json'; input.onchange = () => { const file = input.files?.[0]; if (!file) { reject(new Error('No import file selected')); return } void file.arrayBuffer().then(value => resolve(new Uint8Array(value)), reject) }; input.click() }) }
@@ -1057,7 +1058,7 @@ async function configureWalletAccountIfPresent(
         return
       }
       // A mail address is another name for a DID (address-resolver.ts).
-      const toDids = await Promise.all(input.toAddrs.map(address => isMailAddress(address) ? resolveMailAddressDid(address, readBisetConfig().mailGateways) : address))
+      const toDids = await Promise.all(input.toAddrs.map(address => resolveRecipient(address, readBisetConfig().mailGateways)))
       if (toDids.length === 0 || !toDids.every(address => address.startsWith('did:'))) throw new Error('A did.md Wallet session composes to DID recipients or mail addresses only')
       const recipients = [...new Set(toDids)].filter(address => !sameIdentity(address, device.did))
       // Several recipients start a group conversation of its own.

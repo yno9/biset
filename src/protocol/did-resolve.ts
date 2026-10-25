@@ -4,7 +4,8 @@
 // and do not branch on the method themselves.
 import type { DidDocument } from './vh/document.ts'
 import { resolveDidWeb, type DidWebDocument } from './didcomm/did-web.ts'
-import { isDomainHost, isVhDid } from './vh/identifier.ts'
+import { isVhDid, parseVhDidUrl } from './vh/identifier.ts'
+import { normalizeLocation } from './vh/src.ts'
 import { fetchVhResolution, type VhLogSources } from './vh/fetch.ts'
 import type { LogEntry } from './vh/log.ts'
 import { checkDidWebShadow, didWebCandidates, didWebDocumentUrl, verifiedAddress } from './vh/didweb.ts'
@@ -27,11 +28,21 @@ export interface DidResolveContext {
 export interface DidResolution {
   /** Watcher base URLs (`GET /log?scid=`). */
   watchers?: readonly string[]
-  /** The web hosts a did:vh is known by (`alice.did.md`): from the contact's addresses and `alsoKnownAs`. */
+  /** The places a did:vh is known to be published at (a host such as `alice.did.md`, or a web location such as
+   * `https://example.com/dids/issuer`): from the contact's addresses and `alsoKnownAs`. */
   locationsOf?: (did: string) => readonly string[]
   memory?: VersionMemory
   /** Which did:vh a did:web was found to be the shadow of (see `resolveTrustedDid`). */
   links?: DidLinks
+  /** Where each did:vh was met, kept between loads (see `rememberVhLocation`). */
+  places?: VhPlaces
+}
+
+/** The places a log was found or pointed to, remembered between loads: a `did:vh:<SCID>?src=…` someone typed or sent is the only thing
+ * that says where its log is, and a reload must not lose it. */
+export interface VhPlaces {
+  get(did: string): readonly string[]
+  add(did: string, place: string): void
 }
 
 /** The did:web DIDs known to be shadows of a did:vh, remembered between loads: once a did:web is tied to a did:vh, only the did:vh
@@ -44,19 +55,22 @@ export interface DidLinks {
 let configured: DidResolution = {}
 export function configureDidResolution(resolution: DidResolution): void { configured = resolution }
 
-// Hosts a did:vh was met at (an address answered with it: `alice@did.md` is at `alice.did.md`), for the rest of the session.
-// Only where to look: whatever is found there is verified like any other copy.
+// Places a did:vh was met at: an address answered with it (`alice@did.md` is at `alice.did.md`), a `src` in the DID URL it was written
+// as, a did:web document that pointed to it. Only where to look: whatever is found there is verified like any other copy.
 const metAt = new Map<string, Set<string>>()
-export function rememberVhLocation(did: string, host: string): void {
-  if (!isDomainHost(host.toLowerCase())) return // an IP address, a path, anything that is not a domain name is never asked
-  const hosts = metAt.get(did) ?? new Set<string>()
-  hosts.add(host.toLowerCase())
-  metAt.set(did, hosts)
+export function rememberVhLocation(did: string, place: string): void {
+  // A bare host or a web location (src.ts); an IP address, a loopback, credentials, a query: never asked.
+  const where = normalizeLocation(place.includes('://') ? place : place.toLowerCase())
+  if (!where) return
+  const places = metAt.get(did) ?? new Set<string>()
+  if (!places.has(where)) configured.places?.add(did, where)
+  places.add(where)
+  metAt.set(did, places)
 }
 
 function vhSources(did: string, context: DidResolveContext): VhLogSources {
   return {
-    locations: [...(context.vh?.locations ?? []), ...(configured.locationsOf?.(did) ?? []), ...(metAt.get(did) ?? [])],
+    locations: [...(context.vh?.locations ?? []), ...(configured.locationsOf?.(did) ?? []), ...(configured.places?.get(did) ?? []), ...(metAt.get(did) ?? [])],
     watchers: [...(context.vh?.watchers ?? []), ...(configured.watchers ?? [])],
     fetch: context.fetch ?? fetch,
     // Only when asked (didvh-spec: the resolver retrieves further copies only when the client asks): the owner's watchers (in the
@@ -112,26 +126,23 @@ export interface TrustedDid {
   linked: boolean
 }
 
-/** The did:vh a did:web document points to in `alsoKnownAs` (`did:vh:<SCID>` or `did:vh:<SCID>?src=…`), the hosts to look for its log
- * at (the did:web's own host, and the host a `src` names), or undefined when it points to none. Two different did:vh DIDs are refused. */
-function vhPointerOf(webDid: string, document: DidWebDocument): { did: string; hosts: string[] } | undefined {
+/** The did:vh a did:web document points to in `alsoKnownAs` (`did:vh:<SCID>` or `did:vh:<SCID>?src=…`), the places to look for its log
+ * (the did:web's own host, and the web location a `src` names, paths included), or undefined when it points to none. Two different
+ * did:vh DIDs are refused. */
+function vhPointerOf(webDid: string, document: DidWebDocument): { did: string; places: string[] } | undefined {
   const found = new Map<string, string[]>()
   const own = /^did:web:([^:%/]+)$/.exec(webDid)?.[1]
   for (const alias of Array.isArray(document.alsoKnownAs) ? document.alsoKnownAs : []) {
     if (typeof alias !== 'string' || !alias.startsWith('did:vh:')) continue
-    const [did = '', query] = alias.split('?', 2)
-    if (!isVhDid(did)) continue
-    const hosts = found.get(did) ?? (own ? [own] : [])
-    try {
-      const src = query ? new URLSearchParams(query).get('src') : null
-      const url = src ? new URL(src) : undefined
-      if (url && url.protocol === 'https:' && !url.port && (url.pathname === '/' || url.pathname === '') && isDomainHost(url.hostname)) hosts.push(url.hostname)
-    } catch { /* an unreadable src names no host */ }
-    found.set(did, hosts)
+    let parsed: { did: string; src?: string }
+    try { parsed = parseVhDidUrl(alias) } catch { continue }
+    const places = found.get(parsed.did) ?? (own ? [own] : [])
+    if (parsed.src) places.push(parsed.src)
+    found.set(parsed.did, places)
   }
   if (found.size > 1) throw new DidRefused(`${webDid} points to more than one did:vh`)
   const [first] = found
-  return first ? { did: first[0], hosts: [...new Set(first[1].filter(isDomainHost))] } : undefined
+  return first ? { did: first[0], places: [...new Set(first[1])] } : undefined
 }
 
 /**
@@ -160,7 +171,7 @@ export async function resolveTrustedDid(did: string, context: DidResolveContext 
   if (!web) return null
   const pointer = vhPointerOf(did, web)
   if (!pointer) return { did, document: web, linked: false }
-  for (const host of pointer.hosts) rememberVhLocation(pointer.did, host)
+  for (const place of pointer.places) rememberVhLocation(pointer.did, place)
   const found = await fetchDidLog(pointer.did, context)
   if (!found?.document) throw new DidRefused(`${did} points to ${pointer.did}, whose log was not found`)
   const check = checkDidWebShadow(found.document as unknown as Record<string, unknown>, did, web)

@@ -13,7 +13,7 @@
 
 import { DidRefused, rememberVhLocation, resolveTrustedDid } from '../../protocol/did-resolve.ts'
 import { fetchVhResolution } from '../../protocol/vh/fetch.ts'
-import { isDomainHost, isVhDid } from '../../protocol/vh/identifier.ts'
+import { parseVhDidUrl } from '../../protocol/vh/identifier.ts'
 
 // A circuit through Tor takes seconds longer than a direct connection: a page served at an onion address waits for it.
 const onionPage = (): boolean => typeof location !== 'undefined' && location.hostname.endsWith('.onion')
@@ -58,8 +58,8 @@ export function hostOfAddress(address: string): string {
  *    did:web contact; one that points to a did:vh that does not confirm it is refused;
  *  - a did:vh, with the place of its log as `?src=` when the domain knows it: the log must be found and verify. */
 async function settle(address: string, answer: string, fetchImpl: typeof fetch): Promise<string> {
-  const [did = '', query] = answer.split('?', 2) as [string, string | undefined]
-  if (did.startsWith('did:web:')) {
+  if (answer.startsWith('did:web:')) {
+    const did = answer
     try {
       const trusted = await resolveTrustedDid(did, { fetch: fetchImpl })
       return trusted?.did ?? did
@@ -68,17 +68,32 @@ async function settle(address: string, answer: string, fetchImpl: typeof fetch):
       return did // not reachable now: it is resolved again when the message is sent
     }
   }
-  if (!isVhDid(did)) throw new Error(`${address} is answered with ${answer}, which is not a DID`)
-  let place: string | undefined
-  try {
-    const src = query ? new URLSearchParams(query).get('src') : null
-    const url = src ? new URL(src) : undefined
-    if (url && url.protocol === 'https:' && isDomainHost(url.hostname)) place = url.hostname
-  } catch { /* an unreadable src names no place */ }
-  if (place) rememberVhLocation(did, place)
-  const found = await fetchVhResolution(did, { locations: place ? [place] : [], fetch: fetchImpl })
-  if (!found?.resolution.doc) throw new Error(`${address} is answered with ${did}, but its log was not found`)
-  return did
+  let parsed: { did: string; src?: string }
+  try { parsed = parseVhDidUrl(answer) } catch { throw new Error(`${address} is answered with ${answer}, which is not a DID`) }
+  return await foundDid(parsed, fetchImpl, `${address} is answered with ${parsed.did}`)
+}
+
+/** A did:vh given with the place of its log (`did:vh:<SCID>?src=…`): the place is remembered, the log must be found and verify. */
+async function foundDid(parsed: { did: string; src?: string }, fetchImpl: typeof fetch, who: string): Promise<string> {
+  if (parsed.src) rememberVhLocation(parsed.did, parsed.src)
+  const found = await fetchVhResolution(parsed.did, { locations: parsed.src ? [parsed.src] : [], fetch: fetchImpl })
+  if (!found?.resolution.doc) throw new Error(`${who}, but its log was not found`)
+  return parsed.did
+}
+
+/**
+ * The DID a compose recipient is: a mail address is looked up (`resolveMailAddressDid`); a did:vh may be written with the place of its
+ * log (`did:vh:<SCID>?src=https://example.com/dids/issuer`, didvh-spec: Reading did:vh DID URLs), which is for a recipient who has no
+ * did:web to start from. The `src` is only where to look: it is remembered, validated as a web location (src.ts), and dropped, so the
+ * recipient is always the bare `did:vh:<SCID>`; the log found there must verify against that SCID. Anything else is the DID as written.
+ */
+export async function resolveRecipient(value: string, gateways: readonly string[], fetchImpl: typeof fetch = fetch): Promise<string> {
+  const text = value.trim()
+  if (isMailAddress(text)) return resolveMailAddressDid(text, gateways, fetchImpl)
+  if (!text.startsWith('did:vh:') || !text.includes('?')) return text
+  let parsed: { did: string; src?: string }
+  try { parsed = parseVhDidUrl(text) } catch (error) { throw new Error(`${text}: ${(error as Error).message}`) }
+  return foundDid(parsed, fetchImpl, parsed.did)
 }
 
 /** The DID `address` is reached at: the address's own domain answers (WebFinger), else the first gateway (a mail bridge, which

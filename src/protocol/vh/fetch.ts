@@ -7,12 +7,14 @@
 import { parseLog, type LogEntry } from './log.ts'
 import { resolveVhEntries, type VhResolution } from './resolver.ts'
 import { isDomainHost, isVhDid, parseVhDid } from './identifier.ts'
+import { logUrlOf } from './src.ts'
 import type { DidDocument } from './document.ts'
 import { checkAndRemember, type VersionMemory } from '../freshness.ts'
 import { checkCopies, LogForkedError, type Copy } from './copies.ts'
 
 export interface VhLogSources {
-  /** Web hosts to ask for `https://<host>/.well-known/did.jsonl`, e.g. `alice.did.md`. */
+  /** Places to ask for a log: a web location (`https://example.com/dids/issuer`, the `src` of didvh-spec) or a bare host (`alice.did.md`, from
+   * an address), which is the web location `https://alice.did.md`. Each is read at its `did.jsonl` (src.ts). */
   locations?: readonly string[]
   /** Watcher base URLs, asked `GET /log?scid=<SCID>`. */
   watchers?: readonly string[]
@@ -33,7 +35,9 @@ async function textOf(url: string, fetchImpl: typeof fetch): Promise<string | un
 /** The urls to ask, in order: the hosts the contact is known by, then the watchers. */
 function candidateUrls(scid: string, sources: VhLogSources): string[] {
   const urls: string[] = []
-  for (const host of sources.locations ?? []) if (isDomainHost(host.toLowerCase())) urls.push(`https://${host.toLowerCase()}/.well-known/did.jsonl`)
+  for (const place of sources.locations ?? []) {
+    try { urls.push(logUrlOf(place.includes('://') ? place : `https://${place}`)) } catch { /* not a web location: never asked */ }
+  }
   for (const watcher of sources.watchers ?? []) {
     try { urls.push(new URL(`/log?scid=${scid}`, watcher).href) } catch { /* not a URL */ }
   }

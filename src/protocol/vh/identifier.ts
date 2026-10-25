@@ -1,3 +1,4 @@
+import { normalizeLocation } from './src.ts'
 // did:vh identifier: `did:vh:<SCID>` and nothing else (didvh-spec: Method-Specific Identifier). No host, no path:
 // where the log is published is not part of the DID, so a DID string never changes when the log moves.
 const SCID_RE = /^[1-9A-HJ-NP-Za-km-z]{46}$/ // a SHA-256 multihash in base58btc: 34 bytes, 46 characters
@@ -48,4 +49,24 @@ export function isDomainHost(host: unknown): host is string {
   return labels.length >= 2
     && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
     && /^[a-z]/.test(labels[labels.length - 1]!)
+}
+
+/**
+ * A did:vh as someone writes it where they know where its log is: `did:vh:<SCID>` or `did:vh:<SCID>?src=<web location>` (didvh-spec:
+ * Reading did:vh DID URLs). The `src` is percent-encoded and is decoded once. It names a place to look and nothing more: the DID is
+ * the identity, and what is found there is verified against it. Anything else in a DID URL (another parameter, a second `src`, a path,
+ * a fragment, a version) is refused: a recipient is always the newest of the whole identity. Throws on a value that is not one.
+ */
+export function parseVhDidUrl(value: string): { did: string; src?: string } {
+  const [did = '', query, ...rest] = value.split('?') as [string, ...string[]]
+  if (rest.length || !isVhDid(did)) throw new Error('Not a did:vh DID or a did:vh DID URL with a src.')
+  if (query === undefined) return { did }
+  if (query.includes('#')) throw new Error('A recipient DID URL has no fragment.')
+  const params = new URLSearchParams(query)
+  const names = [...params.keys()]
+  if (names.length !== 1 || names[0] !== 'src') throw new Error('A recipient DID URL may carry a src and nothing else.')
+  const src = params.get('src') ?? ''
+  const place = normalizeLocation(src)
+  if (!place) throw new Error('The src of the DID URL is not a valid web location.')
+  return { did, src: place }
 }
