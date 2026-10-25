@@ -1,7 +1,7 @@
 // did:web as a shadow of did:vh (dito PLAN-didvh.md §1.2). did:vh is the identity; a did:web DID names a web location, so it
 // serves where a did:web is expected, but it is only as good as the host that serves it (no hash chain, witnesses, watchers).
 // Its document is therefore *derived* from the latest did:vh document: every `did:vh:<SCID>` becomes the did:web DID, and
-// `alsoKnownAs` becomes `[did:vh:<SCID>]` and nothing else. A did:web document is accepted as that shadow only if it equals
+// `alsoKnownAs` becomes `[did:vh:<SCID>?src=<the location>]` and nothing else. A did:web document is accepted as that shadow only if it equals
 // the derivation, *and* the did:vh document names the did:web DID: a link in both directions. Checked against the same
 // vectors as dito's packages/vh (test/fixtures/did-vh-vectors.json).
 import { canonicalize } from './jcs.ts'
@@ -18,12 +18,24 @@ function replaceDid(value: unknown, vhDid: string, webDid: string): unknown {
   return value
 }
 
+/** The web location a did:web DID names (`did:web:alice.did.md` is `https://alice.did.md`). */
+function srcOfDidWeb(webDid: string): string {
+  const parts = webDid.split(':')
+  if (parts[0] !== 'did' || parts[1] !== 'web' || parts.length < 3 || parts.some(part => part === '')) throw new Error('Not a did:web DID.')
+  try { return ['https://' + decodeURIComponent(parts[2]!), ...parts.slice(3).map(decodeURIComponent)].join('/') } catch { throw new Error('Not a did:web DID.') }
+}
+
+/** `did:vh:<scid>?src=<location>`: only what would end the value early is escaped. */
+function srcAlias(did: string, src: string): string {
+  return `${did}?src=${src.replace(/\/+$/, '').replace(/[%&=#+\s]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)}`
+}
+
 /** The did:web document derived from a did:vh document. */
 function deriveDidWebDocument(vhDocument: Document, webDid: string): Document {
   const vhDid = vhDocument.id
   if (typeof vhDid !== 'string' || !vhDid.startsWith('did:vh:')) throw new Error('Not a did:vh document.')
   const { alsoKnownAs: _dropped, ...rest } = replaceDid(vhDocument, vhDid, webDid) as Document
-  return { ...rest, alsoKnownAs: [vhDid] }
+  return { ...rest, alsoKnownAs: [srcAlias(vhDid, srcOfDidWeb(webDid))] }
 }
 
 export type ShadowCheck = { ok: true } | { ok: false; reason: string }

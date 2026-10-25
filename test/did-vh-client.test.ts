@@ -10,7 +10,7 @@ import { buildVhDidCommLog } from './protocol/support/vh-log-fixture.ts'
 
 const priv = new Uint8Array(32).fill(7)
 const { did, log } = buildVhDidCommLog({ rootPrivateKey: priv, rootPublicKey: ed25519.getPublicKey(priv), alsoKnownAs: ['did:web:alice.did.md'] })
-const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [did] }
+const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [`${did}?src=https://alice.did.md`] }
 
 afterEach(() => { setVerifiedAddresses(new Map()); setContactNames(new Map()); setContactDids(new Map()); configureDidResolution({}) })
 

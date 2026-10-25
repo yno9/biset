@@ -50,7 +50,7 @@ describe('mail address -> DID (WebFinger)', () => {
 describe('a did:vh answer is confirmed by its own log', () => {
   const alice = (() => { const priv = new Uint8Array(32).fill(7); return { priv, pub: ed25519.getPublicKey(priv) } })()
   const { did, log } = buildVhDidCommLog({ rootPrivateKey: alice.priv, rootPublicKey: alice.pub, alsoKnownAs: ['did:web:alice.did.md'] })
-  const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [did] }
+  const shadow = { ...JSON.parse(JSON.stringify(log[0]!.state).split(did).join('did:web:alice.did.md')), alsoKnownAs: [`${did}?src=https://alice.did.md`] }
 
   const world = (overrides: Record<string, () => Response> = {}): typeof fetch => (async (input: string | URL | Request) => {
     const url = String(input)

@@ -2836,7 +2836,7 @@
  "shadows": [
   {
    "name": "valid/derived",
-   "note": "The derivation: the DID replaced in ids, controllers and references (also followed by #, ? or /), alsoKnownAs reduced to the did:vh DID, relative references and other strings untouched.",
+   "note": "The derivation: the DID replaced in ids, controllers and references (also followed by #, ? or /), alsoKnownAs reduced to the did:vh DID with the location as its src, relative references and other strings untouched.",
    "vhDocument": {
     "@context": [
      "https://www.w3.org/ns/did/v1",
@@ -2937,7 +2937,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": true
@@ -3045,7 +3045,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ],
     "extra": 1
    },
@@ -3153,7 +3153,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": false
@@ -3261,7 +3261,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": false
@@ -3374,7 +3374,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": false
@@ -3809,7 +3809,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": false
@@ -4027,7 +4027,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": false
@@ -4131,7 +4131,7 @@
      }
     ],
     "alsoKnownAs": [
-     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+     "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
     ]
    },
    "ok": false
@@ -4358,7 +4358,7 @@
       }
      ],
      "alsoKnownAs": [
-      "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+      "did:vh:QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ?src=https://alice.did.md"
      ]
     }
    ],

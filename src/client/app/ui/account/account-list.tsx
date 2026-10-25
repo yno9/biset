@@ -77,9 +77,9 @@ function DidText({ did }: { did: string }) {
     observer.observe(column)
     return () => observer.disconnect()
   }, [did])
-  // Only the SCID is shown (the `did:vh:` in front of it is in the tooltip, and is what a click copies);
-  // a DID that is not a did:vh is shown as it is.
-  return <span className="acc-did-scid" ref={scid}>{parts.length !== 3 || parts[1] !== 'vh' ? did : ellipsizeScid(parts[2]!, chars)}</span>
+  // The `did:vh:` prefix is always shown, and only the SCID gives way when the card is narrow (the measured room is in characters,
+  // the prefix's included); a DID that is not a did:vh is shown as it is. A click copies the whole DID.
+  return <span className="acc-did-scid" ref={scid}>{parts.length !== 3 || parts[1] !== 'vh' ? did : `did:vh:${ellipsizeScid(parts[2]!, chars - 'did:vh:'.length)}`}</span>
 }
 
 function IdentityHostCard({ did, host, showMessage, onReconnect }: { did: string; host: string; showMessage: (text: string) => void; onReconnect?: () => void }) {
