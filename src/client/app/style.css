@@ -120,6 +120,9 @@
   --text-dim: #8e8e93;
   --input-bg: #fff;
   --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --reply-bg: #fff;
+  --bubble-me: #4aa3de;
+  --bubble-me-text: #fff;
   --accent: #00577aa4;
   --accent2: #002433a4;
   --accent3: #7a003da4;
@@ -154,6 +157,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --reply-bg: #1a1a1a;
+    --bubble-me: #2b5f82;
+    --bubble-me-text: #fff;
     --bg: #0d0d0d;
     --card: #1a1a1a;
     --header-bg: rgba(13, 13, 13, 0.8);
@@ -216,7 +222,8 @@ select {
   flex: 1;
 }
 #header-thread-title {
-  font-size: 16.5px;
+  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
@@ -350,7 +357,7 @@ select {
 #left-pane-header #main-toggle,
 #lp-hamburger-left,
 #thread-title-row #main-toggle-right,
-#thread-title-row #lp-hamburger {
+#right-col #lp-hamburger {
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -368,14 +375,14 @@ select {
 #left-pane-header #main-toggle.lp-search-hidden,
 #lp-hamburger-left.lp-search-hidden,
 #thread-title-row #main-toggle-right.title-hidden,
-#thread-title-row #lp-hamburger.title-hidden {
+#right-col #lp-hamburger.title-hidden {
   opacity: 0;
   pointer-events: none;
 }
 #left-pane-header #main-toggle:hover,
 #lp-hamburger-left:hover,
 #thread-title-row #main-toggle-right:hover,
-#thread-title-row #lp-hamburger:hover {
+#right-col #lp-hamburger:hover {
   opacity: 0.8;
 }
 /* Left pane: its own surface is --card. */
@@ -388,7 +395,7 @@ select {
 }
 /* Conversation column: --bg, the same surface the reply box sits on. */
 #thread-title-row #main-toggle-right,
-#thread-title-row #lp-hamburger,
+#right-col #lp-hamburger,
 #thread-title-row #header-left {
   background: var(--glass-surface-bg);
   box-shadow:
@@ -398,7 +405,7 @@ select {
 /* An avatar fills the whole circle — no tint behind it. Needs to out-specify
    the two-ID selectors above, which the plain `#lp-hamburger.has-avatar` rule
    further down does not. */
-#thread-title-row #lp-hamburger.has-avatar {
+#right-col #lp-hamburger.has-avatar {
   background: transparent;
 }
 /* The title gets the same material as the buttons flanking it, as a pill that
@@ -1118,7 +1125,7 @@ select {
    ────────────────────────────────────────────────────────────────────────── */
 #left-list-wrap {
   flex: 1;
-  padding: 0 8px 16px 4px;
+  padding: 0 0px 16px 0px;
   min-height: 0;
 }
 #left-list {
@@ -1668,7 +1675,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
    15  THREAD TITLE & CONVERSATION META
    ────────────────────────────────────────────────────────────────────────── */
 #thread-title-row {
-  position: sticky;
+  /* Scrolls away with the conversation (it was sticky at top:0). */
+  position: relative;
   /* top:0 everywhere, installed PWA included: the Dynamic Island is reserved
      outside this scroll container (#right-col, section 27), so the sticky
      anchor has nothing to compensate for and no per-platform variant. */
@@ -1677,7 +1685,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(15px + env(safe-area-inset-top)) 12px 10px 10px;
+  padding: calc(6px + env(safe-area-inset-top)) 12px 10px 7px;
   /* Solid --bg for the first 10%, then fading out: messages scrolling up
      dissolve into the top edge instead of sliding under the title still at
      full contrast. Same shape as the left pane header (section 06), keyed to
@@ -1688,12 +1696,20 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   gap: 4px;
   font-family: Recursive;
 }
+/* A 1px rule from the right of the subject pill to the row's right edge, level with the pill's middle (the row centres its items). */
+#thread-title-row::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  margin-left: 10px;
+  background: rgba(128, 128, 128, 0.25);
+}
 /* The 0.9 dim belongs to the TITLE TEXT, not the row. On the row it also
    thinned the glass chips inside it — their fill and emboss both composited
    at 90%, which is why they read lighter than the left pane's, whose header
    has no such dim. */
 #header-thread-title {
-  opacity: 0.9;
+  opacity: 0.78;
 }
 #header-thread-title.untitled {
   font-family:
@@ -1703,12 +1719,23 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   font-size: 13px;
 }
 
+/* The avatar block and the menu button share one row at the very top. */
+#conv-top {
+  display: flex;
+  align-items: center;
+  padding: calc(24px + env(safe-area-inset-top)) 12px 0 0;
+}
+#conv-top #header-right {
+  margin-left: auto;
+}
 #conv-meta {
   font-size: 14.5px;
   font-family:
     ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--text-dim);
-  padding: 0 20px 10px;
+  padding: 0 20px;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1755,8 +1782,6 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  cursor: pointer;
-  user-select: none;
 }
 #conv-meta:empty {
   display: none;
@@ -1795,9 +1820,40 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
 .conv-member-add:hover { border-color: var(--border, #d0d0d0); color: inherit }
 
+/* The counterparty, as on the account page's identity card: picture, then name over address. */
+#conv-to:has(#conv-avatar) {
+  gap: 12px;
+  font-family: var(--font);
+  padding: 6px 0;
+}
+#conv-avatar {
+  width: 42px;
+  height: 42px;
+  margin: 0;
+  font-size: 20px;
+}
+#conv-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  line-height: 1.32;
+}
+#conv-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#conv-address {
+  font-size: 15px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #conv-meta-expanded {
-  display: none;
-  margin-top: 8px;
+  margin: 0 20px 8px;
   font-size: 13px;
   font-family: ui-monospace, "SF Mono", monospace;
   color: var(--text-dim);
@@ -1814,9 +1870,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   white-space: normal;
   overflow: visible;
 }
-#conv-meta.expanded #conv-meta-expanded {
-  display: block;
-}
+
 
 /* ─────────────────────────────────────────────────────────────────────────────
    16  ACCOUNT PAGE — identity, storage, devices
@@ -2342,6 +2396,10 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   #app.lp-enabled:not(.single-col):not([data-menu-page="/compose"]) #lp-compose-fab {
     display: inline-flex;
   }
+  /* The pane is open: the reply box's chats button (which toggles the pane) steps aside. */
+  #app.lp-enabled:not(.single-col) .reply-menu-btn {
+    display: none;
+  }
 }
 @media (max-width: 574px) {
   /* The active pane is full viewport width here (section 26), so a plain
@@ -2588,50 +2646,94 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
    re-splits "rest above the dock" from "scroll to the end" into two positions
    that fight each frame (2026-07-29). */
 .t-messages {
-  padding: 20px 16px 0 12px;
+  padding: 20px 16px 0 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .t-msg {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
   align-items: flex-start;
+  max-width: 100%;
 }
-
-.t-avatar {
-  width: 30px;
-  height: 30px;
-  margin: 3px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 15.5px;
-  color: #fff;
+.t-msg.me {
+  align-items: flex-end;
 }
-
 .t-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  align-items: flex-start;
+  max-width: min(78%, 640px);
+}
+.t-msg.me .t-meta {
+  align-items: flex-end;
 }
 .t-hdr {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  padding: 0 6px;
 }
-.t-sender {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--text);
+.t-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
 }
-.t-msg.me .t-sender {
-  color: var(--accent);
+.t-msg.me .t-row {
+  flex-direction: row-reverse;
+}
+.t-more {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.t-row:hover .t-more,
+.t-more:focus-visible {
+  opacity: 1;
+}
+.t-more:hover {
+  background: rgba(128, 128, 128, 0.16);
+}
+@media (hover: none) {
+  .t-more {
+    opacity: 0.5;
+  }
+}
+.t-more {
+  position: relative;
+}
+/* A white bubble over the button: the message's time, shown while the pointer is on the button. */
+.t-time-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  padding: 5px 10px;
+  border-radius: 10px;
+  background: #fff;
+  color: #333;
+  font-size: 12.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+.t-more:hover .t-time-bubble,
+.t-more:focus-visible .t-time-bubble {
+  display: block;
 }
 .t-time {
   font-size: 13px;
@@ -2742,6 +2844,15 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   background: var(--accent);
   color: #fff;
 }
+.t-msg.me .t-body {
+  background: var(--bubble-me);
+  color: var(--bubble-me-text);
+  border-radius: 20px 20px 4px 20px;
+}
+.t-msg.me .t-body a {
+  color: inherit;
+  text-decoration: underline;
+}
 .t-edit-cancel {
   background: rgba(128, 128, 128, 0.15);
   color: var(--text-dim);
@@ -2749,7 +2860,10 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 .t-body {
   font-size: inherit;
   color: var(--text);
-  line-height: 1.4;
+  background: rgba(128, 128, 128, 0.14);
+  padding: 11px 17px;
+  border-radius: 20px 20px 20px 4px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2866,16 +2980,12 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
    20  REPLY BOX
    ────────────────────────────────────────────────────────────────────────── */
 .reply-box {
-  background: var(--glass-surface-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow:
-    inset 0 1px 0 var(--glass-surface-hi),
-    inset 0 -1px 1.5px var(--glass-surface-lo);
+  /* Clear at the top edge, solid white from the middle down. */
+  background: linear-gradient(to bottom, transparent 0, var(--bg) 50%);
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 0 0 16px 0;
+  padding: 10px 0 16px 0;
 }
 .reply-content {
   display: flex;
@@ -2889,6 +2999,45 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 
 .reply-content textarea {
   margin-top: 6px;
+}
+.reply-content {
+  --reply-row-h: 59px;
+  align-items: flex-end;
+}
+/* The field itself: a white rounded box; the menu button sits outside it, to its left. */
+.reply-field {
+  min-height: var(--reply-row-h);
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  position: relative;
+  padding: 16px 8px 14px 16px;
+  border-radius: 999px;
+  background: var(--reply-bg);
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+}
+.reply-menu-btn {
+  /* As tall as the field beside it (stretched), as wide as the field is with one line: a circle then, in the field's own look. */
+  align-self: stretch;
+  width: var(--reply-row-h);
+  border-radius: 999px;
+  background: var(--card);
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s;
+  color: var(--text);
+}
+.reply-menu-btn:hover {
+  background: color-mix(in srgb, var(--card) 92%, #808080);
 }
 .reply-compose-btn {
   width: 28px;
@@ -2984,13 +3133,17 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   color: var(--text-dim);
 }
 .reply-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
-  height: 16px;
+  height: 14px;
   align-items: center;
   justify-content: center;
   cursor: ns-resize;
-  flex-shrink: 0;
-  border-radius: 12px 12px 0 0;
+  touch-action: none;
+  border-radius: 999px 999px 0 0;
 }
 .reply-resize-handle span {
   display: block;
@@ -3711,14 +3864,8 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   #left-pane {
     width: var(--lp-width, 300px);
     margin: 0 10px 0 0;
-    border-radius: 10px;
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    box-shadow:
-      inset 0 1.5px 0 rgba(255, 255, 255, 0.9),
-      inset 0 0 0 0.5px rgba(255, 255, 255, 0.35),
-      0 3px 4px rgba(0, 0, 0, 0.08),
-      0 1px 3px rgba(0, 0, 0, 0.06);
     transition:
       width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
       margin 0.22s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3730,12 +3877,25 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
     right: 0;
     top: 0;
     bottom: 0;
-    width: 2px;
+    width: 10px;
     cursor: col-resize;
     z-index: 10;
   }
-  #lp-resize-handle:hover {
-    background: rgba(128, 128, 128, 0.15);
+  /* The grip: a short vertical bar in the middle of the pane's right edge, over the border. */
+  #lp-resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 4px;
+    height: 36px;
+    transform: translate(-50%, -50%);
+    border-radius: 2px;
+    background: rgba(128, 128, 128, 0.3);
+    transition: background 0.15s;
+  }
+  #lp-resize-handle:hover::after {
+    background: rgba(128, 128, 128, 0.6);
   }
 
   /* ── single-col: the left pane collapsed to zero width from the right ──
@@ -3853,9 +4013,9 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
   }
 
   /* ── right column ──
-     The thread column is centred in what is left over next to the pane. */
+     The thread column fills the right column (full width, with or without the pane). */
   #right-pane {
-    width: calc(100vw - var(--lp-width, 300px) - 8px);
+    width: 100%;
   }
 
   /* ── reply dock ──
@@ -3865,16 +4025,11 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
     left: var(--lp-width, 300px);
     margin-left: 10px;
   }
-  /* Pane collapsed / disabled: the dock spans the window, but its content stays
-     the width the thread column would have had. */
+  /* Pane collapsed / disabled: the dock, and its content, span the whole window
+     (wider than the thread column above it). */
   #app.single-col.lp-enabled #reply-dock {
     left: 0;
     right: 0;
-  }
-  #app.single-col.lp-enabled #reply-dock > * {
-    max-width: calc(100vw - var(--lp-width, 300px) - 8px);
-    margin-left: auto;
-    margin-right: auto;
   }
   #app:not(.lp-enabled) #reply-dock {
     left: 0;
@@ -3883,7 +4038,7 @@ body:has(#app.lp-enabled.show-left) #scroll-to-top {
 
   /* ── reply box: a floating card inside the dock ── */
   .reply-box {
-    margin: 12px;
+    margin: 0;
     border-radius: 20px;
   }
   #reply-dock.group-expanded .reply-box {

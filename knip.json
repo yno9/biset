@@ -3,6 +3,7 @@
   "entry": [
     "vite.config.ts",
     "src/client/app/main.ts",
+    "src/client/app/mock.ts",
     "src/client/app/sw.ts",
     "src/server/mimi/index.ts",
     "test/**/*.test.{ts,tsx}",

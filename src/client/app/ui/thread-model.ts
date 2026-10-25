@@ -16,7 +16,7 @@ export function selfAddressesOf(selfAddress?: string, selfDid?: string): SelfAdd
  * where both sides have written always listed the reader next to the counterparty, since `from`
  * alternates between the two. Callers that show it to a human go through displayParticipantsOf;
  * threadProtocol needs the raw did: prefix a label has already thrown away. */
-function participantsOf(msgs: readonly MailMessageView[], self: SelfAddresses): string {
+export function participantsOf(msgs: readonly MailMessageView[], self: SelfAddresses): string {
   // Who a message came from; and for what this identity wrote, who it was written to -- otherwise a thread of which only our
   // first message exists has nobody in it (no transport, no name) until the other side answers.
   const others = msgs.flatMap(m => m.from && self.has(m.from.toLowerCase()) ? m.to_addrs ?? [] : [m.from])

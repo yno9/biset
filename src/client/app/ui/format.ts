@@ -15,8 +15,15 @@ export function linkify(html: string): string {
   )
 }
 
-export function formatTime(ts: number): string {
+function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+}
+
+/** The time of a message, with its date when it was not sent today. */
+export function formatFullTime(ts: number): string {
+  const date = new Date(ts)
+  const time = formatTime(ts)
+  return date.toDateString() === new Date().toDateString() ? time : `${date.toLocaleDateString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric' })} ${time}`
 }
 
 export function stripQuoted(text: string): string {

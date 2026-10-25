@@ -24,7 +24,7 @@ if (navigator.standalone === true || (window.matchMedia && matchMedia('(display-
    until it has loaded, and where Google is slow or unreachable (over Tor, say) the page stayed blank. Added like this, the page draws at
    once in the fallback fonts and the web fonts swap in. And not at all from an onion address: a visitor over Tor is not to be sent to Google. */
 if (!location.hostname.endsWith('.onion')) {
-  for (const [rel, href, cross] of [['preconnect', 'https://fonts.googleapis.com'], ['preconnect', 'https://fonts.gstatic.com', true], ['stylesheet', 'https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..900,0..1,0..1,0..1&family=Caveat:wght@600;700&display=swap']]) {
+  for (const [rel, href, cross] of [['preconnect', 'https://fonts.googleapis.com'], ['preconnect', 'https://fonts.gstatic.com', true], ['stylesheet', 'https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..900,0..1,0..1,0..1&family=Caveat:wght@600;700&family=Noto+Sans:wght@400..700&family=Noto+Sans+JP:wght@400..700&display=swap']]) {
     const link = document.createElement('link');
     link.rel = rel; link.href = href;
     if (cross) link.crossOrigin = '';

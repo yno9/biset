@@ -107,6 +107,8 @@ function Row({ row, label, avatarSubject, avatarImage, unread, current, focusedI
   )
 }
 
+const CLOSE_BELOW_PX = 140
+
 export function LeftPane() {
   const { rows, focused } = useThreads()
   const self = useSelf()
@@ -203,7 +205,15 @@ export function LeftPane() {
     const startX = event.clientX
     const startWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lp-width')) || 300
     const move = (e: MouseEvent) => {
-      const width = Math.max(200, Math.min(600, startWidth + e.clientX - startX))
+      const wanted = startWidth + e.clientX - startX
+      // Dragged past the threshold, well under the narrowest width: the pane closes (the width it had stays remembered).
+      if (wanted < CLOSE_BELOW_PX) {
+        up()
+        patchShell({ singleCol: true })
+        try { localStorage.setItem('lp-open', '0') } catch { /* private browsing */ }
+        return
+      }
+      const width = Math.max(200, Math.min(600, wanted))
       document.documentElement.style.setProperty('--lp-width', `${width}px`)
       try { localStorage.setItem('lp-width', String(width)) } catch { /* private browsing */ }
     }

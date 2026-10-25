@@ -1,11 +1,9 @@
 // The open thread: its messages, newest at the bottom, the oldest hidden behind "Show older".
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
-import { avatarOf, displayName, labelForDid } from './did-display.ts'
-import { GeneratedAvatar } from './generated-avatar.tsx'
-import { avatarColor, esc, formatTime, linkify, stripQuoted } from './format.ts'
+import { esc, formatFullTime, linkify, stripQuoted } from './format.ts'
 import { scrollToFocused } from './scroll.ts'
-import { useThreads } from './use-threads.ts'
+import { useSelf, useThreads } from './use-threads.ts'
 
 const INITIAL_COUNT = 100
 const LOAD_STEP = 100
@@ -20,24 +18,20 @@ function Reactions({ reactions }: { reactions: MailMessageView['reactions'] }) {
 }
 
 function Message({ message: { msg, bodyText } }: { message: ProcessedMessage }) {
-  // A DIDComm message's from/from_name is always the raw DID; a per-message sender label is the bare
-  // username (the fuller form is for the one-per-thread header, where it isn't repeated).
-  const rawSender = msg.from_name || msg.from || '?'
-  const sender = rawSender.startsWith('did:') ? displayName(rawSender) : rawSender
+  const timeLabel = msg.edited ? `${formatFullTime(msg.ts)} edited` : formatFullTime(msg.ts)
+  const mine = useSelf().has((msg.from ?? '').toLowerCase())
   return (
-    <div className="t-msg" data-message-id={msg.message_id}>
-      <div className="t-avatar" style={{ background: avatarColor(sender) }}>{avatarOf(msg.from) ? <img className="t-avatar-img" src={avatarOf(msg.from)} alt="" /> : <GeneratedAvatar name={sender} />}</div>
+    <div className={mine ? 't-msg me' : 't-msg'} data-message-id={msg.message_id}>
       <div className="t-meta">
-        <div className="t-hdr">
-          <span className="t-sender">{sender}</span>
+        {msg.auth && msg.auth.dmarc !== 'pass' ? <div className="t-hdr">
           {/* A bridged mail whose From: domain did not pass DMARC may be forged (didmail PROTOCOL.md §4.3). No `auth` is "not checked": a DIDComm message is authenticated by its own encryption. */}
-          {msg.auth && msg.auth.dmarc !== 'pass'
-            ? <span className="t-unverified" title={`The sender's mail domain did not verify this message (DMARC ${msg.auth.dmarc ?? 'none'}). It may not be from ${msg.auth.domain ?? 'that domain'}.`}>unverified</span> : null}
-          <span className="t-time">{formatTime(msg.ts)}</span>
-          {msg.edited ? <span className="t-edited">edited</span> : null}
+          <span className="t-unverified" title={`The sender's mail domain did not verify this message (DMARC ${msg.auth.dmarc ?? 'none'}). It may not be from ${msg.auth.domain ?? 'that domain'}.`}>unverified</span>
+        </div> : null}
+        <div className="t-row">
+          {/* esc() leaves nothing but text, and linkify() only adds anchors: the body is never markup. */}
+          <div className="t-body" dangerouslySetInnerHTML={{ __html: linkify(esc(stripQuoted(bodyText))) }} />
+          <button className="t-more" aria-label={timeLabel}>⋯<span className="t-time-bubble">{timeLabel}</span></button>
         </div>
-        {/* esc() leaves nothing but text, and linkify() only adds anchors: the body is never markup. */}
-        <div className="t-body" dangerouslySetInnerHTML={{ __html: linkify(esc(stripQuoted(bodyText))) }} />
         {/* External Feed Post only: a link to the original post. The value arrives over unauthenticated anoncrypt, so only http(s) is linked. */}
         {msg.sourceUrl && /^https?:\/\//.test(msg.sourceUrl)
           ? <div className="t-source-link"><a href={msg.sourceUrl} target="_blank" rel="noopener noreferrer">元の投稿を見る</a></div> : null}

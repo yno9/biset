@@ -38,13 +38,26 @@ export interface ComposeConfig {
 export const composeConfig = createStore<ComposeConfig | undefined>(undefined)
 export const configureCompose = (config: ComposeConfig): void => composeConfig.set(config)
 
-const REPLY_MAX_HEIGHT = 200
+/** Two overlapping filled speech bubbles. */
+const ChatsIcon = () => (
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M3 3h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-3 3v-3H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+    <path d="M18 8h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-3-3h-6a2 2 0 0 1-2-2v-.5h5a4 4 0 0 0 4-4V8z" />
+  </svg>
+)
 
-export function ReplyBox({ group }: { group: ThreadGroup }) {
+const REPLY_MAX_HEIGHT = 200
+const REPLY_MIN_DRAGGED = 24
+
+// The height the reader dragged the field to (px), kept across threads; undefined while it fits its text.
+let draggedHeight: number | undefined
+
+export function ReplyBox({ group, onToggleChats }: { group: ThreadGroup; onToggleChats: () => void }) {
   const config = useStore(composeConfig)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
+  const [dragged, setDragged] = useState(draggedHeight)
   const latest = useRef({ group, config })
   latest.current = { group, config }
 
@@ -53,12 +66,16 @@ export function ReplyBox({ group }: { group: ThreadGroup }) {
     const el = area.current
     if (!el) return
     el.style.height = 'auto'
-    if (text) {
+    if (dragged !== undefined) {
+      // A height chosen by hand holds, whatever the text: scrolling inside takes over when it overflows.
+      el.style.height = `${dragged}px`
+      el.style.overflowY = el.scrollHeight > dragged ? 'auto' : 'hidden'
+    } else if (text) {
       el.style.height = `${Math.min(el.scrollHeight, REPLY_MAX_HEIGHT)}px`
       el.style.overflowY = el.scrollHeight > REPLY_MAX_HEIGHT ? 'auto' : 'hidden'
     } else el.style.height = el.style.overflowY = ''
     syncDockPosition()
-  }, [text])
+  }, [text, dragged])
   // After a send the (disabled, so unfocused) box gets the cursor back.
   const refocus = useRef(false)
   useEffect(() => {
@@ -68,6 +85,30 @@ export function ReplyBox({ group }: { group: ThreadGroup }) {
   }, [sending])
 
   if (!config) return null
+
+  // Dragging the handle up makes the field taller, down shorter (a double click gives the automatic height back).
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const el = area.current
+    if (!el) return
+    event.preventDefault()
+    const handle = event.currentTarget
+    handle.setPointerCapture(event.pointerId)
+    const startY = event.clientY
+    const startHeight = el.getBoundingClientRect().height
+    const move = (e: PointerEvent) => {
+      const max = Math.round(window.innerHeight * 0.6)
+      draggedHeight = Math.min(max, Math.max(REPLY_MIN_DRAGGED, Math.round(startHeight + startY - e.clientY)))
+      setDragged(draggedHeight)
+    }
+    const end = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', end)
+      handle.removeEventListener('pointercancel', end)
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', end)
+    handle.addEventListener('pointercancel', end)
+  }
 
   const send = async () => {
     const body = text.trim()
@@ -92,28 +133,28 @@ export function ReplyBox({ group }: { group: ThreadGroup }) {
 
   return (
     <div className="reply-box">
-      <div className="reply-resize-handle"><span /></div>
       <div className="reply-content">
-        <button className="reply-compose-btn" title="New message">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
+        {/* Outside the field, to its left: opens and closes the left pane. */}
+        <button className="reply-menu-btn" type="button" title="Chats" aria-label="Toggle pane" onClick={onToggleChats}>
+          <ChatsIcon />
         </button>
-        <input className="reply-subject" type="text" placeholder="Subject (optional)" />
-        <textarea ref={area} rows={1} placeholder="Reply…" value={text} disabled={sending}
-          onChange={event => setText(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter' && !event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send() }
-          }} />
-        <button className="reply-attach-btn" type="button" title="Attach file">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
-        </button>
-        <div className="t-send-wrap">
-          <div className="t-send-avatar" />
-          <button className="t-send-btn" disabled={sending} onClick={() => { void send() }}>
-            <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z" /></svg>
+        <div className="reply-field">
+        <div className="reply-resize-handle" onPointerDown={startDrag} onDoubleClick={() => { draggedHeight = undefined; setDragged(undefined) }}><span /></div>
+          <input className="reply-subject" type="text" placeholder="Subject (optional)" />
+          <textarea ref={area} rows={1} placeholder="Reply…" value={text} disabled={sending}
+            onChange={event => setText(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void send() }
+            }} />
+          <button className="reply-attach-btn" type="button" title="Attach file">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
           </button>
+          <div className="t-send-wrap">
+            <div className="t-send-avatar" />
+            <button className="t-send-btn" disabled={sending} onClick={() => { void send() }}>
+              <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z" /></svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>

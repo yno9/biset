@@ -5,7 +5,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
-import { displayName, PROTO_COLOR, PROTO_TEXT, shortDid } from './did-display.ts'
+import { avatarOf, displayName, labelForDid, shortDid } from './did-display.ts'
+import { GeneratedAvatar } from './generated-avatar.tsx'
+import { avatarColor } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
 import { PageHost } from './page-host.tsx'
 import { ReplyBox, composeConfig } from './reply-box.tsx'
@@ -13,7 +15,8 @@ import { readScroll, scrollUi } from './scroll-buttons.tsx'
 import { scrollToFocused, syncDockPosition } from './scroll.ts'
 import { patchShell, shell, isNarrow } from './stores.ts'
 import { markSeen } from './seen.ts'
-import { displayParticipantsOf, latestOf, threadProtocol } from './thread-model.ts'
+import { counterpartLabel, displayParticipantsOf, latestOf, participantsOf } from './thread-model.ts'
+import { showComposePage } from './pages/index.ts'
 import { uiPage } from './state.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
@@ -99,15 +102,11 @@ function GroupStrip({ groupId, name }: { groupId: string; name: string }) {
   )
 }
 
-/** Who the thread is with, and over which transport; its headers behind a click. */
-function ConvMeta({ group, hidden, groupName }: { group: ThreadGroup | undefined; hidden: boolean; groupName: string | undefined }) {
+/** The thread's headers, shown under the title when the subject is clicked. */
+function MetaInfo({ group, open }: { group: ThreadGroup | undefined; open: boolean }) {
   const self = useSelf()
-  const [expanded, setExpanded] = useState(false)
-  const key = group?.key
-  useEffect(() => { setExpanded(false) }, [key])
   const msgs = group?.messages.map(p => p.msg) ?? []
   const first = msgs[0]
-  const proto = threadProtocol(msgs, self)
   const lines: string[] = []
   if (group && first) {
     if (first.message_id) lines.push(`message-id: ${first.message_id}`)
@@ -119,18 +118,39 @@ function ConvMeta({ group, hidden, groupName }: { group: ThreadGroup | undefined
     lines.push(`thread_id: ${group.key.split('|').map(s => s.startsWith('did:') ? shortDid(s) : s).join('|')}`)
     lines.push(`messages: ${group.messages.length}`)
   }
+  return open && group ? <div id="conv-meta-expanded">{lines.join('\n')}</div> : null
+}
+
+/** Who the thread is with. */
+function ConvMeta({ group, hidden, groupName }: { group: ThreadGroup | undefined; hidden: boolean; groupName: string | undefined }) {
+  const self = useSelf()
+  const msgs = group?.messages.map(p => p.msg) ?? []
+  const first = msgs[0]
+  const isGroup = !!first?.thread_id.startsWith(DIDCOMM_GROUP_THREAD_PREFIX)
+  const counterpart = participantsOf(msgs, self).split(', ')[0] ?? ''
+  const name = group ? counterpartLabel([group], self) : ''
+  const address = counterpart.startsWith('did:') ? labelForDid(counterpart) : counterpart
   return (
-    <div id="conv-meta" className={expanded ? 'expanded' : undefined} style={hidden ? { display: 'none' } : undefined}>
-      <div id="conv-fields" onClick={() => setExpanded(open => !open)}>
+    <div id="conv-meta" style={hidden ? { display: 'none' } : undefined}>
+      <div id="conv-fields">
         <div id="conv-to">
           <span id="conv-did" />
-          {group ? <span id="conv-via" style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: PROTO_COLOR[proto], borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0 }}>{PROTO_TEXT[proto]}</span> : <span id="conv-via" />}
-          {first?.thread_id.startsWith(DIDCOMM_GROUP_THREAD_PREFIX) ? <GroupStrip groupId={first.thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length)} name={groupName ?? 'Group'} /> : (group ? displayParticipantsOf(msgs, self) : null)}
+          {isGroup ? <>
+            <GroupStrip groupId={first.thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length)} name={groupName ?? 'Group'} />
+          </> : group ? (
+            // Like the account page's identity card: the counterparty's picture, and beside it two lines, the name and the address.
+            <>
+              <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(name) }}>{avatarOf(counterpart) ? <img className="lp-avatar-img" src={avatarOf(counterpart)} alt="" /> : <GeneratedAvatar name={name} />}</div>
+              <div id="conv-text">
+                <span id="conv-name">{name}</span>
+                {address && address !== name ? <span id="conv-address">{address}</span> : null}
+              </div>
+            </>
+          ) : null}
         </div>
         <div id="conv-cc" />
         <div id="conv-bcc" />
       </div>
-      <div id="conv-meta-expanded">{lines.join('\n')}</div>
     </div>
   )
 }
@@ -144,6 +164,11 @@ export function RightCol() {
   const outer = useRef<HTMLDivElement>(null)
   const column = useRef<HTMLDivElement>(null)
   const onThread = page === 'thread'
+  const [metaOpen, setMetaOpen] = useState(false)
+  // While the pointer is on the new-message button, the title names what it would do.
+  const [composeHover, setComposeHover] = useState(false)
+  const focusedKey = focused?.key
+  useEffect(() => { setMetaOpen(false) }, [focusedKey])
   const titleClass = titleHidden ? 'title-hidden' : undefined
 
   // A thread that is open is read: what it holds that was not read before is marked now (not while the page is hidden).
@@ -155,8 +180,8 @@ export function RightCol() {
   const first = focused?.messages[0]?.msg
   const groupName = useGroupName(first?.thread_id.startsWith(DIDCOMM_GROUP_THREAD_PREFIX) ? first.thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length) : undefined)
   const subject = groupName || focused?.subject
-  const title = onThread ? (subject || 'no title') : TITLES[page]
-  const untitled = onThread && !subject
+  const title = composeHover ? 'New Thread' : onThread ? (subject || 'no title') : TITLES[page]
+  const untitled = onThread && !subject && !composeHover
 
   // #outer's bottom padding follows the dock's height, whatever just changed.
   useLayoutEffect(() => { syncDockPosition() })
@@ -209,22 +234,30 @@ export function RightCol() {
     <div id="right-col" ref={column}>
       <div id="outer" ref={outer}>
         <div id="past-threads">{onThread ? <PastThreads groups={others} /> : null}</div>
-        <div id="thread-title-row">
-          <button id="main-toggle-right" aria-label="Toggle pane" className={titleClass} onClick={togglePane}><PaneToggleIcons /></button>
-          <div id="header-left" className={titleClass}>
-            <span id="header-thread-title" className={untitled ? 'untitled' : undefined}>{title}</span>
-          </div>
+        <div id="conv-top">
+          <ConvMeta group={focused} hidden={!onThread} groupName={groupName} />
           <div id="header-right">
             <button id="lp-hamburger" aria-label="menu" className={titleClass} {...hamburgerTrigger}><HamburgerDots id="lp-hamburger-icon" /></button>
           </div>
         </div>
+        <div id="thread-title-row">
+          <div id="header-left" className={titleClass}>
+        <button className="reply-compose-btn" type="button" title="New message" aria-label="New message" onClick={showComposePage} onMouseEnter={() => setComposeHover(true)} onMouseLeave={() => setComposeHover(false)} onFocus={() => setComposeHover(true)} onBlur={() => setComposeHover(false)}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+        </button>
+            <span id="header-thread-title" className={untitled ? 'untitled' : undefined} onClick={onThread ? () => setMetaOpen(open => !open) : undefined} style={onThread ? { cursor: 'pointer' } : undefined}>{title}</span>
+          </div>
+        </div>
         <div id="right-pane">
-          <ConvMeta group={focused} hidden={!onThread} groupName={groupName} />
+          <MetaInfo group={focused} open={onThread && metaOpen} />
           <PageHost />
           <div id="scroll-spacer" />
         </div>
       </div>
-      <div id="reply-dock">{onThread && focused ? <ReplyBox group={focused} /> : null}</div>
+      <div id="reply-dock">{onThread && focused ? <ReplyBox group={focused} onToggleChats={togglePane} /> : null}</div>
     </div>
   )
 }
