@@ -4,7 +4,7 @@
 // and do not branch on the method themselves.
 import type { DidDocument } from './vh/document.ts'
 import { resolveDidWeb, type DidWebDocument } from './didcomm/did-web.ts'
-import { isVhDid } from './vh/identifier.ts'
+import { isDomainHost, isVhDid } from './vh/identifier.ts'
 import { fetchVhResolution, type VhLogSources } from './vh/fetch.ts'
 import type { LogEntry } from './vh/log.ts'
 import { checkDidWebShadow, didWebCandidates, didWebDocumentUrl, verifiedAddress } from './vh/didweb.ts'
@@ -48,6 +48,7 @@ export function configureDidResolution(resolution: DidResolution): void { config
 // Only where to look: whatever is found there is verified like any other copy.
 const metAt = new Map<string, Set<string>>()
 export function rememberVhLocation(did: string, host: string): void {
+  if (!isDomainHost(host.toLowerCase())) return // an IP address, a path, anything that is not a domain name is never asked
   const hosts = metAt.get(did) ?? new Set<string>()
   hosts.add(host.toLowerCase())
   metAt.set(did, hosts)
@@ -112,8 +113,7 @@ export interface TrustedDid {
  * at (the did:web's own host, and the host a `src` names), or undefined when it points to none. Two different did:vh DIDs are refused. */
 function vhPointerOf(webDid: string, document: DidWebDocument): { did: string; hosts: string[] } | undefined {
   const found = new Map<string, string[]>()
-  const plain = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/
-  const own = /^did:web:([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/.exec(webDid)?.[1]
+  const own = /^did:web:([^:%/]+)$/.exec(webDid)?.[1]
   for (const alias of Array.isArray(document.alsoKnownAs) ? document.alsoKnownAs : []) {
     if (typeof alias !== 'string' || !alias.startsWith('did:vh:')) continue
     const [did = '', query] = alias.split('?', 2)
@@ -122,13 +122,13 @@ function vhPointerOf(webDid: string, document: DidWebDocument): { did: string; h
     try {
       const src = query ? new URLSearchParams(query).get('src') : null
       const url = src ? new URL(src) : undefined
-      if (url && url.protocol === 'https:' && !url.port && (url.pathname === '/' || url.pathname === '') && plain.test(url.hostname)) hosts.push(url.hostname)
+      if (url && url.protocol === 'https:' && !url.port && (url.pathname === '/' || url.pathname === '') && isDomainHost(url.hostname)) hosts.push(url.hostname)
     } catch { /* an unreadable src names no host */ }
     found.set(did, hosts)
   }
   if (found.size > 1) throw new Error(`${webDid} points to more than one did:vh`)
   const [first] = found
-  return first ? { did: first[0], hosts: [...new Set(first[1])] } : undefined
+  return first ? { did: first[0], hosts: [...new Set(first[1].filter(isDomainHost))] } : undefined
 }
 
 /**

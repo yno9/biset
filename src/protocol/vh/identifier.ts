@@ -36,3 +36,16 @@ export function identityKey(did: string): string {
 export function sameIdentity(a: string, b: string): boolean {
   return a === b || identityKey(a) === identityKey(b)
 }
+
+/**
+ * Whether `host` may be asked for a log or a document: a domain name (didvh-spec, Web Locations: "the host MUST be a domain name,
+ * not an IP address"). At least two labels, each of letters, digits and hyphens, and a last label that starts with a letter, so an
+ * IPv4 literal (`127.0.0.1`) and its disguises (`0x7f.1`, `2130706433`) are not domain names. IDNs arrive in their A-label form.
+ */
+export function isDomainHost(host: unknown): host is string {
+  if (typeof host !== 'string' || host.length > 253 || host !== host.toLowerCase()) return false
+  const labels = host.split('.')
+  return labels.length >= 2
+    && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+    && /^[a-z]/.test(labels[labels.length - 1]!)
+}

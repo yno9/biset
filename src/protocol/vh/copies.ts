@@ -15,8 +15,10 @@ export interface Copy {
   source: string
   status: CopyStatus
   versionNumber?: number
-  /** For a fork: the first version at which the two histories differ. */
+  /** For a fork: the first version at which the two histories differ, and the versionId each has there (the report the specification asks for). */
   forkedAt?: number
+  versionId?: string
+  ownVersionId?: string
 }
 
 /** The owner showed two continuations of one history: nothing after the last entry they share can be relied on. */
@@ -24,7 +26,7 @@ export class LogForkedError extends Error {
   readonly copies: Copy[]
   constructor(did: string, copies: Copy[]) {
     const fork = copies.find(copy => copy.status === 'forked')
-    super(`${did} has two continuations of one history${fork?.forkedAt ? ` (they differ at version ${fork.forkedAt}, seen at ${fork.source})` : ''}.`)
+    super(`${did} has two continuations of one history${fork?.forkedAt ? ` (they differ at version ${fork.forkedAt}: ${fork.ownVersionId} here, ${fork.versionId} at ${fork.source})` : ''}.`)
     this.name = 'LogForkedError'
     this.copies = copies
   }
@@ -73,7 +75,10 @@ export async function checkCopies(did: string, own: readonly LogEntry[], sources
     let log: LogEntry[]
     try { log = parseLog(text); resolveVhEntries(did, log) } catch { copies.push({ source, status: 'invalid' }); continue }
     const standing = compareLogs(own, log)
-    copies.push({ source, status: standing.status, versionNumber: log.length, ...(standing.forkedAt ? { forkedAt: standing.forkedAt } : {}) })
+    copies.push({
+      source, status: standing.status, versionNumber: log.length,
+      ...(standing.forkedAt ? { forkedAt: standing.forkedAt, versionId: log[standing.forkedAt - 1]!.versionId, ownVersionId: own[standing.forkedAt - 1]!.versionId } : {}),
+    })
     if (standing.status === 'ahead' && log.length > newest.length) newest = log
   }
   return { copies, newest }

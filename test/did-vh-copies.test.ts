@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { resolveDidDocument } from '../src/protocol/did-resolve.ts'
 import { compareLogs, LogForkedError } from '../src/protocol/vh/copies.ts'
-import { forgetCopyChecks } from '../src/protocol/vh/fetch.ts'
+import { fetchVhResolution, forgetCopyChecks } from '../src/protocol/vh/fetch.ts'
+import { isDomainHost } from '../src/protocol/vh/identifier.ts'
 import { serializeLog, type LogEntry } from '../src/protocol/vh/log.ts'
 import { buildGenesisLog, fixtureDomains } from './protocol/support/did-log-fixture.ts'
 import { extendVhLog } from './protocol/support/vh-log-fixture.ts'
@@ -60,7 +61,7 @@ describe('checkWatchers', () => {
   test('two continuations of one history are refused, not resolved to either', async () => {
     await expect(resolve(world(v2, { [WATCHER]: v2fork }))).rejects.toThrow(LogForkedError)
     forgetCopyChecks()
-    await expect(resolve(world(v2fork, { [WATCHER]: v2 }))).rejects.toMatchObject({ copies: [{ source: WATCHER, status: 'forked', forkedAt: 2 }] })
+    await expect(resolve(world(v2fork, { [WATCHER]: v2 }))).rejects.toMatchObject({ copies: [{ source: WATCHER, status: 'forked', forkedAt: 2, versionId: v2[1]!.versionId, ownVersionId: v2fork[1]!.versionId }] })
   })
 
   test('the client\'s own watchers are asked too, and only https ones', async () => {
@@ -85,5 +86,19 @@ describe('checkWatchers', () => {
     const first = asked.filter(origin => origin === WATCHER).length
     await resolve(fetchImpl)
     expect(asked.filter(origin => origin === WATCHER).length).toBe(first)
+  })
+})
+
+describe('what is asked: a domain name, never an address (didvh-spec: Web Locations)', () => {
+  test('isDomainHost', () => {
+    for (const good of ['alice.did.md', 'a-b.example.org', 'xn--bcher-kva.example']) expect(isDomainHost(good), good).toBe(true)
+    for (const bad of ['localhost', '127.0.0.1', '10.0.0.1', '0x7f.1', '2130706433', 'a.b.1', 'Alice.did.md', 'evil.example/path', 'evil.example?x', 'user@evil.example', 'a..b', '-a.example', 'a.example:8443', '[::1]', '']) expect(isDomainHost(bad), bad).toBe(false)
+  })
+
+  test('a host that is not a domain name is not fetched from', async () => {
+    const asked: string[] = []
+    const fetchImpl = (async (input: RequestInfo | URL) => { asked.push(String(input)); return new Response('', { status: 404 }) }) as typeof fetch
+    await fetchVhResolution(did, { locations: ['127.0.0.1', '10.0.0.1', 'evil.example/x?y', '0x7f.1'], fetch: fetchImpl })
+    expect(asked).toEqual([])
   })
 })

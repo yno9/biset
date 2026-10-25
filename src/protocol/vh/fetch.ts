@@ -6,7 +6,7 @@
 // The first copy that verifies for this DID wins; one that does not (another identity's, damaged) is passed over.
 import { parseLog, type LogEntry } from './log.ts'
 import { resolveVhEntries, type VhResolution } from './resolver.ts'
-import { isVhDid, parseVhDid } from './identifier.ts'
+import { isDomainHost, isVhDid, parseVhDid } from './identifier.ts'
 import type { DidDocument } from './document.ts'
 import { checkAndRemember, type VersionMemory } from '../freshness.ts'
 import { checkCopies, LogForkedError, type Copy } from './copies.ts'
@@ -33,7 +33,7 @@ async function textOf(url: string, fetchImpl: typeof fetch): Promise<string | un
 /** The urls to ask, in order: the hosts the contact is known by, then the watchers. */
 function candidateUrls(scid: string, sources: VhLogSources): string[] {
   const urls: string[] = []
-  for (const host of sources.locations ?? []) urls.push(`https://${host}/.well-known/did.jsonl`)
+  for (const host of sources.locations ?? []) if (isDomainHost(host.toLowerCase())) urls.push(`https://${host.toLowerCase()}/.well-known/did.jsonl`)
   for (const watcher of sources.watchers ?? []) {
     try { urls.push(new URL(`/log?scid=${scid}`, watcher).href) } catch { /* not a URL */ }
   }
@@ -92,7 +92,8 @@ export function forgetCopyChecks(): void { checked.clear() }
  * cannot make another identity's log pass for the name it serves. null when there is no such log.
  */
 export async function resolveVhByHost(host: string, options: { fetch?: typeof fetch; memory?: VersionMemory } = {}): Promise<{ did: string; document: DidDocument; entries: LogEntry[] } | null> {
-  const text = await textOf(`https://${host}/.well-known/did.jsonl`, options.fetch ?? fetch)
+  if (!isDomainHost(host.toLowerCase())) return null
+  const text = await textOf(`https://${host.toLowerCase()}/.well-known/did.jsonl`, options.fetch ?? fetch)
   if (text === undefined) return null
   let entries: LogEntry[]
   let did: unknown

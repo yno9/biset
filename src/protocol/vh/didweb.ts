@@ -5,6 +5,7 @@
 // the derivation, *and* the did:vh document names the did:web DID: a link in both directions. Checked against the same
 // vectors as dito's packages/vh (test/fixtures/did-vh-vectors.json).
 import { canonicalize } from './jcs.ts'
+import { isDomainHost } from './identifier.ts'
 
 type Document = Record<string, unknown>
 
@@ -54,14 +55,14 @@ export function checkDidWebShadow(vhDocument: Document, webDid: string, webDocum
 /** The plain-host did:web DIDs a did:vh document names (`did:web:alice.did.md`; not one with a port or a path): the candidates to fetch. */
 export function didWebCandidates(vhDocument: Document): string[] {
   const links = Array.isArray(vhDocument.alsoKnownAs) ? vhDocument.alsoKnownAs : []
-  return links.filter((link): link is string => typeof link === 'string' && /^did:web:[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(link))
+  return links.filter((link): link is string => typeof link === 'string' && link.startsWith('did:web:') && isDomainHost(link.slice('did:web:'.length)))
 }
 
 /** `https://<host>/.well-known/did.json`: where the shadow of a plain-host did:web DID is. */
 export function didWebDocumentUrl(webDid: string): string {
-  const match = /^did:web:([a-z0-9-]+(?:\.[a-z0-9-]+)+)$/.exec(webDid)
-  if (!match) throw new Error('Not a plain-host did:web DID.')
-  return `https://${match[1]}/.well-known/did.json`
+  const host = webDid.startsWith('did:web:') ? webDid.slice('did:web:'.length) : ''
+  if (!isDomainHost(host)) throw new Error('Not a plain-host did:web DID.')
+  return `https://${host}/.well-known/did.json`
 }
 
 /**
