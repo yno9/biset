@@ -924,10 +924,14 @@ export async function approvedRotationSeed(): Promise<{ seed: Uint8Array; forget
 export async function completeDidMdWalletCallback(delivered?: URLSearchParams): Promise<DidMdActiveSession | undefined> {
   if (!delivered && !isWalletCallback()) return undefined
   const callback = new URL(location.href)
+  // A response is used once, whatever comes of it: leaving it in the address bar would make a reload (or a failed attempt's retry)
+  // process the same fragment again and fail the same way.
+  const clearFragment = () => { if (!delivered) try { history.replaceState(null, '', '/') } catch { /* no history to clean */ } }
   const pending = await readDidMdPendingAuthorization()
-  if (!pending || pending.v !== 3 || pending.wallet !== walletEndpoint()) throw new Error('No matching did.md Wallet authorization is pending')
+  if (!pending || pending.v !== 3 || pending.wallet !== walletEndpoint()) { clearFragment(); throw new Error('No matching did.md Wallet authorization is pending') }
   // The response comes in the URL fragment (never sent to any server, unlike a query string).
   const params = delivered ?? new URLSearchParams(callback.hash.slice(1))
+  clearFragment()
   const abandon = async (message: string): Promise<never> => { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error(message) }
   if (params.get('state') !== pending.state) return abandon('did.md Wallet callback state did not match')
   const error = params.get('error')
@@ -942,9 +946,7 @@ export async function completeDidMdWalletCallback(delivered?: URLSearchParams): 
     const presentations = asObject(parsedVpToken, 'vp_token').capability
     const holder = Array.isArray(presentations) && presentations.length === 1 ? asObject(presentations[0], 'presentation').holder : undefined
     if (typeof holder !== 'string') throw new Error('did.md Wallet callback vp_token is invalid')
-    const active = await sessionFromVpToken(parsedVpToken, idToken, holder, pending)
-    if (!delivered) history.replaceState(null, '', '/')
-    return active
+    return await sessionFromVpToken(parsedVpToken, idToken, holder, pending)
   } catch (error) {
     await rollbackPendingMediator(pending)
     throw error
