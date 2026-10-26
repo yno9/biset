@@ -32,7 +32,7 @@ export function setSignedNameHandler(handler: SignedNameHandler | undefined): vo
 export function showApp(): void {
   if (!shown) {
     shown = true
-    try { patchShell({ singleCol: !isNarrow() && localStorage.getItem('lp-open') !== '1' }) } catch { /* private browsing */ }
+    try { patchShell({ singleCol: !isNarrow() && localStorage.getItem('lp-open') !== '1', paneCompact: localStorage.getItem('lp-compact') === '1' }) } catch { /* private browsing */ }
   }
   patchShell({ appShown: true })
 }

@@ -11,17 +11,17 @@ import { AvatarCropDialog } from './account/avatar-crop.tsx'
 import { HamburgerMenu } from './hamburger-menu.tsx'
 import { Favicon } from './favicon.tsx'
 import { LeftPane } from './left-pane.tsx'
-import { RightCol } from './right-col.tsx'
+import { PaneButton, RightCol } from './right-col.tsx'
 import { ScrollButtons } from './scroll-buttons.tsx'
 import { uiPage } from './state.ts'
 import { shell } from './stores.ts'
 import { SysMsg } from './sys-msg.tsx'
 
 function App() {
-  const { appShown, singleCol, showLeft } = useStore(shell)
+  const { appShown, singleCol, paneCompact, showLeft } = useStore(shell)
   const page = useStore(uiPage)
   // CSS scopes the left pane, header and toggle under #app.lp-enabled.
-  const classes = ['lp-enabled', singleCol ? 'single-col' : '', showLeft ? 'show-left' : ''].filter(Boolean).join(' ')
+  const classes = ['lp-enabled', singleCol ? 'single-col' : '', paneCompact ? 'lp-compact' : '', showLeft ? 'show-left' : ''].filter(Boolean).join(' ')
   useEffect(() => { document.title = 'biset' }, [])
   return (
     <>
@@ -36,6 +36,7 @@ function App() {
         <LeftPane />
         <RightCol />
       </div>
+      <PaneButton />
       <ScrollButtons />
     </>
   )

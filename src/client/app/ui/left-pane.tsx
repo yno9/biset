@@ -7,10 +7,11 @@ import { avatarOf, displayName } from './did-display.ts'
 import { GeneratedAvatar } from './generated-avatar.tsx'
 import { avatarColor, previewText } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
-import { showComposePage, hideAccountPage, hideComposePage } from './pages/index.ts'
-import { HamburgerDots, PaneToggleIcons, togglePane } from './right-col.tsx'
+import { showAccountPage, showComposePage, hideAccountPage, hideComposePage } from './pages/index.ts'
+import { HamburgerDots, togglePane } from './right-col.tsx'
+import { uiPage } from './state.ts'
 import { isNarrow, patchShell, shell } from './stores.ts'
-import { counterpartDid, counterpartLabel, groupMembersLabel, latestOf, type InboxRow } from './thread-model.ts'
+import { counterpartDid, counterpartLabel, groupMembersLabel, isSpecialInbox, latestOf, NEW_INBOX_KEY, SELF_INBOX_KEY, type InboxRow } from './thread-model.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
 // The keyboard cursor and hover focus only mean something where there is a pointer and a keyboard.
@@ -62,7 +63,24 @@ function Row({ row, label, avatarSubject, avatarImage, unread, current, focusedI
     ? focusedItem?.kind === 'thread' && focusedItem.key === key
     : key === activeThreadKey
   const rowFocused = keyboard && focusedItem?.kind === 'inbox' && focusedItem.key === row.key
-  const classes = ['lp-item', current ? 'current' : '', rowFocused ? 'focused' : ''].filter(Boolean).join(' ')
+  const isSpecial = isSpecialInbox(row.key)
+  const classes = ['lp-item', isSpecial ? 'lp-new' : '', current ? 'current' : '', rowFocused ? 'focused' : ''].filter(Boolean).join(' ')
+  if (isSpecial) {
+    // The special inboxes: no threads, no preview. Yourself (a person's picture) and "New message" (a pencil).
+    const mine = row.key === SELF_INBOX_KEY
+    return (
+      <a className={classes} href="#" title={label} data-inbox-key={row.key} onClick={event => { event.preventDefault(); onNavigate({ kind: 'inbox', key: row.key }) }}>
+        <div className="lp-inner">
+          <div className="lp-avatar lp-new-avatar">
+            {mine
+              ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" /></svg>
+              : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
+          </div>
+          <div className="lp-info"><div className="lp-name">{label}</div></div>
+        </div>
+      </a>
+    )
+  }
   return (
     <a className={classes} href="#" data-inbox-key={row.key} style={visible ? undefined : { display: 'none' }}
       onClick={event => {
@@ -113,6 +131,7 @@ export function LeftPane() {
   const { rows, focused } = useThreads()
   const self = useSelf()
   const { search, expandedInboxKeys, lpFocusedKey } = useStore(shell)
+  const page = useStore(uiPage)
   const [searchHidden, setSearchHidden] = useState(false)
   const pane = useRef<HTMLElement>(null)
   const lastScrollTop = useRef(0)
@@ -133,7 +152,7 @@ export function LeftPane() {
       avatarSubject: isGroup ? label : shortSenderLabel(latest.from_name || latest.from || label),
       avatarImage: isGroup ? undefined : avatarOf(counterpartDid(row.groups, self)),
       unread: row.groups.some(g => g.messages.some(p => p.msg.seen !== true)),
-      visible: !query || label.toLowerCase().includes(query) || row.groups.some(g => (g.subject ?? '').toLowerCase().includes(query)),
+      visible: isSpecialInbox(row.key) || !query || label.toLowerCase().includes(query) || row.groups.some(g => (g.subject ?? '').toLowerCase().includes(query)),
     }
   })
 
@@ -154,6 +173,9 @@ export function LeftPane() {
   const navigate = (item: NavItem) => {
     const { rows: current } = latest.current
     if (item.kind === 'thread') { patchShell({ lpFocusedKey: `thread:${item.key}` }); openThread(item.key) }
+    // The special inboxes open a page of the right column (on a narrow screen the pane steps aside for it).
+    else if (item.key === NEW_INBOX_KEY) { patchShell({ lpFocusedKey: `inbox:${item.key}`, showLeft: false }); showComposePage() }
+    else if (item.key === SELF_INBOX_KEY) { patchShell({ lpFocusedKey: `inbox:${item.key}`, showLeft: false }); showAccountPage() }
     else {
       patchShell({ lpFocusedKey: `inbox:${item.key}` })
       const row = current.find(r => r.key === item.key)
@@ -181,7 +203,8 @@ export function LeftPane() {
         const target = items[next]
         if (target && !(focusedNow && target.kind === focusedNow.kind && target.key === focusedNow.key)) { searchBox.current?.blur(); navigate(target) }
       } else if (event.key === ' ') {
-        if (focusedNow?.kind === 'inbox') { event.preventDefault(); toggleAccordion(currentRows.find(r => r.key === focusedNow.key), focusedNow.key) }
+        if (focusedNow?.kind === 'inbox' && isSpecialInbox(focusedNow.key)) event.preventDefault()
+        else if (focusedNow?.kind === 'inbox') { event.preventDefault(); toggleAccordion(currentRows.find(r => r.key === focusedNow.key), focusedNow.key) }
         else if (focusedNow?.kind === 'thread') {
           // The first thread acts as "the row plus its newest thread": Space closes the accordion.
           const row = currentRows.find(r => r.key === focusedNow.rowKey)
@@ -240,7 +263,6 @@ export function LeftPane() {
         lastScrollTop.current = top
       }}>
         <div id="left-pane-header">
-          <button id="main-toggle" aria-label="Toggle pane" className={hiddenClass} onClick={togglePane}><PaneToggleIcons /></button>
           <div id="lp-search-wrap" className={hiddenClass}>
             <input id="lp-search" ref={searchBox} type="search" placeholder="/ for commands" autoComplete="off" value={search}
               onChange={event => patchShell({ search: event.target.value })}
@@ -251,16 +273,13 @@ export function LeftPane() {
         <div id="left-list-wrap">
           <div id="left-list">
             {described.map(d => (
-              <Row key={d.row.key} {...d} current={d.row.groups.some(g => g.key === activeThreadKey)} focusedItem={focusedItem}
+              <Row key={d.row.key} {...d} current={d.row.key === NEW_INBOX_KEY ? page === 'compose' : d.row.key === SELF_INBOX_KEY ? page === 'account' : d.row.groups.some(g => g.key === activeThreadKey)} focusedItem={focusedItem}
                 activeThreadKey={activeThreadKey} expanded={expandedInboxKeys.has(d.row.key)} onNavigate={navigate} />
             ))}
           </div>
         </div>
         <div id="lp-resize-handle" onMouseDown={startResize} />
       </aside>
-      <button id="lp-compose-fab" className="compose-fab" type="button" aria-label="Compose" title="Compose" onClick={showComposePage}>
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-      </button>
     </>
   )
 }

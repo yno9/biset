@@ -3,6 +3,7 @@
 // no identity yet, the one thing to do from here is sign up.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../../react/store.ts'
+import { hamburgerTrigger } from '../hamburger-menu.tsx'
 import { resolveDidDocument } from '../../../../protocol/did-resolve.ts'
 import { AccountList, KeysPanel } from '../account/account-list.tsx'
 import { cropAvatar } from '../account/avatar-crop.tsx'
@@ -116,6 +117,9 @@ function IdentityCard({ did }: { did: string }) {
             {profile && !own.name ? <button type="button" className="acc-name-add" onClick={event => { event.stopPropagation(); changeDisplayName() }}>Set display name</button> : null}
           </div>
         </div>
+        <button id="lp-hamburger" type="button" aria-label="menu" style={{ marginLeft: 'auto' }} {...hamburgerTrigger}>
+          <svg id="lp-hamburger-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3.5" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="8" cy="12.5" r="1.5" /></svg>
+        </button>
       </div>
     </div>
   )

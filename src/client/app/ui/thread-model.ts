@@ -70,6 +70,23 @@ function inboxKeyOf(group: ThreadGroup, self: SelfAddresses): string {
 
 export const latestOf = (group: ThreadGroup): MailMessageView => group.messages[group.messages.length - 1]!.msg
 
+/** The special inboxes: rows like the others (they sort, the keyboard walks onto them, they are lit while open), each made of one
+ * made-up message dated at the end of time, so that newest-first always puts them on top: yourself, then "New message" (which
+ * opens a new message). They are never among a conversation's real threads (`groups`), only among the rows. */
+export const SELF_INBOX_KEY = 'self:me'
+export const NEW_INBOX_KEY = 'new:message'
+const END_OF_TIME = 8.64e15
+const specialGroup = (address: string, name: string, ts: number): ThreadGroup => ({
+  key: `thread:${address}`,
+  subject: name,
+  messages: [{
+    bodyText: '',
+    msg: { from: address, from_name: name, body: '', subject: name, ts, message_id: `<${address}@biset>`, jmap_id: '', in_reply_to: '', thread_id: address, seen: true },
+  }],
+})
+const SPECIAL_GROUPS = [specialGroup(SELF_INBOX_KEY, 'Me', END_OF_TIME), specialGroup(NEW_INBOX_KEY, 'New message', END_OF_TIME - 1)]
+export const isSpecialInbox = (key: string): boolean => key === SELF_INBOX_KEY || key === NEW_INBOX_KEY
+
 /** One row of the left list: a counterparty and every thread shared with them, newest first. */
 export interface InboxRow { key: string; groups: ThreadGroup[] }
 
@@ -108,6 +125,6 @@ export function threadsOf(messages: readonly ProcessedMessage[], focusedKey: str
   const others = focused
     ? groups.filter(g => g.key !== focused.key && inboxKeyOf(g, self) === focusedInbox).sort((a, b) => latestOf(a).ts - latestOf(b).ts)
     : []
-  return { groups, focused, others, rows: inboxRows(groups, self) }
+  return { groups, focused, others, rows: inboxRows([...groups, ...SPECIAL_GROUPS], self) }
 }
 

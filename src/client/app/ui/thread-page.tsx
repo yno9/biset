@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
 import { esc, formatFullTime, linkify, stripQuoted } from './format.ts'
 import { scrollToFocused } from './scroll.ts'
+import { threadMotion } from './stores.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
 const INITIAL_COUNT = 100
@@ -91,7 +92,7 @@ export function ThreadPage() {
   return (
     <div id="active-thread">
       {focused
-        ? <div className="thread-card focused-card" id="focused-thread-card"><Messages group={focused} /></div>
+        ? <div key={key} className={threadMotion.key === key && threadMotion.dir ? `thread-card focused-card slide-from-${threadMotion.dir > 0 ? 'below' : 'above'}` : 'thread-card focused-card'} id="focused-thread-card"><Messages group={focused} /></div>
         : <Empty />}
     </div>
   )

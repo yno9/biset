@@ -20,8 +20,9 @@ export function syncDockPosition(): void {
   const h = $('reply-dock')?.offsetHeight ?? 0
   if (outer) outer.style.paddingBottom = h ? `${h}px` : '0'
   document.documentElement.style.setProperty('--dock-h', h ? `${h}px` : '0px')
-  const titleRow = $('thread-title-row')
-  if (titleRow) document.documentElement.style.setProperty('--thread-title-h', `${titleRow.offsetHeight}px`)
+  // Everything above the page in the flow: the island row (#conv-top) and, on the pages that have one, the title row.
+  const headerH = ($('conv-top')?.offsetHeight ?? 0) + ($('thread-title-row')?.offsetHeight ?? 0)
+  document.documentElement.style.setProperty('--thread-title-h', `${headerH}px`)
 }
 
 /** #scroll-spacer pads the end of the thread so a short thread still scrolls up to the strip. */
@@ -35,26 +36,47 @@ function updateScrollSpacer(): void {
   spacer.style.height = `${overflow <= floor ? floor - overflow : THREAD_BOTTOM_GAP}px`
 }
 
+/** Puts the view where a freshly opened thread rests: at its end, or at the top of its last message when that message is
+ * taller than the view. Returns where it put it. */
+function snapToRest(): number | undefined {
+  updateScrollSpacer()
+  const outer = $('outer')
+  if (!outer) return undefined
+  let target = outer.scrollHeight - outer.clientHeight
+  const messages = outer.querySelectorAll('.t-msg')
+  const last = messages[messages.length - 1] as HTMLElement | undefined
+  if (last) {
+    const titleRow = $('thread-title-row')
+    const titleH = titleRow && outer.contains(titleRow) ? titleRow.offsetHeight : 0
+    const stickyTop = titleRow ? parseFloat(getComputedStyle(titleRow).top) || 0 : 0
+    const viewTop = titleH + stickyTop
+    if (last.offsetHeight > outer.clientHeight - viewTop) {
+      const lastTopInOuter = last.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop
+      target = Math.max(topFloor(outer), lastTopInOuter - viewTop)
+    }
+  }
+  outer.scrollTop = target
+  return outer.scrollTop
+}
+
+// Where the last snap left the view, and the timers that look again: the layout is not final when a thread opens (web fonts
+// arrive, the header's lines settle), and a spacer worked out from the early layout would leave a short thread resting a few
+// pixels down. Each look re-snaps only while the view is still where the snap put it, so a reader who has moved is left alone.
+let restedAt: number | undefined
+let lookAgain: number[] = []
+function resnapIfUntouched(): void {
+  const outer = $('outer')
+  if (!outer || restedAt === undefined || Math.abs(outer.scrollTop - restedAt) > 2) return
+  restedAt = snapToRest()
+}
+if (typeof document !== 'undefined') document.fonts?.addEventListener('loadingdone', resnapIfUntouched)
+
 /** Scrolls to the end of the open thread, or to the top of its last message when that message is
  * taller than the view. Two frames later: the thread's layout has to settle first. */
 export function scrollToFocused(): void {
+  for (const timer of lookAgain) window.clearTimeout(timer)
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    updateScrollSpacer()
-    const outer = $('outer')
-    if (!outer) return
-    let target = outer.scrollHeight - outer.clientHeight
-    const messages = outer.querySelectorAll('.t-msg')
-    const last = messages[messages.length - 1] as HTMLElement | undefined
-    if (last) {
-      const titleRow = $('thread-title-row')
-      const titleH = titleRow && outer.contains(titleRow) ? titleRow.offsetHeight : 0
-      const stickyTop = titleRow ? parseFloat(getComputedStyle(titleRow).top) || 0 : 0
-      const viewTop = titleH + stickyTop
-      if (last.offsetHeight > outer.clientHeight - viewTop) {
-        const lastTopInOuter = last.getBoundingClientRect().top - outer.getBoundingClientRect().top + outer.scrollTop
-        target = Math.max(topFloor(outer), lastTopInOuter - viewTop)
-      }
-    }
-    outer.scrollTop = target
+    restedAt = snapToRest()
+    lookAgain = [250, 800].map(ms => window.setTimeout(resnapIfUntouched, ms))
   }))
 }

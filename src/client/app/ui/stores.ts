@@ -10,6 +10,8 @@ export interface Shell {
   appShown: boolean
   /** Two columns on a wide screen; the left pane collapsed. */
   singleCol: boolean
+  /** Wide screen, pane open: the narrow form (pictures only) rather than the full list. */
+  paneCompact: boolean
   /** On a narrow screen the left pane is the column in front. */
   showLeft: boolean
   /** The left pane's filter. */
@@ -24,6 +26,7 @@ export interface Shell {
 export const shell = createStore<Shell>({
   appShown: false,
   singleCol: false,
+  paneCompact: false,
   showLeft: false,
   search: '',
   focusedThreadKey: null,
@@ -36,3 +39,6 @@ export const patchShell = (change: Partial<Shell>): void => shell.set(current =>
 /** The narrow-screen layout (one column at a time) starts here. */
 const NARROW_PX = 574
 export const isNarrow = (): boolean => window.innerWidth <= NARROW_PX
+
+/** Which way the last move between an inbox's threads went (-1 older, 1 newer), and to which thread: the open thread slides in from that side. */
+export const threadMotion: { key: string | undefined; dir: -1 | 1 | 0 } = { key: undefined, dir: 0 }

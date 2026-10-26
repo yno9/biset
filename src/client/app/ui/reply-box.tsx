@@ -38,21 +38,13 @@ export interface ComposeConfig {
 export const composeConfig = createStore<ComposeConfig | undefined>(undefined)
 export const configureCompose = (config: ComposeConfig): void => composeConfig.set(config)
 
-/** Two overlapping filled speech bubbles. */
-const ChatsIcon = () => (
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M3 3h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-3 3v-3H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
-    <path d="M18 8h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-3-3h-6a2 2 0 0 1-2-2v-.5h5a4 4 0 0 0 4-4V8z" />
-  </svg>
-)
-
 const REPLY_MAX_HEIGHT = 200
 const REPLY_MIN_DRAGGED = 24
 
 // The height the reader dragged the field to (px), kept across threads; undefined while it fits its text.
 let draggedHeight: number | undefined
 
-export function ReplyBox({ group, onToggleChats }: { group: ThreadGroup; onToggleChats: () => void }) {
+export function ReplyBox({ group }: { group: ThreadGroup }) {
   const config = useStore(composeConfig)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -134,10 +126,6 @@ export function ReplyBox({ group, onToggleChats }: { group: ThreadGroup; onToggl
   return (
     <div className="reply-box">
       <div className="reply-content">
-        {/* Outside the field, to its left: opens and closes the left pane. */}
-        <button className="reply-menu-btn" type="button" title="Chats" aria-label="Toggle pane" onClick={onToggleChats}>
-          <ChatsIcon />
-        </button>
         <div className="reply-field">
         <div className="reply-resize-handle" onPointerDown={startDrag} onDoubleClick={() => { draggedHeight = undefined; setDragged(undefined) }}><span /></div>
           <input className="reply-subject" type="text" placeholder="Subject (optional)" />
