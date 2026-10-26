@@ -65,6 +65,7 @@ export function counterpartDid(groups: readonly ThreadGroup[], self: SelfAddress
 
 /** Which row of the left list a thread belongs to: the counterparty (a group chat is its own row). */
 function inboxKeyOf(group: ThreadGroup, self: SelfAddresses): string {
+  if (group.messages[0]?.msg.thread_id === NOTEPAD_THREAD_ID) return SELF_INBOX_KEY
   return inboxKeyForThread(group.messages[0]?.msg.thread_id, participantsOf(group.messages.map(p => p.msg), self))
 }
 
@@ -73,9 +74,13 @@ export const latestOf = (group: ThreadGroup): MailMessageView => group.messages[
 /** The special inboxes: rows like the others (they sort, the keyboard walks onto them, they are lit while open), each made of one
  * made-up message dated at the end of time, so that newest-first always puts them on top: yourself, then "New message" (which
  * opens a new message). They are never among a conversation's real threads (`groups`), only among the rows. */
+/** The `thread_id` of the messages one writes to oneself: the Notepad, a thread of the account's own inbox. */
+export const NOTEPAD_THREAD_ID = 'notepad'
 export const SELF_INBOX_KEY = 'self:me'
 export const NEW_INBOX_KEY = 'new:message'
 const END_OF_TIME = 8.64e15
+export const SELF_THREAD_KEY = `thread:${SELF_INBOX_KEY}`
+export const NEW_THREAD_KEY = `thread:${NEW_INBOX_KEY}`
 const specialGroup = (address: string, name: string, ts: number): ThreadGroup => ({
   key: `thread:${address}`,
   subject: name,
@@ -109,7 +114,10 @@ function openThread(groups: readonly ThreadGroup[], key: string | null): ThreadG
 }
 
 export interface Threads {
+  /** The conversations with others: not the Notepad, which is a thread of the account. */
   groups: ThreadGroup[]
+  /** The Notepad (empty until something is written in it). */
+  notepad: ThreadGroup
   focused: ThreadGroup | undefined
   /** The focused thread's own row's other threads, oldest first: the "past threads" strip. */
   others: ThreadGroup[]
@@ -117,7 +125,9 @@ export interface Threads {
 }
 
 export function threadsOf(messages: readonly ProcessedMessage[], focusedKey: string | null, self: SelfAddresses): Threads {
-  const groups = groupMessages(messages)
+  const everything = groupMessages(messages)
+  const notepadGroup = everything.find(g => g.messages[0]?.msg.thread_id === NOTEPAD_THREAD_ID)
+  const groups = everything.filter(g => g !== notepadGroup)
   const focused = openThread(groups, focusedKey)
   const focusedInbox = focused && inboxKeyOf(focused, self)
   // Every conversation shares one message set, so "every other thread of this row" has to be asked
@@ -125,6 +135,6 @@ export function threadsOf(messages: readonly ProcessedMessage[], focusedKey: str
   const others = focused
     ? groups.filter(g => g.key !== focused.key && inboxKeyOf(g, self) === focusedInbox).sort((a, b) => latestOf(a).ts - latestOf(b).ts)
     : []
-  return { groups, focused, others, rows: inboxRows([...groups, ...SPECIAL_GROUPS], self) }
+  const notepad = notepadGroup ?? { key: NOTEPAD_THREAD_ID, subject: 'Notepad', messages: [] }
+  return { groups, notepad, focused, others, rows: inboxRows([...groups, ...(notepadGroup ? [notepadGroup] : []), ...SPECIAL_GROUPS], self) }
 }
-

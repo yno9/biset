@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<!-- Dev only (not part of the build): the same names drawn in several palettes, to choose the avatars' colours by eye. Open /avatars.html. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>avatar palettes</title>
+<style>
+  body { margin: 24px; font: 14px/1.4 system-ui, sans-serif; color: #1c1c1e; background: #fff; }
+  h2 { font-size: 15px; margin: 28px 0 4px; }
+  code { color: #666; font-size: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+  .av { width: 48px; text-align: center; font-size: 10px; color: #888; }
+  .av > span { display: block; width: 48px; height: 48px; border-radius: 50%; overflow: hidden; margin-bottom: 3px; }
+  .gap { width: 20px; }
+  .swatches { display: flex; gap: 6px; margin-top: 8px; }
+  .swatches span { width: 44px; height: 22px; border-radius: 5px; }
+  body.site { background: #fbf3ec; }
+</style>
+</head>
+<body class="site">
+<div id="root"></div>
+<script type="module" src="./avatars.tsx"></script>
+</body>
+</html>

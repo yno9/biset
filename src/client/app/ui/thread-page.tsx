@@ -42,7 +42,7 @@ function Message({ message: { msg, bodyText } }: { message: ProcessedMessage }) 
   )
 }
 
-function Messages({ group }: { group: ThreadGroup }) {
+export function Messages({ group }: { group: ThreadGroup }) {
   const all = group.messages
   const [, setTick] = useState(0)
   const container = useRef<HTMLDivElement>(null)

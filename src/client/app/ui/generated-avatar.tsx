@@ -3,6 +3,6 @@
 import Avatar from 'boring-avatars'
 import { AVATAR_COLORS } from './format.ts'
 
-export function GeneratedAvatar({ name }: { name: string }) {
-  return <span className="avatar-generated" aria-hidden="true"><Avatar name={name || '?'} variant="beam" size="100%" colors={[...AVATAR_COLORS]} /></span>
+export function GeneratedAvatar({ name, variant = 'beam' }: { name: string; variant?: 'beam' | 'bauhaus' }) {
+  return <span className="avatar-generated" aria-hidden="true"><Avatar name={name || '?'} variant={variant} size="100%" colors={[...AVATAR_COLORS]} /></span>
 }

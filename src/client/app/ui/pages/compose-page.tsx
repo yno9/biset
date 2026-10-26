@@ -1,15 +1,10 @@
-// The compose page (src.bak's #compose, ported): a recipient list, the From the recipients decide,
-// a subject and a body. A message goes out over exactly one transport, decided by the first filled
-// recipient (DIDComm for a DID, and for a mail address its DID); "From" is never a manual choice.
-import { useEffect, useRef, useState } from 'react'
-import { createStore, useStore } from '../../react/store.ts'
-import { labelForDid, protocolFor, PROTO_COLOR, PROTO_TEXT } from '../did-display.ts'
-import type { ReplySendInput } from '../reply-box.tsx'
-import type { Proto } from '../did-display.ts'
+// The compose page is a conversation that has not begun: the island at the top (ui/right-col.tsx) takes the recipient and the
+// subject where an open conversation shows who it is with and its title, the reply box takes the message, and the page itself is
+// the empty conversation. This module holds what the island and the reply box share (the draft), and sends it.
+import { useLayoutEffect } from 'react'
+import { createStore } from '../../react/store.ts'
 import { setPage } from '../state.ts'
-
-/** The From row. Hidden while a message can only be sent from the one identity there is; it comes back when there are several to choose from. */
-const SHOW_FROM = false
+import type { ReplySendInput } from '../reply-box.tsx'
 
 export interface ComposePageConfig {
   selfAddress: string
@@ -25,114 +20,35 @@ const composeConfig = createStore<ComposePageConfig | undefined>(undefined)
 export const configureComposePage = (next: ComposePageConfig): void => composeConfig.set(next)
 export const composeConfigured = (): boolean => composeConfig.get() !== undefined
 
-/** One "To" row: what is typed, and the real address when the field shows an elided DID. */
-interface Recipient { id: number; text: string; fullDid?: string }
+/** The draft's recipient and subject, as typed in the island. `to` can be set before the page opens (a path in the address bar). */
+export const composeDraft = createStore<{ to: string; subject: string }>({ to: '', subject: '' })
+export const resetComposeDraft = (): void => composeDraft.set({ to: '', subject: '' })
 
-const addressOf = (row: Recipient): string => (row.fullDid || row.text).trim()
-const badge = (proto: Proto) => (
-  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0, background: PROTO_COLOR[proto] }}>{PROTO_TEXT[proto]}</span>
-)
+/** Sends the draft with `body` as its message, and goes on to the conversation it makes. Throws what the send throws. */
+export async function sendComposed(body: string): Promise<void> {
+  const config = composeConfig.get()
+  if (!config) throw new Error('Not ready to send')
+  const { to, subject } = composeDraft.get()
+  const toAddrs = to.split(/[,\s]+/).map(address => address.trim()).filter(Boolean)
+  if (toAddrs.length === 0) throw new Error('At least one recipient is required')
+  if (!body.trim()) throw new Error('Message cannot be empty')
+  if (!config.selfDid) throw new Error('DIDComm is not set up on this identity yet')
+  await config.sendMessage({ toAddrs, subject: subject.trim(), body: body.trim() })
+  resetComposeDraft()
+  setPage('thread')
+}
 
+/** Sends one message to the given addresses, with no draft in it (what the helper's commands use). Throws what the send throws. */
+export async function sendMessageTo(toAddrs: string[], body: string): Promise<void> {
+  const config = composeConfig.get()
+  if (!config) throw new Error('Not ready to send')
+  if (!config.selfDid) throw new Error('DIDComm is not set up on this identity yet')
+  await config.sendMessage({ toAddrs, subject: '', body })
+}
+
+/** The page's own part: nothing yet (the conversation is empty). */
 export function ComposePage() {
-  const config = useStore(composeConfig)
-  const [rows, setRows] = useState<Recipient[]>([{ id: 0, text: '' }])
-  const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
-  const [sending, setSending] = useState(false)
-  const nextId = useRef(1)
-  const lastInput = useRef<HTMLInputElement>(null)
-  const focusNewRow = useRef(false)
-
-  useEffect(() => { document.querySelector<HTMLInputElement>('#new-recipients .new-field-input')?.focus() }, [])
-  useEffect(() => {
-    if (!focusNewRow.current) return
-    focusNewRow.current = false
-    lastInput.current?.focus()
-  }, [rows.length])
-
-  if (!config) return null
-
-  const update = (id: number, change: (row: Recipient) => Recipient) => setRows(current => current.map(row => row.id === id ? change(row) : row))
-
-  // Every send goes from this identity's DID (a mail address is only another name for a recipient's DID).
-  const fromAddress = config.selfDid ?? config.selfAddress
-
-  const send = async () => {
-    if (sending) return
-    const toAddrs = rows.map(addressOf).filter(Boolean)
-    const text = body.trim()
-    if (toAddrs.length === 0) { config.onError?.('At least one recipient is required'); return }
-    if (!text) { config.onError?.('Message cannot be empty'); return }
-    if (!config.selfDid) { config.onError?.('DIDComm is not set up on this identity yet'); return }
-    setSending(true)
-    try {
-      await config.sendMessage({ toAddrs, subject: subject.trim(), body: text })
-      setPage('thread')
-    } catch (error) {
-      config.onError?.(error instanceof Error ? error.message : 'Could not send')
-      setSending(false)
-    }
-  }
-
-  return (
-    <div id="active-thread">
-      <div className="cmd-thread-card" id="focused-thread-card">
-        <div className="cmd-page-content compose-page">
-          <div className="new-compose-card">
-            <div className="new-compose-field">
-              <div id="new-recipients" className="new-recipients-list">
-                {rows.map((row, index) => {
-                  const address = addressOf(row)
-                  const proto = address ? protocolFor(address) : undefined
-                  return (
-                    <div key={row.id} className="new-recipient-row" data-kind={index === 0 ? 'to' : undefined}>
-                      <span className="new-field-label">{index === 0 ? 'To' : ''}</span>
-                      <span className="new-recip-protos">
-                        {proto ? <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', borderRadius: 4, padding: '1px 5px', marginRight: 6, flexShrink: 0, background: PROTO_COLOR[proto] }}
-                          title={proto === 'did' ? 'Sends over DIDComm' : 'Sends over DIDComm, to the DID this address names (its own domain or a mail gateway answers)'}>{PROTO_TEXT[proto]}</span> : null}
-                      </span>
-                      <input ref={index === rows.length - 1 ? lastInput : undefined} className="new-field-input" type="email" placeholder="recipient@example.com" autoComplete="off"
-                        value={row.fullDid ? labelForDid(row.fullDid) : row.text}
-                        // A manual edit always clears an elided DID's real address.
-                        onChange={event => update(row.id, current => ({ id: current.id, text: event.target.value }))}
-                        // A typed did:vh collapses to its elided form once the field is left.
-                        onBlur={() => update(row.id, current => {
-                          const full = addressOf(current)
-                          return full.startsWith('did:vh:') ? { id: current.id, text: labelForDid(full), fullDid: full } : { id: current.id, text: full ? full : current.text }
-                        })} />
-                      {index === 0 ? <button id="new-add-btn" className="new-compose-add-btn" tabIndex={-1} style={{ fontSize: 20, padding: '0 4px', lineHeight: 1 }}
-                        onClick={() => { focusNewRow.current = true; setRows(current => [...current, { id: nextId.current++, text: '' }]) }}>+</button> : null}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-            {SHOW_FROM ? <div id="new-from-field" className="new-compose-field" style={{ alignItems: 'center' }}>
-              <span className="new-field-label">From</span>
-              <button type="button" id="new-from" className="new-field-input new-from-btn">
-                {badge('did')}
-                <span style={{ whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={fromAddress}>{labelForDid(fromAddress)}</span>
-              </button>
-            </div> : null}
-            <div id="new-title-field" className="new-compose-field">
-              <span id="new-title-label" className="new-field-label">Subject</span>
-              <input id="new-title" className="new-field-input" placeholder="(no subject)" autoComplete="off" value={subject} onChange={event => setSubject(event.target.value)} />
-            </div>
-            <div className="new-compose-body-field">
-              <span className="new-field-label">Body</span>
-              <textarea id="new-body" placeholder="Write a message…" value={body} onChange={event => setBody(event.target.value)} />
-            </div>
-            <div className="new-compose-actions" style={{ justifyContent: 'flex-end' }}>
-              <button id="new-attach-btn" className="reply-attach-btn" type="button" title="Attach file">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
-              </button>
-              <button id="new-send-btn" className="t-send-btn always-send" title="Send" disabled={sending} onClick={() => { void send() }}>
-                <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z" /></svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+  // Opened at the top, whatever the page before had scrolled to.
+  useLayoutEffect(() => { const outer = document.getElementById('outer'); if (outer) outer.scrollTop = 0 }, [])
+  return <div id="active-thread" />
 }

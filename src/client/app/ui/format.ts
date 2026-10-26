@@ -45,8 +45,9 @@ export function previewText(body: string, max = 60): string {
 
 const palette = ['#e8604a', '#4a90d9', '#5caf6e', '#9b59b6', '#e67e22', '#1abc9c', '#e91e8c', '#607d8b']
 
-/** The colours a generated avatar (generated-avatar.tsx) is drawn in: five of the palette. */
-export const AVATAR_COLORS = ['#e8604a', '#4a90d9', '#5caf6e', '#9b59b6', '#e67e22'] as const
+/** The colours a generated avatar (generated-avatar.tsx) is drawn in: five, chosen from the "Peach and blue" set of avatars.html
+ * (made from the colours of digitalcommons.jp). */
+export const AVATAR_COLORS = ['#de9b61', '#e67e22', '#45a945', '#7795e8', '#ffd600'] as const
 
 export function avatarColor(name: string): string {
   let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffffff

@@ -35,6 +35,8 @@ import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
+import { startRouting } from './ui/route.ts'
+import { NOTEPAD_THREAD_ID } from './ui/thread-model.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover, requestAliasChange } from './ui/approve-dialog.tsx'
 import { ditoEmbedOrigin } from '../identity/wallet/dito-embed.ts'
@@ -1070,6 +1072,20 @@ async function configureWalletAccountIfPresent(
       const answered = input.inReplyTo && recipients.length === 1 ? snapshotBeforeSend.emails.find(email => email.id === input.inReplyTo) : undefined
       await queueWalletChatMessage(recipients, input, undefined, answered?.id)
     }
+    // The Notepad: a message to oneself. It is written into the vault like any message (so every device of the identity has it) and
+    // queued for nobody, since there is no one to send it to.
+    const writeNote = async (body: string): Promise<void> => {
+      const now = new Date().toISOString()
+      const snapshot = await readModel.snapshot()
+      await mutationSink.commitMailMessage({
+        email: {
+          id: crypto.randomUUID(), threadId: NOTEPAD_THREAD_ID, mailboxIds: { sent: true }, keywords: { '$seen': true },
+          receivedAt: now, sentAt: now, from: [{ email: identityId }], to: [{ email: identityId }], messageId: crypto.randomUUID(),
+        },
+        rawRfc5322: new TextEncoder().encode(body),
+      }, snapshot)
+      await refreshInbox(readModel)
+    }
     sendMarkdownDraft = async file => {
       const snapshot = await readModel.snapshot(); const thread = snapshot.emails.filter(email => email.threadId === file.parsed.frontmatter.id)
       await sendWalletMessage({ toAddrs: [file.parsed.frontmatter.contact], subject: file.parsed.frontmatter.subject ?? '', body: file.parsed.draft.replace(/(^|\n)!b(?:\n|$)/g, '$1').trim(), ...(thread.at(-1) ? { inReplyTo: thread.at(-1)!.id } : {}) })
@@ -1081,6 +1097,7 @@ async function configureWalletAccountIfPresent(
       selfAddress: identityId,
       selfDid,
       sendReply: sendWalletMessage,
+      sendNote: writeNote,
       onError: message => { showSysMsg(message); console.warn('[did.md Wallet send]', message) },
       didcommGroup: {
         membersOf: async thid => (await walletGroupConversation(thid))?.participants ?? [],
@@ -1165,6 +1182,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
     // this call site only ever needed it for that one case, never for an
     // ordinary returning session.
     showApp()
+    startRouting()
     console.info(`[boot] app shown at ${Math.round(performance.now() - bootStartedAt)}ms`)
     if (completedWalletEdit || sessionStorage.getItem(DID_MD_JUST_CONNECTED_KEY) === '1') {
       sessionStorage.removeItem(DID_MD_JUST_CONNECTED_KEY)
@@ -1201,6 +1219,8 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   configureAccountPage({ did: null })
   showApp()
   showAccountPage()
+  // With no account the address bar can still name a message to write (/new, /alice@gmail.com).
+  startRouting()
 }
 
 mountApp()

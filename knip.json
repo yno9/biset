@@ -7,7 +7,8 @@
     "src/client/app/sw.ts",
     "src/server/mimi/index.ts",
     "test/**/*.test.{ts,tsx}",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "src/client/app/avatars.tsx"
   ],
   "project": [
     "src/**/*.{ts,tsx}"

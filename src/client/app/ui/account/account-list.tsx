@@ -107,10 +107,10 @@ function IdentityHostCard({ did, host, showMessage, onReconnect }: { did: string
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: LINE }}>
             <span role="status" aria-label={resolved === 'ok' ? 'DID resolves' : resolved === 'error' ? 'DID does not resolve' : 'Resolving the DID'} data-state={resolved}
               style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
-            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
+            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Identity host</span>
             <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
             {host ? <a href={`https://${host}`} target="_blank" rel="noopener noreferrer" data-tip={`Open ${host}`}
-              style={{ fontSize: 14.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a> : null}
+              style={{ fontSize: 15.5, fontWeight: 600, color: 'inherit', textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{host}</a> : null}
           </div>
           {/* Clicking the DID text copies it. */}
           <div id="cmd-acc-identity-did-row"
@@ -121,7 +121,7 @@ function IdentityHostCard({ did, host, showMessage, onReconnect }: { did: string
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, minHeight: LINE }}>
           {onReconnect ? <button type="button" onClick={onReconnect}
-            style={{ padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Reconnect</button> : null}
+            style={{ padding: '3px 10px', border: '1px solid #ff9f0a', borderRadius: 8, background: 'none', color: '#ff9f0a', font: 'inherit', fontSize: 14, cursor: 'pointer' }}>Reconnect</button> : null}
           {logUrl ? <a href={logUrl} target="_blank" rel="noopener noreferrer" aria-label="Open the DID log" data-tip="Open the DID log (did.jsonl)"
             className="acc-icon-btn">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></svg>
@@ -155,11 +155,11 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
-            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Mediator</span>
+            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--accent2, #888)', flexShrink: 0 }}>Mediator</span>
             <span style={{ color: 'var(--text-dim)', flexShrink: 0 }}>:</span>
-            <span style={{ fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{coordinatorHost(didComm.mediatorUrl)}</span>
+            <span style={{ fontSize: 15.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{coordinatorHost(didComm.mediatorUrl)}</span>
             {/* The dot says registered or connecting; the line only speaks for what a colour cannot. */}
-            {status ? <span style={{ fontSize: 12, flexShrink: 1, minWidth: 0, color: didComm.error ? '#ff3b30' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span> : null}
+            {status ? <span style={{ fontSize: 13, flexShrink: 1, minWidth: 0, color: didComm.error ? '#ff3b30' : 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status}</span> : null}
           </div>
         </div>
         {/* Enable Tor, then edit the server (the pencil of the alias change): an icon each, on the right, each opening a card. Logged out, the one thing to do is log in. */}

@@ -1,8 +1,13 @@
 // Mock data for mock.html: seeds the stores the real UI reads, so it renders without an identity, a vault or a network.
 import { mountApp } from './ui/app.tsx'
+import { startRouting } from './ui/route.ts'
 import { configureCompose } from './ui/reply-box.tsx'
+import { configureAccountPage, configureComposePage } from './ui/pages/index.ts'
 import { mail, patchShell } from './ui/stores.ts'
 import type { MailMessageView, ProcessedMessage } from './ui/message/message-view.ts'
+
+// What the account's footer shows besides Delta Chat (which needs a PGP identity this mock does not have).
+;(window as unknown as { __BISET_CONFIG__?: unknown }).__BISET_CONFIG__ = { appOnionUrl: 'http://example.onion', mailGateways: ['did.md'] }
 
 const SELF = 'did:web:me.example'
 const ALICE = 'did:web:alice.example'
@@ -47,10 +52,31 @@ mail.set({
     msg('t3', ALICE, 'alice', '次回は木曜の午後でどうでしょう？', 3980),
     msg('t4', ALICE, 'alice', '明日のお昼、駅前のカフェはどうですか？', 1500),
     msg('t4', SELF, 'me', 'いいですね、12時に行きます。', 1490),
+    msg('notepad', SELF, 'me', '買うもの: 牛乳、パン、コーヒー豆', 300, { to_addrs: [SELF] }),
+    msg('notepad', SELF, 'me', 'did.md のメモ\nhttps://did.md/', 200, { to_addrs: [SELF] }),
     msg('t2', BOB, 'Bob', 'Meeting moved to 3pm.', 600, { auth: { dmarc: 'fail', domain: 'example.com' } as MailMessageView['auth'] }),
     msg('t2', SELF, 'me', 'OK, thanks.', 590),
   ],
 })
-configureCompose({ selfAddress: 'me@example.com', selfDid: SELF, sendReply: async () => {} })
+// ?notes=40 makes the Notepad long enough to scroll (for trying the account page scrolled).
+const noteCount = Number(new URLSearchParams(location.search).get('notes') ?? 0)
+if (noteCount > 0) mail.set(current => ({ messages: [...current.messages, ...Array.from({ length: noteCount }, (_, index) => msg('notepad', SELF, 'me', `note ${index + 1}`, 1000 + index))] }))
+const noAccount = new URLSearchParams(location.search).has('noaccount') // ?noaccount: as when nobody has signed in
+if (noAccount) configureAccountPage({ did: null, showMessage: text => { (window as unknown as { __said?: string }).__said = text } })
+else configureComposePage({ selfAddress: 'me@example.com', selfDid: SELF, sendMessage: async input => {
+  (window as unknown as { __sent?: unknown }).__sent = input
+  // The helper answers in its own conversation, a moment later (as didmail does for /help).
+  if (input.toAddrs[0]?.startsWith('didmail@')) {
+    setTimeout(() => mail.set(current => ({ messages: [...current.messages,
+      msg('t5', SELF, 'me', input.body, 0, { to_addrs: [input.toAddrs[0]!] }),
+      msg('t5', input.toAddrs[0]!, 'didmail', 'I am the mail bridge. You can send me:\n/help – this list', -0.01),
+    ] })), 300)
+  }
+} })
+if (!noAccount) configureAccountPage({ did: SELF, showMessage: () => {}, pgp: { address: 'me@example.com', current: async () => undefined, onCopyPublic: async () => '', inviteLink: async () => 'https://i.delta.chat/#mock', joinInvite: async () => ({ name: 'x', address: 'x@example.com' }) } })
+if (!noAccount) configureCompose({ selfAddress: 'me@example.com', selfDid: SELF, sendReply: async () => {}, sendNote: async body => { mail.set(current => ({ messages: [...current.messages, msg('notepad', SELF, 'me', body, 0, { to_addrs: [SELF] })] })) } })
+if (noAccount) mail.set({ messages: [] })
 patchShell({ appShown: true, focusedThreadKey: 't1' })
 mountApp()
+// ?route=/alice@gmail.com stands in for the address bar's path, which on mock.html is /mock.html.
+startRouting(new URLSearchParams(location.search).get('route') ?? '/')

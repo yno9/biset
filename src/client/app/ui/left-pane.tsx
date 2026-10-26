@@ -11,7 +11,7 @@ import { showAccountPage, showComposePage, hideAccountPage, hideComposePage } fr
 import { HamburgerDots, togglePane } from './right-col.tsx'
 import { uiPage } from './state.ts'
 import { isNarrow, patchShell, shell } from './stores.ts'
-import { counterpartDid, counterpartLabel, groupMembersLabel, isSpecialInbox, latestOf, NEW_INBOX_KEY, SELF_INBOX_KEY, type InboxRow } from './thread-model.ts'
+import { counterpartDid, counterpartLabel, groupMembersLabel, isSpecialInbox, latestOf, NEW_INBOX_KEY, NEW_THREAD_KEY, SELF_INBOX_KEY, SELF_THREAD_KEY, type InboxRow } from './thread-model.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
 // The keyboard cursor and hover focus only mean something where there is a pointer and a keyboard.
@@ -32,6 +32,13 @@ type NavItem = { kind: 'inbox'; key: string } | { kind: 'thread'; key: string; r
 
 /** Opens a thread and leaves the left pane (on a narrow screen the pane is a column in front). */
 function openThread(threadKey: string): void {
+  // The special inboxes' one "thread" is a page of the right column.
+  if (threadKey === NEW_THREAD_KEY || threadKey === SELF_THREAD_KEY) {
+    patchShell({ showLeft: false })
+    if (threadKey === NEW_THREAD_KEY) showComposePage()
+    else showAccountPage()
+    return
+  }
   hideAccountPage(); hideComposePage()
   patchShell({ focusedThreadKey: threadKey, showLeft: false })
 }
@@ -65,22 +72,6 @@ function Row({ row, label, avatarSubject, avatarImage, unread, current, focusedI
   const rowFocused = keyboard && focusedItem?.kind === 'inbox' && focusedItem.key === row.key
   const isSpecial = isSpecialInbox(row.key)
   const classes = ['lp-item', isSpecial ? 'lp-new' : '', current ? 'current' : '', rowFocused ? 'focused' : ''].filter(Boolean).join(' ')
-  if (isSpecial) {
-    // The special inboxes: no threads, no preview. Yourself (a person's picture) and "New message" (a pencil).
-    const mine = row.key === SELF_INBOX_KEY
-    return (
-      <a className={classes} href="#" title={label} data-inbox-key={row.key} onClick={event => { event.preventDefault(); onNavigate({ kind: 'inbox', key: row.key }) }}>
-        <div className="lp-inner">
-          <div className="lp-avatar lp-new-avatar">
-            {mine
-              ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" /></svg>
-              : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}
-          </div>
-          <div className="lp-info"><div className="lp-name">{label}</div></div>
-        </div>
-      </a>
-    )
-  }
   return (
     <a className={classes} href="#" data-inbox-key={row.key} style={visible ? undefined : { display: 'none' }}
       onClick={event => {
@@ -103,10 +94,15 @@ function Row({ row, label, avatarSubject, avatarImage, unread, current, focusedI
           hoverFired.current = true
           onNavigate({ kind: 'inbox', key: row.key })
         }}>
-        <div className="lp-avatar" style={{ background: avatarColor(avatarSubject) }}>{avatarImage ? <img className="lp-avatar-img" src={avatarImage} alt="" /> : <GeneratedAvatar name={avatarSubject} />}{unread ? <div className="unread-dot" /> : null}</div>
+        {isSpecial
+          // The special inboxes show a symbol where the others have a picture, and no preview.
+          ? <div className="lp-avatar lp-new-avatar">{row.key === SELF_INBOX_KEY
+            ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" /></svg>
+            : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>}</div>
+          : <div className="lp-avatar" style={{ background: avatarColor(avatarSubject) }}>{avatarImage ? <img className="lp-avatar-img" src={avatarImage} alt="" /> : <GeneratedAvatar name={avatarSubject} />}{unread ? <div className="unread-dot" /> : null}</div>}
         <div className="lp-info">
           <div className="lp-name">{label}</div>
-          <div className="lp-preview">{previewText(latest.body)}</div>
+          {isSpecial ? null : <div className="lp-preview">{previewText(latest.body)}</div>}
         </div>
         <button className="lp-thread-toggle" tabIndex={-1}
           onClick={event => { event.preventDefault(); event.stopPropagation(); toggleAccordion(row, row.key, false) }}>{expanded ? '▾' : '◂'}</button>
@@ -173,9 +169,6 @@ export function LeftPane() {
   const navigate = (item: NavItem) => {
     const { rows: current } = latest.current
     if (item.kind === 'thread') { patchShell({ lpFocusedKey: `thread:${item.key}` }); openThread(item.key) }
-    // The special inboxes open a page of the right column (on a narrow screen the pane steps aside for it).
-    else if (item.key === NEW_INBOX_KEY) { patchShell({ lpFocusedKey: `inbox:${item.key}`, showLeft: false }); showComposePage() }
-    else if (item.key === SELF_INBOX_KEY) { patchShell({ lpFocusedKey: `inbox:${item.key}`, showLeft: false }); showAccountPage() }
     else {
       patchShell({ lpFocusedKey: `inbox:${item.key}` })
       const row = current.find(r => r.key === item.key)
@@ -203,8 +196,7 @@ export function LeftPane() {
         const target = items[next]
         if (target && !(focusedNow && target.kind === focusedNow.kind && target.key === focusedNow.key)) { searchBox.current?.blur(); navigate(target) }
       } else if (event.key === ' ') {
-        if (focusedNow?.kind === 'inbox' && isSpecialInbox(focusedNow.key)) event.preventDefault()
-        else if (focusedNow?.kind === 'inbox') { event.preventDefault(); toggleAccordion(currentRows.find(r => r.key === focusedNow.key), focusedNow.key) }
+        if (focusedNow?.kind === 'inbox') { event.preventDefault(); toggleAccordion(currentRows.find(r => r.key === focusedNow.key), focusedNow.key) }
         else if (focusedNow?.kind === 'thread') {
           // The first thread acts as "the row plus its newest thread": Space closes the accordion.
           const row = currentRows.find(r => r.key === focusedNow.rowKey)

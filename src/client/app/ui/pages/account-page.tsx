@@ -2,7 +2,8 @@
 // click), then what hangs off it (the mediator, the key notice, PGP: account/account-list.tsx). With
 // no identity yet, the one thing to do from here is sign up.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useStore } from '../../react/store.ts'
+import { createStore, useStore } from '../../react/store.ts'
+import { IslandTabs, useIslandWheel, type ThreadNav } from '../island.tsx'
 import { hamburgerTrigger } from '../hamburger-menu.tsx'
 import { resolveDidDocument } from '../../../../protocol/did-resolve.ts'
 import { AccountList, KeysPanel } from '../account/account-list.tsx'
@@ -19,8 +20,10 @@ import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
 import { avatarColor } from '../format.ts'
 import { GeneratedAvatar } from '../generated-avatar.tsx'
-import { setPage } from '../state.ts'
 import { NewUserPage } from './new-user-page.tsx'
+import { scrollToFocused } from '../scroll.ts'
+import { Messages } from '../thread-page.tsx'
+import { useThreads } from '../use-threads.ts'
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
@@ -36,7 +39,7 @@ function changeDisplayName(): void {
 
 type FileAction = { label: string; short: string; danger?: boolean; onClick: () => void }
 
-/** Export, Import and Disconnect (Log out without a Wallet), the buttons of the Files tab (named `short`). */
+/** Export, Import and Disconnect (Log out without a Wallet), the buttons at the head of the Data tab (named `short`). */
 function fileActions(): FileAction[] {
   const config = getAccountConfig()
   const wallet = config?.wallet
@@ -79,47 +82,72 @@ function AliasButton({ children }: { children: string }) {
   )
 }
 
-function IdentityCard({ did }: { did: string }) {
-  const accountState = useStore(accountConfig)
-  // The address the identity is published at; the DID itself names none.
-  const label = accountState?.wallet?.handle ?? did
-  const [name, setName] = useState(label)
+/** The account is a conversation with yourself, and its threads are these four: the island's chevrons (and a scroll over it) move
+ * between them, as between the threads of an inbox. */
+const TABS = ['Notepad', 'Services', 'Data', 'Config'] as const
+type Tab = typeof TABS[number]
+export const accountTab = createStore<Tab>('Notepad')
 
-  // The card is a view of the signed did:vh document: a self-asserted name overrides the bare
-  // domain label once it resolves, in the background so the card shows something at once.
+/** The account's other threads, in the strip above the open one (pulled open like an inbox's other threads). */
+export function AccountPast() {
+  const tab = useStore(accountTab)
+  return (
+    <>
+      {TABS.filter(name => name !== tab).map(name => (
+        <div key={name} className="past-row">
+          <div className="past-row-header" onClick={() => accountTab.set(name)}>
+            <span className="past-row-title">{name}</span>
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
+/** The island of the account: who you are (a click on the picture, the name or the alias changes it), and the open thread's title. */
+export function AccountIsland() {
+  const accountState = useStore(accountConfig)
+  const did = accountState?.did
+  const tab = useStore(accountTab)
+  // The address the identity is published at; the DID itself names none.
+  const label = accountState?.wallet?.handle ?? did ?? ''
+  const [name, setName] = useState(label)
+  // The identity is a view of the signed did:vh document: a self-asserted name overrides the bare domain label once it resolves.
   useEffect(() => {
+    if (!did) return
     let current = true
     resolveDidDocument(did).then(found => { if (current && found?.name) setName(found.name) }).catch(() => {})
     return () => { current = false }
   }, [did])
-
-  // The identity's own name and picture, from its card; looked at again when they change.
   const profile = accountState?.profile
   const own = useOwnProfile(profile)
-
+  const fields = useRef<HTMLDivElement>(null)
+  const position = TABS.indexOf(tab)
+  const nav: ThreadNav = { position, count: TABS.length, go: step => { const next = TABS[position + step]; if (next) accountTab.set(next) } }
+  useIslandWheel(fields, nav)
+  if (!did) return null
+  const alias = name.replace(/\.did\.md$/, '@did.md')
+  const shown = own.name?.trim() || alias
   return (
-    <div className="cmd-page-section" id="cmd-acc-identity-section">
-      <div id="cmd-acc-identity-fields">
-        <div id="cmd-acc-identity-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? (own.avatar ? 'Change profile picture' : 'Set profile picture') : undefined}
-          style={{ background: avatarColor(own.name?.trim() || label), ...(profile ? { cursor: 'pointer' } : {}) }}
-          // The picture is set where it is shown: a click on it asks for an image (not the card opening).
-          onClick={profile ? event => {
-            event.stopPropagation()
-            void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
-          } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : <GeneratedAvatar name={own.name?.trim() || label} />}</div>
-        <div id="cmd-acc-identity-text">
-          {/* Two lines: the display name, and under it the alias (the mail address). Without a name the alias is the one line, and takes the name's look. */}
-          {own.name ? (
-            <div id="cmd-acc-identity-name-row"><span id="cmd-acc-identity-name"><span className="acc-display-name" role={profile ? 'button' : undefined} data-tip={profile ? 'Change display name' : undefined}
-              onClick={profile ? event => { event.stopPropagation(); changeDisplayName() } : undefined}>{own.name}</span></span></div>
-          ) : null}
-          <div id="cmd-acc-identity-alias-row"><span className={own.name ? 'acc-identity-alias' : 'acc-identity-alias as-name'}><AliasButton>{name.replace(/\.did\.md$/, '@did.md')}</AliasButton></span>
-            {profile && !own.name ? <button type="button" className="acc-name-add" onClick={event => { event.stopPropagation(); changeDisplayName() }}>Set display name</button> : null}
+    <div id="conv-meta" className="conv-line2-low">
+      <div id="conv-fields" ref={fields}>
+        <div id="conv-to">
+          <div id="conv-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? (own.avatar ? 'Change profile picture' : 'Set profile picture') : undefined}
+            style={{ background: avatarColor(shown), ...(profile ? { cursor: 'pointer' } : {}) }}
+            // The picture is set where it is shown: a click on it asks for an image.
+            onClick={profile ? () => {
+              void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
+            } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : <GeneratedAvatar name={shown} />}</div>
+          <div id="conv-text">
+            <div id="conv-line1">
+              <span id="conv-name" role={profile && own.name ? 'button' : undefined} data-tip={profile && own.name ? 'Change display name' : undefined}
+                style={profile && own.name ? { cursor: 'pointer' } : undefined} onClick={profile && own.name ? changeDisplayName : undefined}>{shown}</span>
+              {own.name ? <span id="conv-address"><AliasButton>{alias}</AliasButton></span>
+                : profile ? <button type="button" className="acc-name-add" onClick={changeDisplayName}>Set display name</button> : null}
+            </div>
+            <div id="conv-line2"><IslandTabs tabs={TABS} current={tab} onPick={name => accountTab.set(name)} /></div>
           </div>
         </div>
-        <button id="lp-hamburger" type="button" aria-label="menu" style={{ marginLeft: 'auto' }} {...hamburgerTrigger}>
-          <svg id="lp-hamburger-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3.5" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="8" cy="12.5" r="1.5" /></svg>
-        </button>
       </div>
     </div>
   )
@@ -138,11 +166,11 @@ function FilesPanel() {
 
 /** The foot of the page, one centred row: Delta Chat (join someone's invite, or copy this identity's own invite link), and, when this app is
  * also served over Tor, its onion address to copy (the page's own, by the deployment's config). */
-function FootRow() {
+export function AccountFoot() {
   const config = useStore(accountConfig)
   const pgp = config?.pgp
   const onion = readBisetConfig().appOnionUrl
-  if (!pgp && !onion) return null
+  if (!pgp && !onion) return <span id="cmd-acc-foot" />
   const showMessage = (text: string) => config?.showMessage?.(text)
   return (
     <div id="cmd-acc-foot">
@@ -164,58 +192,39 @@ function FootRow() {
   )
 }
 
-const TABS = ['Services', 'Keys', 'Files', 'Config'] as const
-type Tab = typeof TABS[number]
-
-/** The bar under the identity card, and the panel it picks. Services is what the page showed so far (the
- * mediator), Keys has the devices and the PGP key, Files has Export / Import / Disconnect. */
-function AccountTabs() {
-  const [tab, setTab] = useState<Tab>('Services')
-  const [bar, setBar] = useState<{ left: number; width: number }>()
-  const tabs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({})
-  // The underline is one element that slides (CSS transition on left and width) to the chosen tab; it
-  // first appears already in place, so nothing slides on load.
-  useLayoutEffect(() => {
-    const measure = () => { const button = tabs.current[tab]; if (button) setBar({ left: button.offsetLeft, width: button.offsetWidth }) }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [tab])
-  return (
-    <>
-      <nav id="cmd-acc-nav" role="tablist" aria-label="Account">
-        {TABS.map(name => (
-          <button key={name} ref={element => { tabs.current[name] = element }} type="button" role="tab" className="acc-nav-tab" aria-selected={tab === name}
-            // The pointer over a tab picks it; a click (touch, keyboard) does too.
-            onPointerEnter={event => { if (event.pointerType === 'mouse') setTab(name) }} onClick={() => setTab(name)}>{name}</button>
-        ))}
-        {bar ? <span className="acc-nav-underline" style={{ left: bar.left, width: bar.width }} /> : null}
-      </nav>
-      <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
-        {tab === 'Services' ? <AccountList /> : tab === 'Keys' ? <KeysPanel /> : tab === 'Files' ? <FilesPanel /> : <ConfigPanel />}
-      </div>
-    </>
-  )
+/** The Data thread: the files' three buttons in one row, then the keys (what were the Files and the Keys threads). */
+function DataPanel() {
+  return <><FilesPanel /><KeysPanel /></>
 }
 
+/** The Notepad: what you wrote to yourself, as the messages of a conversation. */
+function NotepadPanel() {
+  const { notepad } = useThreads()
+  const count = notepad.messages.length
+  // Open at the end, as a conversation does.
+  useLayoutEffect(() => { scrollToFocused() }, [count])
+  // The same page as an open conversation (ui/thread-page.tsx), so that it is spaced as one.
+  return <div id="active-thread"><div className="thread-card focused-card" id="focused-thread-card"><Messages group={notepad} /></div></div>
+}
+
+/** The page of the open thread (a tab of the account): Notepad, Services, Data or Config. */
 export function AccountPage() {
   const config = useStore(accountConfig)
+  const tab = useStore(accountTab)
   if (!config) return null
   // No local identity yet: the account page is the landing page for that state, and its one job is
-  // the sign-up form, in place of the identity card.
+  // the sign-up form.
   if (config.did === null) {
     return <div id="active-thread"><div className="cmd-thread-card" id="focused-thread-card"><NewUserPage /></div></div>
   }
+  if (tab === 'Notepad') return <NotepadPanel />
   return (
     <div id="active-thread">
       <div className="cmd-thread-card" id="focused-thread-card">
         <div className="cmd-page-content wide-page">
-          <IdentityCard did={config.did} />
-          <AccountTabs />
-          <FootRow />
-          <button id="cmd-acc-compose-fab" className="compose-fab" type="button" aria-label="Compose" data-tip="Compose" onClick={() => setPage('compose')}>
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-          </button>
+          <div className="cmd-page-section" id="cmd-acc-list" role="tabpanel">
+            {tab === 'Services' ? <AccountList /> : tab === 'Data' ? <DataPanel /> : <ConfigPanel />}
+          </div>
         </div>
       </div>
     </div>

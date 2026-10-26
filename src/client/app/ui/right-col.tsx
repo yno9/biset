@@ -20,6 +20,10 @@ import { attachPullReveal } from './pull-reveal.ts'
 import type { PullReveal } from './pull-reveal.ts'
 import { counterpartLabel, displayParticipantsOf, latestOf, participantsOf } from './thread-model.ts'
 import { showComposePage } from './pages/index.ts'
+import { composeDraft } from './pages/compose-page.tsx'
+import { AccountFoot, AccountIsland, AccountPast, accountTab } from './pages/account-page.tsx'
+import { accountConfig } from './account/state.ts'
+import { IslandNav, useIslandWheel, type ThreadNav } from './island.tsx'
 import { uiPage } from './state.ts'
 import { useSelf, useThreads } from './use-threads.ts'
 
@@ -146,12 +150,80 @@ function MetaInfo({ group, open }: { group: ThreadGroup | undefined; open: boole
   return open && group ? <div id="conv-meta-expanded">{lines.join('\n')}</div> : null
 }
 
-/** Moving between the threads of one inbox: up to the older one, down to the newer one. */
-interface ThreadNav { position: number; count: number; go(step: -1 | 1): void }
+/** The island of a conversation that has not begun: the recipient and the subject are typed where an open one shows who it is with
+ * and its title. */
+/** The draft's recipients are kept as one string of addresses separated by spaces; what ends with a space (or a comma) is settled and
+ * shown as a chip, what follows the last separator is still being typed. */
+const splitRecipients = (to: string): { chips: string[]; typing: string } => {
+  const tokens = to.split(/[\s,]+/)
+  const typing = tokens.pop() ?? ''
+  return { chips: tokens.filter(Boolean), typing }
+}
+const joinRecipients = (chips: string[], typing: string): string => [...chips, typing].join(' ')
 
-const NavChevron = ({ up }: { up: boolean }) => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={up ? 'M3.5 10l4.5-4.5L12.5 10' : 'M3.5 6l4.5 4.5L12.5 6'} /></svg>
-)
+function ComposeMeta() {
+  const draft = useStore(composeDraft)
+  const to = useRef<HTMLInputElement>(null)
+  useEffect(() => { to.current?.focus() }, [])
+  const { chips, typing } = splitRecipients(draft.to)
+  const known = chips[0] ?? typing.trim()
+  // Two or more recipients are a group: the picture is then drawn in the other style (Bauhaus), from all their names.
+  const everyone = [...chips, ...(typing.trim() ? [typing.trim()] : [])]
+  const group = everyone.length >= 2
+  const setTo = (next: string) => composeDraft.set(current => ({ ...current, to: next }))
+  // The chip the arrow keys have taken: chips are selected whole, not by the letters in them (null: the cursor is in the field).
+  const [selected, setSelected] = useState<number | null>(null)
+  const removeChip = (index: number) => { setTo(joinRecipients(chips.filter((_, other) => other !== index), typing)); setSelected(null) }
+  const editChip = (index: number) => { setTo(joinRecipients(chips.filter((_, other) => other !== index), chips[index]!)); setSelected(null); to.current?.focus() }
+  return (
+    <div id="conv-meta" className="conv-line2-low">
+      <div id="conv-fields">
+        <div id="conv-to">
+          {known
+            ? <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(known) }}><GeneratedAvatar name={group ? everyone.join(' ') : known} variant={group ? 'bauhaus' : 'beam'} /></div>
+            : <div id="conv-avatar" className="lp-avatar lp-new-avatar conv-avatar-to">To</div>}
+          <div id="conv-text">
+            <div id="conv-line1" className="conv-recipients">
+              {chips.map((address, index) => (
+                // A click takes a chip back to be edited.
+                <span key={`${address}-${index}`} className={selected === index ? 'conv-chip selected' : 'conv-chip'} title={address}
+                  onClick={() => editChip(index)}>{address}</span>
+              ))}
+              <input id="conv-to-input" ref={to} className="conv-input" type="text" inputMode="email" name="recipient" placeholder={chips.length ? '' : 'name@example.com'} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                data-bwignore="true" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
+                value={typing}
+                // A space or a comma settles what was typed (as a paste of several addresses does).
+                onChange={event => { const more = splitRecipients(event.target.value); setTo(joinRecipients([...chips, ...more.chips], more.typing)) }}
+                onKeyDown={event => {
+                  const field = event.currentTarget
+                  const atStart = field.selectionStart === 0 && field.selectionEnd === 0
+                  if (selected !== null) {
+                    // A chip is taken: the keys act on it as a whole.
+                    if (event.key === 'ArrowLeft') { event.preventDefault(); setSelected(Math.max(0, selected - 1)) }
+                    else if (event.key === 'ArrowRight') { event.preventDefault(); setSelected(selected < chips.length - 1 ? selected + 1 : null) }
+                    else if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); removeChip(selected) }
+                    else if (event.key === 'Enter') { event.preventDefault(); editChip(selected) }
+                    else if (event.key === 'Escape') { event.preventDefault(); setSelected(null) }
+                    else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) setSelected(null) // typing goes on in the field
+                    return
+                  }
+                  if ((event.key === 'ArrowLeft' || event.key === 'Backspace') && atStart && chips.length > 0 && !event.metaKey && !event.ctrlKey) { event.preventDefault(); setSelected(chips.length - 1) }
+                  else if (event.key === 'Enter' && !event.nativeEvent.isComposing && typing.trim()) { event.preventDefault(); setTo(joinRecipients([...chips, typing.trim()], '')) }
+                }}
+                onBlur={() => { setSelected(null); if (typing.trim()) setTo(joinRecipients([...chips, typing.trim()], '')) }} />
+            </div>
+            <div id="conv-line2">
+              <svg className="conv-subject-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+              <input id="conv-subject-input" className="conv-input" type="text" name="subject" placeholder={group ? 'Group Name' : 'Subject (optional)'} autoComplete="off"
+                data-bwignore="true" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
+                value={draft.subject} onChange={event => composeDraft.set(current => ({ ...current, subject: event.target.value }))} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 /** Who the thread is with. */
 function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadGroup | undefined; hidden: boolean; groupName: string | undefined; titleLine: ReactNode; nav: ThreadNav | undefined }) {
@@ -162,40 +234,8 @@ function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadG
   const counterpart = participantsOf(msgs, self).split(', ')[0] ?? ''
   const name = group ? counterpartLabel([group], self) : ''
   const address = counterpart.startsWith('did:') ? labelForDid(counterpart) : counterpart
-  // Scrolling over the island moves between the inbox's threads too: one step per scroll gesture (its inertia included).
   const fields = useRef<HTMLDivElement>(null)
-  const navNow = useRef(nav)
-  navNow.current = nav
-  useEffect(() => {
-    const el = fields.current
-    if (!el) return
-    let sum = 0
-    let spent = false
-    let quiet: number | undefined
-    // Whose scroll this is: decided by where the gesture began. A scroll that began elsewhere (the page under the pointer moving
-    // until the island arrives beneath it) is not the island's, however long it goes on.
-    let lastWheelAt = 0
-    let beganHere = false
-    const watch = (event: WheelEvent): void => {
-      if (event.timeStamp - lastWheelAt > 250) beganHere = el.contains(event.target as Node)
-      lastWheelAt = event.timeStamp
-    }
-    const onWheel = (event: WheelEvent): void => {
-      const current = navNow.current
-      if (!current || current.count < 2 || !beganHere) return
-      event.preventDefault()
-      window.clearTimeout(quiet)
-      quiet = window.setTimeout(() => { sum = 0; spent = false }, 250)
-      if (spent) return
-      sum += event.deltaY
-      if (Math.abs(sum) < 30) return
-      spent = true
-      current.go(sum > 0 ? 1 : -1)
-    }
-    window.addEventListener('wheel', watch, { capture: true, passive: true })
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => { window.removeEventListener('wheel', watch, { capture: true }); el.removeEventListener('wheel', onWheel); window.clearTimeout(quiet) }
-  }, [])
+  useIslandWheel(fields, nav)
   return (
     <div id="conv-meta" style={hidden ? { display: 'none' } : undefined}>
       <div id="conv-fields" ref={fields}>
@@ -219,12 +259,7 @@ function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadG
               </div>
             </>
           ) : null}
-          {nav && nav.count > 1 ? (
-            <div id="conv-nav" title={`${nav.position + 1} / ${nav.count}`}>
-              <button type="button" aria-label="Older thread" disabled={nav.position === 0} onClick={() => nav.go(-1)}><NavChevron up /></button>
-              <button type="button" aria-label="Newer thread" disabled={nav.position === nav.count - 1} onClick={() => nav.go(1)}><NavChevron up={false} /></button>
-            </div>
-          ) : null}
+          <IslandNav nav={nav} />
         </div>
         <div id="conv-cc" />
         <div id="conv-bcc" />
@@ -237,7 +272,9 @@ const TITLES = { account: 'account', compose: 'compose' } as const
 
 export function RightCol() {
   const page = useStore(uiPage)
-  const { focused, others } = useThreads()
+  const { focused, others, rows } = useThreads()
+  // What the reply box keeps per inbox: the open thread's inbox, the new message, the account.
+  const draftKey = page === 'compose' ? 'new' : page === 'account' ? 'me' : focused ? rows.find(row => row.groups.some(group => group.key === focused.key))?.key ?? focused.key : ''
   // The inbox's threads in time order, the open one among them.
   const inboxThreads = focused ? [...others, focused].sort((a, b) => latestOf(a).ts - latestOf(b).ts) : []
   const position = focused ? inboxThreads.findIndex(group => group.key === focused.key) : -1
@@ -255,6 +292,9 @@ export function RightCol() {
   const outer = useRef<HTMLDivElement>(null)
   const column = useRef<HTMLDivElement>(null)
   const onThread = page === 'thread'
+  // The account is a conversation too once there is an identity (before that its page is the sign-up).
+  const accountReady = useStore(accountConfig)?.did != null
+  const accountless = useStore(accountConfig)?.did === null
   const [metaOpen, setMetaOpen] = useState(false)
   // The island's shadow shows only once the conversation has scrolled under it.
   const [scrolled, setScrolled] = useState(false)
@@ -291,8 +331,22 @@ export function RightCol() {
     pull.current = attachPullReveal(outer.current!)
     return () => pull.current?.detach()
   }, [])
+  // A new message has nothing to scroll (its page can no longer be scrolled, ui/style.css): wherever the page before it was scrolled to
+  // must not be kept, or the island would stand at a scroll position nobody can scroll back from.
+  useLayoutEffect(() => {
+    if (page !== 'compose') return
+    const el = outer.current
+    if (el) { el.scrollTop = 0; setScrolled(false) }
+  }, [page])
   // Another thread: the strip of the others is closed again.
-  useEffect(() => { pull.current?.reset() }, [focusedKey])
+  const tab = useStore(accountTab)
+  useEffect(() => { pull.current?.reset() }, [focusedKey, tab, page])
+  // The jump-to-end button and its count describe the page on screen: read again once another page (or thread, or tab) has laid out,
+  // not left as the page before had it.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => { if (outer.current) readScroll(outer.current) }))
+    return () => cancelAnimationFrame(frame)
+  }, [focusedKey, tab, page])
 
   useEffect(() => {
     const el = outer.current!
@@ -368,15 +422,17 @@ export function RightCol() {
   return (
     <div id="right-col" ref={column}>
       <div id="outer" ref={outer}>
-        <div id="past-threads"><div className="past-inner">{onThread ? <PastThreads groups={others} /> : null}</div></div>
-        <div id="conv-top" className={[scrolled ? 'scrolled' : '', compact ? 'compact' : ''].filter(Boolean).join(' ') || undefined} style={page === 'account' ? { display: 'none' } : undefined}>
+        <div id="past-threads"><div className="past-inner">{onThread ? <PastThreads groups={others} /> : accountReady && page === 'account' ? <AccountPast /> : null}</div></div>
+        <div id="conv-top" className={[scrolled ? 'scrolled' : '', compact ? 'compact' : ''].filter(Boolean).join(' ') || undefined}>
+          {page === 'account' ? <AccountIsland /> : null}
+          {page === 'compose' ? <ComposeMeta /> : null}
           <ConvMeta group={focused} hidden={!onThread} groupName={groupName} titleLine={<>{newThreadButton}{titleText}</>} nav={nav} />
           {/* On the account page the menu button sits at the end of the identity card instead (pages/account-page.tsx). */}
           {page === 'account' ? null : <div id="header-right">
             <button id="lp-hamburger" aria-label="menu" className={titleClass} {...hamburgerTrigger}><HamburgerDots id="lp-hamburger-icon" /></button>
           </div>}
         </div>
-        {onThread ? null : (
+        {onThread || page === 'compose' ? null : (
           <div id="thread-title-row" style={page === 'account' ? { display: 'none' } : undefined}>
             <div id="header-left" className={titleClass}>
               {newThreadButton}
@@ -386,11 +442,13 @@ export function RightCol() {
         )}
         <div id="right-pane">
           <MetaInfo group={focused} open={onThread && metaOpen} />
+          {/* No account: the message can be written, but sending needs one. The line is said in the field the thread's headers use. */}
+          {page === 'compose' && accountless ? <div id="conv-meta-expanded">Create an account to send messages.</div> : null}
           <PageHost />
           <div id="scroll-spacer" />
         </div>
       </div>
-      <div id="reply-dock">{onThread && focused ? <ReplyBox group={focused} /> : null}</div>
+      <div id="reply-dock">{onThread && focused ? <ReplyBox key={draftKey} draftKey={draftKey} group={focused} /> : page === 'compose' ? <ReplyBox key={draftKey} draftKey={draftKey} /> : accountReady && page === 'account' ? <ReplyBox key={draftKey} draftKey={draftKey} mode="me" command={<AccountFoot />} /> : null}</div>
     </div>
   )
 }

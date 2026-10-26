@@ -39,9 +39,12 @@ function updateScrollSpacer(): void {
 /** Puts the view where a freshly opened thread rests: at its end, or at the top of its last message when that message is
  * taller than the view. Returns where it put it. */
 function snapToRest(): number | undefined {
-  updateScrollSpacer()
   const outer = $('outer')
   if (!outer) return undefined
+  // A new message has nothing to rest at the end of: the page is empty, and the view stays at the top (a snap left over from the page
+  // before, the Notepad's say, must not carry it down by the few pixels the empty page overflows by).
+  if ($('app')?.dataset.menuPage === '/compose') { outer.scrollTop = 0; return 0 }
+  updateScrollSpacer()
   let target = outer.scrollHeight - outer.clientHeight
   const messages = outer.querySelectorAll('.t-msg')
   const last = messages[messages.length - 1] as HTMLElement | undefined

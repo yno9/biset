@@ -11,5 +11,7 @@ export { setOnWalletConnected } from './new-user-page.tsx'
 export const showAccountPage = (): void => { if (getAccountConfig()) setPage('account') }
 export const hideAccountPage = (): void => { if (inPage('account')) setPage('thread') }
 
-export const showComposePage = (): void => { if (composeConfigured()) setPage('compose') }
+// Without an account the page can still be opened (a message can be written there, and an address from the path is put in it); it
+// is sending that needs the account.
+export const showComposePage = (): void => { if (composeConfigured() || getAccountConfig()?.did === null) setPage('compose') }
 export const hideComposePage = (): void => { if (inPage('compose')) setPage('thread') }

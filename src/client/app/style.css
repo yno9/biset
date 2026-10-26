@@ -120,6 +120,8 @@
   --text-dim: #8e8e93;
   --input-bg: #fff;
   --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  /* The grey surface shared by the conversation's bubbles, the account's cards and the Files buttons. */
+  --surface-grey: rgba(128, 128, 128, 0.075);
   --reply-bg: #fff;
   --bubble-me: #4aa3de;
   --bubble-me-text: #fff;
@@ -851,7 +853,7 @@ select {
   justify-content: space-between;
   padding: 10px 0;
   border-bottom: 1px solid var(--header-border);
-  font-size: 16.5px;
+  font-size: 17.5px;
 }
 /* :last-of-type, not :last-child — a section can end with a non-row sibling
    that would otherwise keep this row from being its parent's last CHILD
@@ -866,7 +868,7 @@ select {
   padding: 10px 22px;
   border-radius: 10px;
   border: none;
-  font-size: 16.5px;
+  font-size: 17.5px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -1160,6 +1162,10 @@ select {
   position: relative;
   overflow: hidden;
 }
+.lp-new .lp-thread-toggle,
+.lp-new .lp-thread-list {
+  display: none !important;
+}
 .lp-new .lp-name {
   color: var(--text-dim);
 }
@@ -1174,7 +1180,9 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 12px 12px 10px;
+  /* 23px on the left: where the picture sits when it is centred in the 88px compact pane, so that it stays put between the
+     compact and the normal pane. */
+  padding: 12px 12px 12px 23px;
   height: 64px;
   overflow: hidden;
   transition: transform 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94);
@@ -1546,7 +1554,9 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
    `!important` (found live, 2026-09-09: a stray scroll button, left
    .visible from whatever thread was on screen, showed through on the
    account page). */
-#app[data-menu-page] #scroll-island {
+/* (The button is a sibling of #app, not inside it, so it is reached from body: the rule had stopped matching.) A new message has nothing to
+   jump to the end of; the account keeps the button, for its Notepad, which is a conversation. */
+body:has(#app[data-menu-page="/compose"]) #scroll-island {
   opacity: 0;
   pointer-events: none;
   display: none;
@@ -1913,7 +1923,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
 #conv-text {
   display: flex;
   flex-direction: column;
-  gap: 0px;
+  gap: 3px;
   min-width: 0;
   line-height: 1.32;
 }
@@ -2089,15 +2099,20 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   color: var(--text);
 }
 #cmd-acc-files {
+  /* One row, the three buttons sharing its whole width. */
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  width: 100%;
   gap: 8px;
+  margin-bottom: 12px;
 }
 .acc-file-btn {
-  padding: 7px 16px;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 13px 16px;
+  border: 0;
   border-radius: 8px;
-  background: none;
+  background: var(--surface-grey);
   color: var(--text);
   font: inherit;
   font-size: 14px;
@@ -2105,7 +2120,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   transition: background-color 0.12s;
 }
 .acc-file-btn:hover {
-  background: rgba(128, 128, 128, 0.11);
+  background: rgba(128, 128, 128, 0.14);
 }
 .acc-file-btn.danger {
   color: #c0392b;
@@ -2121,7 +2136,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   background: none;
   color: var(--text-dim);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   text-decoration: none;
   cursor: pointer;
   transition: background-color 0.12s, color 0.12s;
@@ -2314,7 +2329,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
 #cmd-acc-identity-copy-icon { flex-shrink: 0; color: var(--text-dim); }
 .acc-pgp-row svg { flex-shrink: 0; }
 .acc-pgp-fingerprint {
-  font-size: 12px;
+  font-size: 13px;
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   white-space: nowrap;
   overflow: hidden;
@@ -2367,10 +2382,13 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
 #cmd-acc-list > .acc-card-wrap + .acc-card-wrap {
   margin-top: 12px;
 }
-/* A card of the Services tab is drawn like the Files buttons: a 1px border, 8px corners. */
+/* A card of the Services tab: a grey surface with 8px corners, no border. */
 .acc-card-wrap {
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  /* 2px of the card's own, around whatever each card holds (its rows, the key cards' 12px, the config rows' 10px 12px). */
+  padding: 2px;
+  border: 0;
   border-radius: 8px;
+  background: var(--surface-grey);
 }
 .acc-card-wrap.expanded .cmd-page-row,
 .acc-card-wrap:last-child .cmd-page-row {
@@ -2559,7 +2577,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   border-bottom: 1px solid var(--header-border);
   background: #8080800d;
   padding: 12px;
-  font-size: 13px;
+  font-size: 14px;
   display: none;
 }
 .acc-card-wrap.expanded .acc-storage-panel {
@@ -2576,7 +2594,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: .05em;
-  font-size: 12px;
+  font-size: 13px;
 }
 .acc-storage-actions {
   flex-shrink: 0;
@@ -2604,7 +2622,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
 .acc-storage-tree {
   color: var(--text-dim);
   font-family: ui-monospace,SF Mono,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.8;
 }
 .acc-storage-tree .tree-entry {
@@ -2633,7 +2651,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
 .acc-device-list {
   flex-direction: column;
   gap: 2px;
-  font-size: 14.5px;
+  font-size: 15.5px;
   display: flex;
 }
 .acc-device-row {
@@ -2662,19 +2680,19 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-family: ui-monospace,SF Mono,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size: 13px;
+  font-size: 14px;
   overflow: hidden;
 }
 .acc-device-activity {
   color: var(--text-dim);
   white-space: nowrap;
   margin-left: auto;
-  font-size: 12px;
+  font-size: 13px;
 }
 .acc-device-current {
   color: var(--accent);
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 .acc-device-trash {
@@ -2694,7 +2712,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
 .acc-device-empty {
   color: var(--text-dim);
   padding: 6px 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 #active-thread {
   min-height: 0;
@@ -2990,7 +3008,7 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
-  background: #80808024;
+  background: var(--surface-grey);
   border-radius: 20px;
   padding: 11px 17px;
   line-height: 1.55;
@@ -3970,11 +3988,20 @@ body:has(#app.lp-enabled.show-left) #scroll-island {
   #left-pane {
     width: var(--lp-width, 300px);
     margin: 0 10px 0 0;
+    /* No fill: the pane is the page's own colour, set off by a thin line on its right (the narrow screen keeps its fill: the pane
+       slides over the conversation there). */
+    background: none;
+    border-right: 1px solid rgba(128, 128, 128, 0.2);
+    box-sizing: border-box;
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     transition:
       width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
       margin 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  /* The header band fades from the page's colour now, not the pane's card colour. */
+  #left-pane-header {
+    background: linear-gradient(to bottom, var(--bg) 10%, transparent);
   }
   /* Drag-to-resize. Mouse-only (mousedown, see left-pane.ts) and the mobile
      pane is full-screen with nothing to resize — desktop-only affordance. */
@@ -4420,13 +4447,14 @@ html.pwa-standalone #app {
 /* The Keys tab: one bordered card per key. */
 /* One card, the items in rows divided by a line (the card rule that drops a last card's row line is for cards
    of one row). */
-#cmd-acc-config-card .cmd-page-row:not(:last-child) {
-  border-bottom: 1px solid var(--header-border);
+/* Push notifications and the Vault are one card each, spaced as the cards of the other threads are. */
+#cmd-acc-config > .acc-card-wrap + .acc-card-wrap {
+  margin-top: 12px;
 }
 .acc-config-title {
   flex: 1;
   min-width: 0;
-  font-size: 14.5px;
+  font-size: 15.5px;
   font-weight: 400;
 }
 #cmd-acc-keys {
@@ -4435,7 +4463,7 @@ html.pwa-standalone #app {
   gap: 12px;
 }
 .acc-key-card {
-  padding: 12px;
+  padding: 14px;
 }
 
 /* The thread title in the island rolls like a counter wheel when the thread changes: the old one leaves one way, the new one arrives from the other. */
@@ -4539,10 +4567,155 @@ html.pwa-standalone #app {
   #app.lp-compact #lp-resize-handle {
     display: none !important;
   }
-  #app.lp-compact .lp-inner {
-    justify-content: center;
-  }
   #app.lp-compact #left-list-wrap {
     padding-bottom: 96px;
   }
+}
+
+/* The island of a new message: the recipient and the subject are typed in the places where an open conversation shows the name and
+   the title. They look like that text until they are used. */
+.conv-input {
+  min-width: 14ch;
+  max-width: 100%;
+  field-sizing: content;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+}
+#conv-to-input {
+  font-size: 18px;
+  font-weight: 600;
+}
+#conv-subject-input {
+  font-size: 15px;
+  font-weight: 400;
+  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+}
+.conv-input::placeholder {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.conv-subject-icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* The new message's picture, before anyone is named: the word "To". */
+.conv-avatar-to {
+  background: #b0b0b6;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fff;
+}
+
+/* In the account's reply box the shortcuts (Delta Chat join | invite, the onion address) sit at the right end of the field, in line with the text. */
+.reply-field #cmd-acc-foot {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  margin: 0 0 0 auto;
+  padding: 0;
+  gap: 18px;
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* The account's box has no handle at the top of the field, so the field needs no room for it there. */
+.reply-box.me .reply-field {
+  padding-top: 14px;
+}
+
+/* Typing in the account's box: its shortcuts leave, and the send button comes (as in the other box, by the same rule). */
+.reply-box.me:has(textarea:not(:placeholder-shown)) #cmd-acc-foot {
+  display: none;
+}
+
+/* The account's island: its threads side by side as tabs, the open one underlined. */
+.island-tabs {
+  position: relative;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+}
+.island-tab {
+  padding: 2px 0 5px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.island-tab[aria-selected="true"],
+.island-tab:hover {
+  color: var(--text);
+}
+.island-tab-underline {
+  position: absolute;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text);
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The avatar keeps one place whatever the text beside it comes to: it is set from the top of the island (the 6.4px is where a
+   conversation's two lines, centred, put it), not centred on the text, which differs from island to island. */
+#conv-to:has(#conv-avatar) {
+  align-items: flex-start;
+}
+#conv-avatar {
+  margin-top: 6.4px;
+}
+/* The account's and the new message's islands carry fields and tabs on the second line, which sit a little high beside a title: it
+   is spaced 5px lower, in the layout (so that nothing is cut off), the avatar being fixed from the top (above). */
+.conv-line2-low #conv-line2 {
+  margin-top: 5px;
+}
+
+/* A new message has nothing to scroll: the page is empty and the box fills the screen. Left scrollable, the padding that keeps the
+   last message clear of the (tall) box would let the page move under the island, which then seems to float. */
+#app[data-menu-page="/compose"] #outer {
+  overflow-y: hidden;
+}
+
+/* The new message's recipients: an address settled with a space becomes a chip (as in Apple Mail), the next one is typed after it. */
+#conv-line1.conv-recipients {
+  /* As tall as a line with a chip in it (16px at 1.4, and 3px of padding), so that the first chip does not push the lines below. */
+  min-height: calc(16px * 1.4 + 3px);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.conv-chip {
+  max-width: 100%;
+  padding: 1px 10px 2px;
+  border-radius: 12px;
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.conv-chip:hover {
+  background: rgba(128, 128, 128, 0.22);
+}
+.conv-recipients .conv-input {
+  flex: 1 1 14ch;
+}
+
+/* The chip taken by the arrow keys. */
+.conv-chip.selected {
+  background: var(--bubble-me);
+  color: var(--bubble-me-text);
 }
