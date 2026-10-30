@@ -36,6 +36,7 @@ function readConfig(): unknown {
 const nodeRequire = createRequire(import.meta.url)
 const FONTS: { pkg: string; css: string; keep?: RegExp }[] = [
   { pkg: '@fontsource-variable/noto-sans-jp', css: 'wght.css' }, // every unicode-range piece (Latin and Japanese): the browser fetches only those a text uses
+  { pkg: '@fontsource/zen-kaku-gothic-antique', css: 'latin-900.css' }, // the "biset" logotype of the new-user page: Latin only, weight 900
 ]
 function fontFiles(): { css: string; files: Map<string, string> } {
   const files = new Map<string, string>()

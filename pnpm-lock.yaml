@@ -206,6 +206,9 @@ importers:
       '@fontsource-variable/noto-sans-jp':
         specifier: ^5.3.1
         version: 5.3.1
+      '@fontsource/zen-kaku-gothic-antique':
+        specifier: ^5.3.1
+        version: 5.3.1
       '@hpke/core':
         specifier: 1.8.0
         version: 1.8.0
@@ -592,6 +595,9 @@ packages:
 
   '@fontsource-variable/noto-sans-jp@5.3.1':
     resolution: {integrity: sha512-/anGvJFc5y36f8DJ+3TSh2+KAvaRLA9PaLUMvneeY5s4j8m+8X4F3lE/sjTuG9YI5BX4sykvCk4TuJMG7ecMRQ==}
+
+  '@fontsource/zen-kaku-gothic-antique@5.3.1':
+    resolution: {integrity: sha512-uOKE2su12PHMGP10+8o+I+4iM3q+VNsPVBfsQoEOGI4d0TTNmTawJ7OVIdKRSrrSt4MPOGdubjLWM/4f5C/NKQ==}
 
   '@hpke/common@1.10.1':
     resolution: {integrity: sha512-moJwhmtLtuxiUzzNp1jpfBfx8yefKoO9D/RCR9dmwrnc7qjJqId1rEtQz+lSlU5cabX8daToMSx/7HayXOiaFw==}
@@ -1942,6 +1948,8 @@ snapshots:
     optional: true
 
   '@fontsource-variable/noto-sans-jp@5.3.1': {}
+
+  '@fontsource/zen-kaku-gothic-antique@5.3.1': {}
 
   '@hpke/common@1.10.1': {}
 

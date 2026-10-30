@@ -194,6 +194,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   const blocked = creating || (!loginAs && (free === false || free === undefined))
   return (
     <div id="new-user-page">
+      <header id="nu-header"><span id="nu-logo">biset</span></header>
       <div className="nu-column">
         <div id="nu-pigeon">
           <Pigeon walking={creating || (embedded && !loginAs && (!known || free === undefined))} />
