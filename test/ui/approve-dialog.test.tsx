@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 let approver: ((request: Promise<string>) => Promise<URLSearchParams>) | undefined
 const mountDito = vi.fn()
 vi.mock('../../src/client/identity/wallet/did-md-oauth.ts', () => ({ useDidMdWalletApprover: (fn: typeof approver) => { approver = fn } }))
-vi.mock('../../src/client/identity/wallet/dito-embed.ts', () => ({ ditoEmbedOrigin: () => 'https://dito.did.md', mountDito: (...args: unknown[]) => mountDito(...args) }))
+vi.mock('../../src/client/identity/wallet/dito-embed.ts', () => ({ ditoEmbedOrigin: () => 'https://wallet.did.md', mountDito: (...args: unknown[]) => mountDito(...args) }))
 
 import { ApproveDialog, installDitoApprover } from '../../src/client/app/ui/approve-dialog.tsx'
 
@@ -26,7 +26,7 @@ test('an approval hands dito\'s approve screen the request and returns its respo
   let result: Promise<URLSearchParams> | undefined
   act(() => { result = approver!(Promise.resolve('?request=x')) })
   await expect(result).resolves.toBe(response)
-  expect(mountDito).toHaveBeenCalledWith(expect.any(HTMLIFrameElement), 'https://dito.did.md', 'approve', expect.any(Object))
+  expect(mountDito).toHaveBeenCalledWith(expect.any(HTMLIFrameElement), 'https://wallet.did.md', 'approve', expect.any(Object))
   expect(approve).toHaveBeenCalledWith('?request=x')
   await waitFor(() => expect(container.querySelector('dialog')!.open).toBe(false))
 })

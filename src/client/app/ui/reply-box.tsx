@@ -7,10 +7,10 @@ import { createStore, useStore } from '../react/store.ts'
 import { computeReplyContext } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
 import { syncDockPosition } from './scroll.ts'
-import { sendComposed } from './pages/compose-page.tsx'
-import { sendToHelper } from './helper.ts'
+import { savePendingSend, sendComposed, sendProblem, signingUp } from './pages/compose-page.tsx'
+import { randomAlias, canSignUpInBackground, createAccountInBackground, heldIdentity } from './signup-preload.ts'
 import { getAccountConfig } from './account/state.ts'
-import { showAccountPage } from './pages/index.ts'
+import { sendToHelper } from './helper.ts'
 
 export interface ReplySendInput {
   toAddrs: string[]
@@ -73,6 +73,8 @@ export type ReplyBoxMode = 'normal' | 'me'
 // What is typed and not yet sent, per inbox (the box is mounted again for each: a key in right-col.tsx), so that going from one
 // inbox to another leaves each one's text where it was.
 const drafts = new Map<string, string>()
+/** Puts text in an inbox's box before it is shown (what was written before the trip to make an account). */
+export const setReplyDraft = (key: string, text: string): void => { drafts.set(key, text) }
 
 export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftKey: string; group?: ThreadGroup; mode?: ReplyBoxMode; command?: ReactNode }) {
   const config = useStore(composeConfig)
@@ -144,8 +146,26 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
     const { group: thread, config: current } = latest.current
     if (!current) {
       // No account: what is written stays in the box; the way to send it is to make one.
-      getAccountConfig()?.showMessage?.('Create an account to send messages')
-      showAccountPage()
+      // The message is kept while the account is made (the wallet leaves this page and comes back to it).
+      savePendingSend(body)
+      // The wallet's create form is already loaded out of sight: the account is made at once, and the tab goes to the wallet's page where
+      // the Passphrase is saved (the one step that cannot be done for the person). Without such a wallet the form itself is shown.
+      // A wallet that already holds an identity gets the log-in as it (an account is not made over it).
+      if (!canSignUpInBackground() || heldIdentity.get()) { signingUp.set(true); return }
+      setSending(true)
+      void (async () => {
+        try {
+          try { await createAccountInBackground() }
+          catch (error) { if (!/taken/.test(String(error instanceof Error ? error.message : error))) throw error; await createAccountInBackground(randomAlias()) }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          console.info('[signup] the account was not made in the background:', reason)
+          // A browser that already holds an identity gets the wallet's own form, which opens on its log-in.
+          if (/already holds/.test(reason)) signingUp.set(true)
+          else getAccountConfig()?.showMessage?.(`The account could not be made: ${reason}`)
+          setSending(false)
+        }
+      })()
       return
     }
     setSending(true)
@@ -165,6 +185,7 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
       if (!thread) {
         // A new conversation: what is sent is the draft's recipient and subject, with this text.
         setText('')
+        sendProblem.set(undefined)
         await sendComposed(body)
         return
       }
@@ -175,7 +196,10 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
       await current.sendReply({ toAddrs, subject: thread.subject, body, inReplyTo: last?.msg.message_id || undefined, references })
     } catch (error) {
       setText(now => now || body)
-      current.onError?.(error instanceof Error ? error.message : 'Could not send')
+      const reason = error instanceof Error ? error.message : 'Could not send'
+      if (!thread) sendProblem.set(reason)
+      console.error('[send]', error)
+      current.onError?.(reason)
     } finally {
       refocus.current = true
       setSending(false)

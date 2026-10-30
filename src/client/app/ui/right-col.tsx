@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
-import { avatarOf, displayName, labelForDid, shortDid } from './did-display.ts'
+import { avatarOf, displayName, labelForDid, shortDid, avatarSeed } from './did-display.ts'
 import { GeneratedAvatar } from './generated-avatar.tsx'
 import { avatarColor } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
@@ -20,7 +20,8 @@ import { attachPullReveal } from './pull-reveal.ts'
 import type { PullReveal } from './pull-reveal.ts'
 import { counterpartLabel, displayParticipantsOf, latestOf, participantsOf } from './thread-model.ts'
 import { showComposePage } from './pages/index.ts'
-import { composeDraft } from './pages/compose-page.tsx'
+import { composeDraft, sendProblem, signingUp } from './pages/compose-page.tsx'
+import { heldIdentity } from './signup-preload.ts'
 import { AccountFoot, AccountIsland, AccountPast, accountTab } from './pages/account-page.tsx'
 import { accountConfig } from './account/state.ts'
 import { IslandNav, useIslandWheel, type ThreadNav } from './island.tsx'
@@ -150,6 +151,17 @@ function MetaInfo({ group, open }: { group: ThreadGroup | undefined; open: boole
   return open && group ? <div id="conv-meta-expanded">{lines.join('\n')}</div> : null
 }
 
+/** With no account, the line under the island says what sending does: the account is made first, and the message goes out right after. */
+function SendAsNotice() {
+  const asking = useStore(signingUp)
+  const problem = useStore(sendProblem)
+  const held = useStore(heldIdentity)
+  if (problem) return <div id="conv-meta-expanded" className="conv-problem">{`The message was not sent: ${problem}`}</div>
+  // This browser's wallet may already hold an identity: then sending is a log-in as it, not a new account.
+  if (held) return <div id="conv-meta-expanded">{asking ? `Log in as ${held} here; the message goes out right after.` : `Sending asks you to log in as ${held}; the message goes out right after.`}</div>
+  return <div id="conv-meta-expanded">{asking ? 'Make your account here; the message goes out right after.' : 'Sending makes your account first (you save a passphrase on the way); the message goes out right after.'}</div>
+}
+
 /** The island of a conversation that has not begun: the recipient and the subject are typed where an open one shows who it is with
  * and its title. */
 /** The draft's recipients are kept as one string of addresses separated by spaces; what ends with a space (or a comma) is settled and
@@ -180,7 +192,7 @@ function ComposeMeta() {
       <div id="conv-fields">
         <div id="conv-to">
           {known
-            ? <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(known) }}><GeneratedAvatar name={group ? everyone.join(' ') : known} variant={group ? 'bauhaus' : 'beam'} /></div>
+            ? <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(avatarSeed(known)) }}><GeneratedAvatar name={group ? everyone.map(avatarSeed).join(' ') : avatarSeed(known)} variant={group ? 'bauhaus' : 'beam'} /></div>
             : <div id="conv-avatar" className="lp-avatar lp-new-avatar conv-avatar-to">To</div>}
           <div id="conv-text">
             <div id="conv-line1" className="conv-recipients">
@@ -249,7 +261,7 @@ function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadG
           </> : group ? (
             // Like the account page's identity card: the counterparty's picture, and beside it two lines: the name and the address, then the new-message button and the subject.
             <>
-              <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(name) }}>{avatarOf(counterpart) ? <img className="lp-avatar-img" src={avatarOf(counterpart)} alt="" /> : <GeneratedAvatar name={name} />}</div>
+              <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(avatarSeed(counterpart) || name) }}>{avatarOf(counterpart) ? <img className="lp-avatar-img" src={avatarOf(counterpart)} alt="" /> : <GeneratedAvatar name={avatarSeed(counterpart) || name} />}</div>
               <div id="conv-text">
                 <div id="conv-line1">
                   <span id="conv-name">{name}</span>
@@ -295,6 +307,9 @@ export function RightCol() {
   // The account is a conversation too once there is an identity (before that its page is the sign-up).
   const accountReady = useStore(accountConfig)?.did != null
   const accountless = useStore(accountConfig)?.did === null
+  // Asked for an account in the middle of sending: the sign-up takes the place of the box.
+  const asking = useStore(signingUp)
+  const problem = useStore(sendProblem)
   const [metaOpen, setMetaOpen] = useState(false)
   // The island's shadow shows only once the conversation has scrolled under it.
   const [scrolled, setScrolled] = useState(false)
@@ -443,12 +458,12 @@ export function RightCol() {
         <div id="right-pane">
           <MetaInfo group={focused} open={onThread && metaOpen} />
           {/* No account: the message can be written, but sending needs one. The line is said in the field the thread's headers use. */}
-          {page === 'compose' && accountless ? <div id="conv-meta-expanded">Create an account to send messages.</div> : null}
+          {page === 'compose' && (accountless || problem) ? <SendAsNotice /> : null}
           <PageHost />
           <div id="scroll-spacer" />
         </div>
       </div>
-      <div id="reply-dock">{onThread && focused ? <ReplyBox key={draftKey} draftKey={draftKey} group={focused} /> : page === 'compose' ? <ReplyBox key={draftKey} draftKey={draftKey} /> : accountReady && page === 'account' ? <ReplyBox key={draftKey} draftKey={draftKey} mode="me" command={<AccountFoot />} /> : null}</div>
+      <div id="reply-dock">{onThread && focused ? <ReplyBox key={draftKey} draftKey={draftKey} group={focused} /> : page === 'compose' ? (asking ? null : <ReplyBox key={draftKey} draftKey={draftKey} />) : accountReady && page === 'account' ? <ReplyBox key={draftKey} draftKey={draftKey} mode="me" command={<AccountFoot />} /> : null}</div>
     </div>
   )
 }

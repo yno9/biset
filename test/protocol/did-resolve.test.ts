@@ -53,3 +53,13 @@ test('the places configured for the app are asked too, and a memory refuses an o
   await resolveDidDocument(mine.did, { fetch: serving({ [url]: serializeLog(newer) }) })
   await expect(resolveDidDocument(mine.did, { fetch: serving({ [url]: serializeLog(mine.log) }) })).rejects.toThrow(StaleLogError)
 })
+
+test('a place the identity has left, still serving its old log, does not stop the search: the next place has the current one', async () => {
+  const newer = extendVhLog(mine.log, alice.priv, alice.pub, state => { state.alsoKnownAs = ['did:web:alice2.did.md'] }, '2026-08-24T00:00:00Z')
+  const memory = new InMemoryVersionMemory()
+  const old = 'https://alice.did.md/.well-known/did.jsonl'
+  const current = 'https://alice2.did.md/.well-known/did.jsonl'
+  await resolveDidDocument(mine.did, { fetch: serving({ [current]: serializeLog(newer) }), vh: { locations: ['alice2.did.md'] }, memory })
+  const doc = await resolveDidDocument(mine.did, { fetch: serving({ [old]: serializeLog(mine.log), [current]: serializeLog(newer) }), vh: { locations: ['alice.did.md', 'alice2.did.md'] }, memory })
+  expect(doc?.alsoKnownAs).toEqual(['did:web:alice2.did.md'])
+})

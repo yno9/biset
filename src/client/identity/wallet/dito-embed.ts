@@ -10,8 +10,8 @@
 
 export function ditoEmbedOrigin(): string | undefined {
   const { protocol, hostname, port } = location
-  if (hostname === 'mail.did.md') return 'https://dito.did.md'
-  if (hostname === 'mail.did.localhost') return `${protocol}//dito.did.localhost${ditoDevPort(port)}`
+  if (hostname === 'did.md') return 'https://wallet.did.md'
+  if (hostname === 'did.localhost') return `${protocol}//wallet.did.localhost${ditoDevPort(port)}`
   return undefined
 }
 
@@ -21,7 +21,7 @@ function ditoDevPort(own: string): string {
   return `:${configured && /^\d{2,5}$/.test(configured) ? configured : own}`
 }
 
-export type DitoMode = 'create' | 'approve' | 'alias'
+export type DitoMode = 'create' | 'approve' | 'alias' | 'passphrase'
 
 /** What the frame reports; every handler is optional because the approve frame reports only errors. */
 export interface DitoEmbedHandlers {
@@ -46,6 +46,8 @@ export interface DitoEmbedHandlers {
   login?(handle: string): void
   /** The frame laid its screen out (it reports its height): there is something to show. */
   resized?(height: number): void
+  /** Enter was pressed in the passphrase frame's field. */
+  submit?(): void
   /** Esc was pressed inside the frame (a keypress in a frame never reaches the page that holds it). */
   escape?(): void
   error?(message: string): void
@@ -64,7 +66,7 @@ function rememberHeight(mode: DitoMode, height: number): void {
 function recalledHeight(mode: DitoMode): number | undefined {
   try {
     const value = Number(localStorage.getItem(heightKey(mode)))
-    return value >= 100 && value <= 800 ? value : undefined
+    return value >= 40 && value <= 800 ? value : undefined
   } catch { return undefined }
 }
 
@@ -80,6 +82,17 @@ export interface DitoEmbed {
    * name and the Passphrase in the frame. Resolves with the new DID; rejects when it is cancelled.
    */
   moveAlias(): Promise<{ did: string, host: string }>
+  /**
+   * Has dito create the identity itself, with no one pressing its Create: at `alias` (a name, as in `name@did.md`), or at the
+   * random one its form offers. The `creating` and `savePage` handlers go on as for a press of the button (the page prepares the
+   * sign-in, then takes the tab to dito's save page, where the Passphrase is shown to the password manager). Rejects when the
+   * alias is taken, or when this browser already holds an identity. `host` is the server the alias is made on, when not the wallet's own.
+   */
+  create(alias?: string, host?: string): Promise<{ did: string }>
+  /** Whether `alias` is free (on `host` when given, else the wallet's own); without one, the random name the wallet's form offers, and whether that is free. */
+  checkAlias(alias?: string, host?: string): Promise<{ alias: string; available: boolean }>
+  /** What the wallet says of itself: whether this browser holds an identity, and (public) whose. */
+  describe(): Promise<{ created: boolean; did?: string; host?: string }>
   /** The page could not prepare the request it announced: the frame's button stops working. */
   cancel(): Promise<void>
   /** Stops listening for the frame (a frame that is being replaced). */
@@ -109,6 +122,19 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
         const result = await call('wallet.moveAlias', {}) as { did?: unknown, host?: unknown } | null
         if (typeof result?.did !== 'string' || typeof result.host !== 'string') throw new Error('The wallet did not return the new address.')
         return { did: result.did, host: result.host }
+      },
+      async create(alias, host) {
+        const result = await call('wallet.create', { ...(alias === undefined ? {} : { alias }), ...(host ? { host } : {}) }) as { did?: unknown } | null
+        if (typeof result?.did !== 'string') throw new Error('The wallet did not return the new identity.')
+        return { did: result.did }
+      },
+      async checkAlias(alias, host) {
+        const result = await call('wallet.checkAlias', { ...(alias === undefined ? {} : { alias }), ...(host ? { host } : {}) }) as { alias?: unknown; available?: unknown } | null
+        return { alias: typeof result?.alias === 'string' ? result.alias : alias ?? '', available: result?.available === true }
+      },
+      async describe() {
+        const result = await call('wallet.describe', {}) as { created?: unknown; did?: unknown; host?: unknown } | null
+        return { created: result?.created === true, ...(typeof result?.did === 'string' ? { did: result.did } : {}), ...(typeof result?.host === 'string' ? { host: result.host } : {}) }
       },
       async cancel() { await call('wallet.cancel', {}) },
       dispose() { removeEventListener('message', onMessage) },
@@ -141,6 +167,7 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
         else if (data.event === 'save-page') handlers.savePage?.()
         else if (data.event === 'unloaded') handlers.unloaded?.()
         else if (data.event === 'escape') handlers.escape?.()
+        else if (data.event === 'submit') handlers.submit?.()
         else if (data.event === 'login' && typeof data.handle === 'string') handlers.login?.(data.handle)
         else if (data.event === 'error') handlers.error?.(typeof data.message === 'string' ? data.message : 'Wallet error')
       }

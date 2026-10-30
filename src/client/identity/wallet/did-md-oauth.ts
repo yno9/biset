@@ -231,11 +231,16 @@ function asObject(value: unknown, label: string): Record<string, unknown> {
 // the currently selected wallet, not a fixed ".did.md" assumption -- see
 // wallet-directory.ts's handleSuffix field. This is a UI input hint only;
 // the real trust check is DID resolution, not this pattern.
+// Accounts may be hosted on a domain other than the wallet's own (did.md's apps, accounts at another domain): the app
+// names it once at start-up and handles under it are accepted too.
+const extraHandleSuffixes = new Set<string>()
+export function allowHandleDomain(domain: string): void { if (domain) extraHandleSuffixes.add(`.${domain.toLowerCase().replace(/^\./, '')}`) }
+
 function didMdHandle(value: string): string {
   const handle = value.trim().toLowerCase()
   const suffix = selectedWallet.handleSuffix
-  const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  if (!new RegExp(`^[a-z0-9](?:[a-z0-9-]{0,61})?${escapedSuffix}$`).test(handle)) throw new Error(`Enter a ${suffix.replace(/^\./, '')} hostname, for example test1${suffix}`)
+  const matches = (candidate: string) => new RegExp(`^[a-z0-9](?:[a-z0-9-]{0,61})?${candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).test(handle)
+  if (!matches(suffix) && ![...extraHandleSuffixes].some(matches)) throw new Error(`Enter a ${suffix.replace(/^\./, '')} hostname, for example test1${suffix}`)
   return handle
 }
 
@@ -467,7 +472,9 @@ async function resolvedPendingAuthorization(pending: DidMdPendingAuthorization, 
   if (pending.handle) rememberVhLocation(did, pending.handle)
   const resolved = await resolveDidDocument(did, { fetch: freshFetch() })
   if (!resolved) throw new Error(`No DID was found for ${did}`)
-  const place = didWebCandidates(resolved as unknown as Record<string, unknown>)[0]
+  // A moved identity names its previous address as well (the document keeps it): the one the login was started for is the address now.
+  const places = didWebCandidates(resolved as unknown as Record<string, unknown>)
+  const place = places.find(candidate => pending.handle && candidate.slice('did:web:'.length).toLowerCase() === pending.handle.toLowerCase()) ?? places[0]
   if (!place) throw new Error('did.md returned a device capability for an identity that names no place')
   const handle = didMdHandle(place.slice('did:web:'.length))
   const identity = await rootAuthority(handle, resolved)
@@ -998,6 +1005,16 @@ export async function didMdWalletReconnectState(): Promise<{ did: string; handle
   const session = await readDidMdDeviceSession()
   if (!session || session.v !== 3 || session.wallet !== walletEndpoint()) return undefined
   return { did: session.did, handle: session.handle, capabilityExpiresAt: session.capabilityExpiresAt, expired: Date.parse(session.capabilityExpiresAt) <= Date.now() }
+}
+
+/** The address of this identity changed (dito moved its log): the stored session names the new host at once, so that the next start
+ * looks for the log where it is now, whatever happens to the sign-in that follows. The DID and the keys are the same. */
+export async function didMdSessionMovedTo(host: string): Promise<void> {
+  const session = await readDidMdDeviceSession()
+  if (!session) return
+  const handle = didMdHandle(host)
+  rememberVhLocation(session.did, handle)
+  await saveDidMdDeviceSession({ ...session, handle })
 }
 
 export async function disconnectDidMdWallet(): Promise<void> {

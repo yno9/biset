@@ -1,3 +1,8 @@
+import { mountNetworkActivity } from 'lft/net-activity-ui'
+import { watchNetwork } from 'lft/net-activity'
+import { networkNotes, networkRules } from './ui/network-declaration.ts'
+import { preloadSignup } from './ui/signup-preload.ts'
+import { startUpdates } from './ui/update.ts'
 import {
   buildActorSequencer,
   buildLocalJmapReadModel,
@@ -15,6 +20,7 @@ import {
   beginDidMdWalletLogin,
   approvedRotationSeed,
   prepareDidMdMovedDidLoginRequest,
+  didMdSessionMovedTo,
   completeDidMdWalletCallback,
   disconnectDidMdWallet,
   openDidMdWalletBisetDidCommDevice,
@@ -24,6 +30,7 @@ import {
   restoreDidMdWalletSession,
   didMdWalletReconnectState,
   currentWallet,
+  allowHandleDomain,
   DID_MD_JUST_CONNECTED_KEY,
 } from '../identity/wallet/did-md-oauth.ts'
 import { markSeenDone, setMarkSeenHandler } from './ui/seen.ts'
@@ -33,9 +40,12 @@ import { randomDisplayName } from './ui/account/default-name.ts'
 import { refreshInbox, setEncryptedMailOpener, setSignedNameHandler, showApp, showSysMsg } from './ui/shell.ts'
 import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
-import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
+import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showComposePage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
 import { startRouting } from './ui/route.ts'
+import { clearPlainStorage } from './local-data.ts'
+import { sendComposedWhenReady, sendProblem, takePendingSend } from './ui/pages/compose-page.tsx'
+import { setReplyDraft } from './ui/reply-box.tsx'
 import { NOTEPAD_THREAD_ID } from './ui/thread-model.ts'
 import { readBisetConfig } from './ui/config.ts'
 import { installDitoApprover, requestAliasChange } from './ui/approve-dialog.tsx'
@@ -98,6 +108,12 @@ import { identityKey, sameIdentity } from '../../protocol/vh/identifier.ts'
 let mediatorPollHandles: MediatorPollHandle[] = []
 
 // Where a did:vh's log is looked for, and the memory that refuses an older or forked copy of any log.
+// The bar across the top and the host the page is talking to, lit while it is on the network (lft: local first toolkit, ../lft).
+mountNetworkActivity({ label: 'top-right', rules: networkRules(), notes: networkNotes })
+// What the wallet's frame does on the network is reported here, and joins the log.
+{ const wallet = ditoEmbedOrigin(); if (wallet) watchNetwork().receiveFrom([wallet]) }
+startUpdates()
+allowHandleDomain(readBisetConfig().identityDomain)
 configureDidResolution({ watchers: readBisetConfig().vhWatchers, memory: new StoredVersionMemory(), links: new StoredDidLinks(), places: new StoredVhPlaces() })
 
 function downloadFile(bytes: Uint8Array, filename: string): void { const url = URL.createObjectURL(new Blob([bytes.slice()])); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }
@@ -151,9 +167,11 @@ setOnWalletConnected(async session => {
 // "checkpoint archive object identity does not match", 2026-09-15).
 // `biset-identity` never named a real database (grep confirms zero
 // `indexedDB.open` call anywhere ever used it) and is dropped as dead.
+//
+// `biset-markdown-mirror` (the Markdown vault's chosen folder) was missing too, and so were the plain-storage records below.
 const ALL_LOCAL_DATABASE_NAMES = [
   'biset-did-md-wallet', 'biset-mls-keypackages', 'biset-mls-self-group',
-  'biset-vault-core', 'biset-didcomm-group-chat',
+  'biset-vault-core', 'biset-didcomm-group-chat', 'biset-markdown-mirror',
 ]
 
 async function deleteLocalDatabases(names: readonly string[]): Promise<void> {
@@ -166,9 +184,15 @@ async function deleteLocalDatabases(names: readonly string[]): Promise<void> {
   })))
 }
 
+/** Disconnects, purges what this browser kept (databases and plain storage), and starts the app over with a page load, so that nothing of the
+ * identity is left in memory either (the messages, drafts and the like are state of this page). */
 async function disconnectWalletAndLocalData(): Promise<void> {
   await disconnectDidMdWallet()
   await deleteLocalDatabases(ALL_LOCAL_DATABASE_NAMES)
+  clearPlainStorage()
+  location.replace('/')
+  // The page is going away: whatever called this has nothing more to do.
+  await new Promise<void>(() => {})
 }
 
 function resolveAnyDidCommSenderKey(kid: string): Promise<Uint8Array> {
@@ -330,6 +354,8 @@ async function configureWalletAccountIfPresent(
           // the sign-up does: the password manager offers to update the saved account there, and its last
           // page signs this device in under the new DID (the request prepared here) and returns.
           const moved = await requestAliasChange()
+          // The log is at the new address now (the old one is gone): the session follows before anything else can fail.
+          await didMdSessionMovedTo(moved.host)
           const login = await prepareDidMdMovedDidLoginRequest(moved.did, moved.host, readBisetConfig())
           const origin = ditoEmbedOrigin()
           if (!origin) throw new Error('Changing the alias needs the embedded wallet.')
@@ -337,7 +363,6 @@ async function configureWalletAccountIfPresent(
         },
         onDisconnect: async () => {
           await disconnectWalletAndLocalData()
-          await bootClient()
         },
       },
       vault,
@@ -1122,7 +1147,22 @@ async function configureWalletAccountIfPresent(
   return true
 }
 
-export async function bootClient(callbackSession?: Awaited<ReturnType<typeof completeDidMdWalletCallback>>): Promise<void> {
+export /** Sends the message that was waiting for the account (ui/pages/compose-page.tsx's savePendingSend) once the account's DIDComm is connected. A failure
+ * leaves it in the new message's box for the writer to send by hand. */
+async function sendWhenReady(body: string): Promise<void> {
+  sendProblem.set(undefined)
+  try {
+    await sendComposedWhenReady(body)
+    setReplyDraft('new', '')
+  } catch (error) {
+    // Said where the message is (under the island, staying), and in the console in full: a toast was gone before it could be read.
+    console.error('[send after sign-up]', error)
+    sendProblem.set(error instanceof Error ? error.message : String(error))
+    showComposePage()
+  }
+}
+
+async function bootClient(callbackSession?: Awaited<ReturnType<typeof completeDidMdWalletCallback>>): Promise<void> {
   bootGeneration++
   // Cleared unconditionally, before any branch: a re-entry into bootClient()
   // (a Wallet disconnect, most notably) must not leave a PRIOR session's
@@ -1182,14 +1222,22 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
     // this call site only ever needed it for that one case, never for an
     // ordinary returning session.
     showApp()
+    // What was being written when the account had to be made is back in its box, and goes out as soon as the account can send. That is the
+    // page to land on (not the account's, which a sign-up otherwise lands on): a message that fails to go has to be seen where it is.
+    const pendingBody = takePendingSend()
     startRouting()
     console.info(`[boot] app shown at ${Math.round(performance.now() - bootStartedAt)}ms`)
-    if (completedWalletEdit || sessionStorage.getItem(DID_MD_JUST_CONNECTED_KEY) === '1') {
-      sessionStorage.removeItem(DID_MD_JUST_CONNECTED_KEY)
+    const justConnected = completedWalletEdit || sessionStorage.getItem(DID_MD_JUST_CONNECTED_KEY) === '1'
+    sessionStorage.removeItem(DID_MD_JUST_CONNECTED_KEY)
+    if (pendingBody !== undefined) {
+      setReplyDraft('new', pendingBody)
+      showComposePage()
+      void sendWhenReady(pendingBody)
+    } else if (justConnected) {
       showAccountPage()
     } else {
-      const page = savedPage()
-      if (page === 'account') showAccountPage()
+      // The root names nothing to open: it is the account's own page (and the address bar then reads its address).
+      if (savedPage() === 'account' || location.pathname === '/') showAccountPage()
     }
     return
   }
@@ -1203,7 +1251,7 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
           const config = readBisetConfig()
           return beginDidMdWalletLogin(config.mediatorUrls, config)
         },
-        onDisconnect: async () => { await disconnectWalletAndLocalData(); await bootClient() },
+        onDisconnect: async () => { await disconnectWalletAndLocalData() },
       },
       showMessage: showSysMsg,
     })
@@ -1219,6 +1267,8 @@ export async function bootClient(callbackSession?: Awaited<ReturnType<typeof com
   configureAccountPage({ did: null })
   showApp()
   showAccountPage()
+  // The wallet's frames are loaded now, out of sight, so that whatever the person turns to (a new message, the log-in) has them ready.
+  preloadSignup()
   // With no account the address bar can still name a message to write (/new, /alice@gmail.com).
   startRouting()
 }

@@ -18,6 +18,8 @@ declare const __BISET_CONFIG__: {
    * bridge, didmail PROTOCOL.md §9), asked when the address's own domain
    * has no DID for it. */
   mailGateways?: string[]
+  /** The domain whose accounts the address bar names by their name alone (`/alice` is `alice@` and this). Unset: the first of `mailGateways`. */
+  identityDomain?: string
   /** The address a line starting with `/` in a reply box is sent to, and where its answer is read (a didmail bridge's own address,
    * PROTOCOL.md §7.5). Unset: `didmail@` and the first of `mailGateways`. */
   helperAddress?: string
@@ -66,6 +68,8 @@ export interface BisetConfig {
    * mail address reaches only a domain that publishes its own DIDs. */
   mailGateways: string[]
   /** See the same key above; '' when unset. */
+  identityDomain: string
+  /** See the same key above; '' when unset. */
   helperAddress: string
   vhWatchers: string[]
   walletDeviceName: string
@@ -86,6 +90,7 @@ export function readBisetConfig(): BisetConfig {
     appOnionUrl: cfg.appOnionUrl ?? '',
     mimiSelfBaseUrl: cfg.mimiSelfBaseUrl ?? '',
     mailGateways: cfg.mailGateways ?? [],
+    identityDomain: cfg.identityDomain ?? '',
     helperAddress: cfg.helperAddress ?? '',
     vhWatchers: cfg.vhWatchers ?? [],
     walletDeviceName: cfg.walletDeviceName ?? 'Biset',

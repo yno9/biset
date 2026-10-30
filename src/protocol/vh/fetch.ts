@@ -9,7 +9,7 @@ import { resolveVhEntries, type VhResolution } from './resolver.ts'
 import { isDomainHost, isVhDid, parseVhDid } from './identifier.ts'
 import { logUrlOf } from './src.ts'
 import type { DidDocument } from './document.ts'
-import { checkAndRemember, type VersionMemory } from '../freshness.ts'
+import { checkAndRemember, StaleLogError, type VersionMemory } from '../freshness.ts'
 import { checkCopies, LogForkedError, type Copy } from './copies.ts'
 
 export interface VhLogSources {
@@ -49,6 +49,9 @@ function candidateUrls(scid: string, sources: VhLogSources): string[] {
 export async function fetchVhResolution(did: string, sources: VhLogSources, memory?: VersionMemory): Promise<{ resolution: VhResolution; log: LogEntry[] } | null> {
   const { scid } = parseVhDid(did)
   const fetchImpl = sources.fetch ?? fetch
+  // A copy older than the newest one seen (a place the identity has left still serving its old log) is not the end of the search: the
+  // next place may have the current one. Only when nothing better is found is it reported.
+  let stale: StaleLogError | undefined
   for (const url of candidateUrls(scid, sources)) {
     const text = await textOf(url, fetchImpl)
     if (text === undefined) continue
@@ -68,9 +71,15 @@ export async function fetchVhResolution(did: string, sources: VhLogSources, memo
       if (copies.some(copy => copy.status === 'forked')) throw new LogForkedError(did, copies)
       if (newest !== log) { log = [...newest]; resolution = resolveVhEntries(did, log) }
     }
-    if (memory) await checkAndRemember(memory, did, log)
+    if (memory) {
+      try { await checkAndRemember(memory, did, log) } catch (error) {
+        if (error instanceof StaleLogError) { stale ??= error; continue }
+        throw error
+      }
+    }
     return { resolution, log }
   }
+  if (stale) throw stale
   return null
 }
 

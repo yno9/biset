@@ -1,13 +1,15 @@
 // Mock data for mock.html: seeds the stores the real UI reads, so it renders without an identity, a vault or a network.
 import { mountApp } from './ui/app.tsx'
 import { startRouting } from './ui/route.ts'
+import { mountNetworkActivity } from 'lft/net-activity-ui'
+import { networkNotes, networkRules } from './ui/network-declaration.ts'
 import { configureCompose } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage } from './ui/pages/index.ts'
 import { mail, patchShell } from './ui/stores.ts'
 import type { MailMessageView, ProcessedMessage } from './ui/message/message-view.ts'
 
 // What the account's footer shows besides Delta Chat (which needs a PGP identity this mock does not have).
-;(window as unknown as { __BISET_CONFIG__?: unknown }).__BISET_CONFIG__ = { appOnionUrl: 'http://example.onion', mailGateways: ['did.md'] }
+;(window as unknown as { __BISET_CONFIG__?: unknown }).__BISET_CONFIG__ = { appOnionUrl: 'http://example.onion', mailGateways: ['did.md'], mediatorUrls: ['https://mediator.biset.md'], identityDomain: '002053.xyz', vhWatchers: ['https://did.md'] }
 
 const SELF = 'did:web:me.example'
 const ALICE = 'did:web:alice.example'
@@ -64,7 +66,8 @@ if (noteCount > 0) mail.set(current => ({ messages: [...current.messages, ...Arr
 const noAccount = new URLSearchParams(location.search).has('noaccount') // ?noaccount: as when nobody has signed in
 if (noAccount) configureAccountPage({ did: null, showMessage: text => { (window as unknown as { __said?: string }).__said = text } })
 else configureComposePage({ selfAddress: 'me@example.com', selfDid: SELF, sendMessage: async input => {
-  (window as unknown as { __sent?: unknown }).__sent = input
+  if (new URLSearchParams(location.search).has('failsend')) throw new Error('A DIDComm message needs a recipient')
+  ;(window as unknown as { __sent?: unknown }).__sent = input
   // The helper answers in its own conversation, a moment later (as didmail does for /help).
   if (input.toAddrs[0]?.startsWith('didmail@')) {
     setTimeout(() => mail.set(current => ({ messages: [...current.messages,
@@ -80,3 +83,19 @@ patchShell({ appShown: true, focusedThreadKey: 't1' })
 mountApp()
 // ?route=/alice@gmail.com stands in for the address bar's path, which on mock.html is /mock.html.
 startRouting(new URLSearchParams(location.search).get('route') ?? '/')
+
+// ?signup shows the sign-up (as after Send with no account); ?held makes the wallet hold an identity (the log-in form).
+if (new URLSearchParams(location.search).has('signup')) {
+  const { signingUp } = await import('./ui/pages/compose-page.tsx')
+  const { walletKnown, heldIdentity } = await import('./ui/signup-preload.ts')
+  walletKnown.set(true)
+  if (new URLSearchParams(location.search).has('held')) heldIdentity.set('485c@002053.xyz')
+  signingUp.set(true)
+}
+
+// The network indicator, as in the app; ?ping makes a request so it can be seen.
+mountNetworkActivity({ label: 'top-right', rules: networkRules(), notes: networkNotes })
+if (new URLSearchParams(location.search).has('ping')) {
+  // A few requests of the kinds the app makes, and one it did not declare.
+  for (const [url, init] of [['https://did.md/log?scid=QmExample', undefined], ['https://alice.002053.xyz/.well-known/did.jsonl', undefined], ['https://mediator.biset.md/', { method: 'POST', body: 'x'.repeat(2400) }], ['https://example.org/.well-known/webfinger?resource=acct:bob@example.org', undefined], ['https://tracker.example/collect', { method: 'POST', body: 'id=1' }]] as const) void fetch(url, init).catch(() => {})
+}

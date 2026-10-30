@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<!-- Dev only (not part of the build): dito's last sign-up page (?embed=save-done), where the Passphrase is shown to be copied and saved by a
+     password manager, with the same ids and classes as dito's (client/app.ts, public/styles.css) so the layout made here moves back there.
+     Open /copy.html (?creating shows the page before it). -->
+<html lang="en" data-embed="save">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>copy the passphrase</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap');
+  /* The page as designed here (dito's rules, ids and classes kept: the password manager needs the visible username and password fields, so
+     they stay in flow, clear and full size, at the top of the one form; their height is the page's own breathing room). */
+  :root { color-scheme: light dark; --bg: #fff; --text: #1c1c1e; --dim: #8e8e93; --soft: #f4f4f6; --soft-hover: #ebebef; --primary: #0083ff; --primary-hover: #0074e0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0d0d0d; --text: #ececec; --dim: #8a8a8e; --soft: #1a1a1c; --soft-hover: #242427; --primary: #1a8cff; --primary-hover: #3399ff; } }
+  html[data-embed="save"], html[data-embed="save"] body { background: var(--bg); margin: 0; }
+  html[data-embed="save"] body { min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; -webkit-font-smoothing: antialiased; }
+  html[data-embed="save"] #embed-save { width: 100%; max-width: 420px; margin: 0; padding: 0 24px 32px; box-sizing: border-box; font: 15px/1.5 system-ui, -apple-system, sans-serif; color: var(--text); }
+  .embed-save-title { margin: 0 0 8px; font: 600 24px/1.2 Inter, system-ui, -apple-system, sans-serif; letter-spacing: -.025em; }
+  .embed-save-note { margin: 0 0 22px; color: var(--dim); font-size: 14px; line-height: 1.5; }
+  html[data-embed="save"] #embed-save .embed-save-field { display: block; padding: 0; border: 0; background: none; }
+  /* The words run down the columns (1-8, 9-16, 17-24), on one soft surface, without a line between them. */
+  .embed-save-words { display: grid; grid-auto-flow: column; grid-template-rows: repeat(8, auto); grid-template-columns: repeat(3, 1fr); column-gap: 8px; margin: 0; padding: 14px 16px; list-style: none; border-radius: 16px; background: var(--soft); }
+  .embed-save-words li { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; font: 500 14.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.01em; white-space: nowrap; }
+  .embed-save-words li::before { content: attr(data-n); min-width: 1.5em; color: var(--dim); font: 11px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; text-align: right; }
+  /* The fields the password manager reads: real, in flow, full size and clear. */
+  html[data-embed="save"] #embed-save .embed-save-user,
+  html[data-embed="save"] #embed-save form.embed-save-yes input[type="password"] { display: block; width: 100%; height: 32px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: transparent; -webkit-text-fill-color: transparent; caret-color: transparent; outline: none; box-shadow: none; }
+  html[data-embed="save"] #embed-save form.embed-save-yes { display: block; margin: 0; }
+  html[data-embed="save"] #embed-save .embed-save-actions { display: flex; gap: 10px; margin-top: 12px; }
+  html[data-embed="save"] #embed-save .embed-save-actions > * { flex: 1 1 0; min-width: 0; box-sizing: border-box; width: 0; }
+  html[data-embed="save"] #embed-save .embed-save-actions button { display: block; box-sizing: border-box; width: 100%; height: 48px; margin: 0; padding: 0; border: 0; border-radius: 14px; font: 600 15px system-ui, -apple-system, sans-serif; cursor: pointer; transition: background .12s; }
+  html[data-embed="save"] #embed-save .embed-save-copy { background: var(--bg); color: var(--text); box-shadow: inset 0 0 0 .5px gray; }
+  html[data-embed="save"] #embed-save .embed-save-copy:hover { background: var(--soft); }
+  html[data-embed="save"] #embed-save .embed-save-confirm { display: block; margin: 0; }
+  html[data-embed="save"] #embed-save .embed-save-confirm button { background: var(--primary); color: #fff; }
+  html[data-embed="save"] #embed-save .embed-save-confirm button:hover { background: var(--primary-hover); }
+  /* The room above the title is fixed: 48px, the two clear fields of the page after this one, and here a spacer of the same height. */
+  .embed-save-spacer { height: 64px; }
+  .embed-save-creating { color: var(--dim); }
+  .embed-save-creating::after { content: "."; display: inline-block; width: 1.1em; text-align: left; animation: embed-dots 1.05s steps(1) infinite; }
+  @keyframes embed-dots { 0% { content: "."; } 34% { content: ".."; } 67% { content: "..."; } }
+</style>
+</head>
+<body>
+<div id="embed-save"></div>
+<script>
+  // A sample phrase (not a real one).
+  const phrase = 'abandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual'
+  const panel = document.getElementById('embed-save')
+  if (new URLSearchParams(location.search).has('creating')) {
+    // The page before: "Creating ." where the title of the next one will be (the spacer is the height of the two fields it holds).
+    panel.innerHTML = '<div class="embed-save-spacer"></div><h1 class="embed-save-title embed-save-creating">Creating</h1>'
+  } else {
+    // One form holds it all, the fields the password manager reads first (clear, 24px each, so the page opens with that much air), then the
+    // words, then the one button.
+    panel.innerHTML = `
+      <form class="embed-save-yes" method="post" action="about:blank" onsubmit="return false">
+        <input type="hidden" id="save-username" name="username" value="485c1f@002053.xyz">
+        <input type="text" id="save-account" name="username" autocomplete="username" value="485c1f@002053.xyz" tabindex="-1" class="embed-save-user">
+        <input type="password" id="save-passphrase" name="password" autocomplete="new-password" value="${phrase}" tabindex="-1">
+        <h1 class="embed-save-title">Save your passphrase</h1>
+        <p class="embed-save-note">Keep these 24 words somewhere safe. They are the only way back into your identity.</p>
+        <div class="embed-save-field">
+          <ol class="embed-save-words">${phrase.split(' ').map((word, index) => `<li data-n="${index + 1}">${word}</li>`).join('')}</ol>
+        </div>
+        <div class="embed-save-actions">
+          <button type="button" class="embed-save-copy" aria-label="Copy passphrase">Copy</button>
+          <div class="embed-save-confirm"><button type="submit" class="primary">Saved</button></div>
+        </div>
+      </form>`
+    // A hand-made selection of the grid copies the words with a space between them (the grid itself has no space to give).
+    panel.querySelector('.embed-save-words').addEventListener('copy', event => {
+      const selection = String(getSelection() ?? '').trim()
+      if (!selection) return
+      const words = [...panel.querySelectorAll('.embed-save-words li')].filter(item => getSelection().containsNode(item, true)).map(item => item.textContent)
+      event.clipboardData.setData('text/plain', words.join(' '))
+      event.preventDefault()
+    })
+    panel.querySelector('.embed-save-copy').addEventListener('click', event => {
+      navigator.clipboard?.writeText(phrase).catch(() => {})
+      event.target.textContent = 'Copied'
+      setTimeout(() => { event.target.textContent = 'Copy' }, 1500)
+    })
+  }
+</script>
+</body>
+</html>

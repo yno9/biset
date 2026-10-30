@@ -2,6 +2,7 @@
 // signed-in identity's own DID) and the compose page (a typed recipient's
 // DID) both need the exact same elision, and duplicating it was already the
 // kind of divergence that bit this codebase once (state.ts/message-view.ts).
+import { readBisetConfig } from './config.ts'
 import { identityKey, sameIdentity, vhScidOf } from '../../../protocol/vh/identifier.ts'
 import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
 
@@ -11,6 +12,13 @@ import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
 export function shortDid(did: string): string {
   const scid = vhScidOf(did)
   return scid ? `did:vh:${scid.slice(0, 8)}…` : did
+}
+
+/** What an avatar is drawn from: the person's mail address, lower-cased (a DID by the address it stands for), so that the same person has the
+ * same picture wherever it is drawn, and a changed display name does not change it. Where a DID has no address, the DID itself. */
+export function avatarSeed(who: string): string {
+  const trimmed = who.trim()
+  return (trimmed.startsWith('did:') ? labelForDid(trimmed) : trimmed).toLowerCase()
 }
 
 /** How a DID is shown to a person: as a mail address, `hrdcv7qkr@nine.testrun.org`, `alice@did.md`. biset's principle is that a
@@ -89,4 +97,11 @@ export const PROTO_TEXT: Record<Proto, string> = { mail: 'Mail', did: 'DID' }
 
 export function protocolFor(address: string): Proto {
   return address.startsWith('did:') ? 'did' : 'mail'
+}
+
+/** The mail address of an account host: `485c.002053.xyz` is `485c@002053.xyz` (the deployment's identity domain); any other host is as it is. */
+export function addressOfHost(host: string): string {
+  const domain = (readBisetConfig().identityDomain || readBisetConfig().mailGateways[0] || '').toLowerCase()
+  const suffix = `.${domain}`
+  return domain && host.toLowerCase().endsWith(suffix) ? `${host.slice(0, -suffix.length)}@${domain}` : host
 }

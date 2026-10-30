@@ -1,31 +1,27 @@
 // New-user onboarding: since N1 (2026-09-05) one job only, the did.md Wallet login. biset never
 // mints, restores, or holds a controller key of its own; did.md is the identity issuer.
 //
-// Same-site with dito (mail.did.md) the sign-in and creation fields are dito's, in a frame
+// Same-site with dito (did.md) the sign-in and creation fields are dito's, in a frame
 // (identity/wallet/dito-embed.ts); elsewhere a button opens the wallet.
 import { useEffect, useRef, useState } from 'react'
 import { readBisetConfig } from '../config.ts'
 import {
   beginDidMdWalletLogin,
-  prepareDidMdWalletLoginRequest,
   completeDidMdWalletCallback,
+  prepareDidMdWalletLoginRequest,
   restoreDidMdWalletSession,
   resolveWalletFromSuffix,
   selectWallet,
   currentWallet,
-  type DidMdActiveSession,
 } from '../../../identity/wallet/did-md-oauth.ts'
 import { WALLET_DIRECTORY } from '../../../identity/wallet/wallet-directory.ts'
-import { ditoEmbedOrigin, mountDito, type DitoEmbed } from '../../../identity/wallet/dito-embed.ts'
+import { ditoEmbedOrigin } from '../../../identity/wallet/dito-embed.ts'
+import { walletConnected } from './signup-frame.ts'
+import { GitHubIcon } from '../account/github-icon.tsx'
+import { useStore } from '../../react/store.ts'
+import { randomAlias, heldHost, heldIdentity, checkAlias, createAccountInBackground, passphraseEmbed, passphraseReady, preloadSignup, walletKnown, setPassphraseHandlers, showPassphraseOver } from '../signup-preload.ts'
 
-// Set once by main.ts (a plain function reference, not an import back to it) so a sign-in can re-run
-// the boot routine without importing main.ts, the bundle's entry point: a module reachable both as
-// the entry and through another module's import edge made the bundler wrap it in a lazy initializer
-// that nothing called, and the app silently never booted (found live, 2026-08-25).
-let onWalletConnected: ((session: DidMdActiveSession) => Promise<void>) | undefined
-export function setOnWalletConnected(fn: (session: DidMdActiveSession) => Promise<void>): void {
-  onWalletConnected = fn
-}
+export { setOnWalletConnected } from './signup-frame.ts'
 
 // A callback is consumed before ordinary session restore (its code is one-use and the URL is
 // cleared by the OAuth module after verification). Once per page load, however often this mounts.
@@ -35,9 +31,9 @@ const errorText = (error: unknown): string => error instanceof Error ? error.mes
 
 type Result = { message: string; error: boolean } | undefined
 
-function Pigeon() {
+function Pigeon({ walking = false }: { walking?: boolean }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shapeRendering="crispEdges">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shapeRendering="crispEdges" className={walking ? 'pigeon-walking' : 'pigeon-done'}>
       <rect x="5" y="2" width="4" height="1" fill="#8b95a5" />
       <rect x="4" y="3" width="5" height="1" fill="#69717d" />
       <rect x="3" y="4" width="2" height="1" fill="#1a1a1a" />
@@ -56,24 +52,71 @@ function Pigeon() {
       <rect x="4" y="12" width="6" height="1" fill="#4a515b" />
       <rect x="11" y="11" width="2" height="1" fill="#1a1a1a" />
       <rect x="10" y="12" width="2" height="1" fill="#1a1a1a" />
-      <rect x="5" y="13" width="1" height="2" fill="#ff4d6d" />
-      <rect x="4" y="14" width="1" height="1" fill="#ff4d6d" />
-      <rect x="8" y="13" width="1" height="2" fill="#ff4d6d" />
-      <rect x="7" y="14" width="1" height="1" fill="#ff4d6d" />
+      <g className="pigeon-foot pigeon-foot-a">
+        <rect x="5" y="13" width="1" height="2" fill="#ff4d6d" />
+        <rect className="pigeon-toe-l" x="4" y="14" width="1" height="1" fill="#ff4d6d" />
+        <rect className="pigeon-toe-r" x="6" y="14" width="1" height="1" fill="#ff4d6d" />
+      </g>
+      <g className="pigeon-foot pigeon-foot-b">
+        <rect x="8" y="13" width="1" height="2" fill="#ff4d6d" />
+        <rect className="pigeon-toe-l" x="7" y="14" width="1" height="1" fill="#ff4d6d" />
+        <rect className="pigeon-toe-r" x="9" y="14" width="1" height="1" fill="#ff4d6d" />
+      </g>
     </svg>
   )
 }
 
-export function NewUserPage() {
+/** `loginAs`: the address of the identity this browser's wallet holds; the page then says it is a log-in as it. */
+export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
+  // The wallet holding an identity already (it says so once its frame is up): the address is then that one, and the button logs in.
+  const held = useStore(heldIdentity)
+  const loginAs = given ?? held
   const [result, setResult] = useState<Result>()
   const [connecting, setConnecting] = useState(false)
   const [suffix, setSuffix] = useState('')
   const [walletId, setWalletId] = useState(currentWallet().id)
-  const frame = useRef<HTMLIFrameElement>(null)
+  const box = useRef<HTMLDivElement>(null)
+  const nameField = useRef<HTMLInputElement>(null)
+  const logInNow = useRef<() => void>(() => {})
+  const host = useStore(heldHost)
+  const known = useStore(walletKnown)
+  // The wallet's field arrives a moment after the page: a box of its size is drawn meanwhile, and the frame fades in over it.
+  const fieldShown = useStore(passphraseReady)
   const ditoOrigin = ditoEmbedOrigin()
   // The wallet callback page finishes a sign-in; it has no create form to show.
   const embedded = Boolean(ditoOrigin) && location.pathname !== '/wallet/callback'
   const report = (error: unknown) => setResult({ message: errorText(error), error: true })
+  // Creating is drawn here and done by the wallet out of sight (its `wallet.create`); the wallet's own form is shown only to log in.
+  const ownCreate = embedded
+  // The name is on the screen at once (made here, as the wallet makes its own), and checked behind it; one that is taken is replaced.
+  const [alias, setAlias] = useState(() => randomAlias())
+  const auto = useRef(true)
+  const attempts = useRef(0)
+  const [creating, setCreating] = useState(false)
+  // Whether the name in the field is free, as the wallet finds it: undefined while it is being asked, null when it could not say
+  // (Create then asks again, and fails with the reason).
+  const [free, setFree] = useState<boolean | null | undefined>(undefined)
+  const domain = (readBisetConfig().identityDomain || readBisetConfig().mailGateways[0] || '').toLowerCase()
+  // The server the alias lives on: the deployment's own until the person edits it. Only the screen takes it so far; Create still makes the account at the
+  // deployment's own domain.
+  const [server, setServer] = useState(domain)
+  const [editingServer, setEditingServer] = useState(false)
+  const customServer = server.trim() !== '' && server.trim().toLowerCase() !== domain
+  // The host the wallet is asked about: only a server other than the deployment's own; what is being typed in the host field waits until it is settled.
+  const askHost = customServer && !editingServer ? server.trim().toLowerCase() : undefined
+  const create = () => {
+    if (free === undefined || free === false) return
+    setCreating(true)
+    setResult(undefined)
+    const typed = alias.trim().toLowerCase()
+    void (async () => {
+      try { await createAccountInBackground(typed || undefined, askHost) } catch (error) {
+        // A random name that was taken is tried once more with another; a name the person chose is theirs to change.
+        if (!typed && /taken/i.test(errorText(error))) await createAccountInBackground(randomAlias(), askHost)
+        else throw error
+      }
+    })().catch(error => { setCreating(false); report(error) })
+  }
 
   useEffect(() => {
     if (callbackConsumed) return
@@ -82,61 +125,57 @@ export function NewUserPage() {
       try {
         const callback = await completeDidMdWalletCallback()
         const session = callback ?? await restoreDidMdWalletSession()
-        if (session) await onWalletConnected?.(session)
+        if (session) await walletConnected(session)
       } catch (error) { report(error) }
     })()
   }, [])
 
   useEffect(() => {
-    if (!embedded || !frame.current || !ditoOrigin) return
-    // Nothing on this page may move while the wallet works: the happy path shows no message at all
-    // (an "already has" / "created" line pushed the form up and down). Only a failure is reported.
-    //
-    // Sign-in rides along with the creation, in the background: the signed request is prepared the
-    // moment Create is pressed (so nothing waits for it), handed to dito's save page, which approves
-    // it while the person saves the Passphrase, and the response lands on /wallet/callback.
-    let loginRequest: Promise<string | undefined> | undefined
-    let ditoEmbed: DitoEmbed | undefined
-    mountDito(frame.current, ditoOrigin, 'create', {
-      // An existing identity: dito's frame collects the Passphrase and signs in itself; this page
-      // only prepares the signed request and takes the response, so the wallet is never left.
-      login: handle => {
-        void (async () => {
-          const config = readBisetConfig()
-          // The frame reports its own failures (wrong Passphrase, ...); only ours are shown here.
-          const request = await prepareDidMdWalletLoginRequest(config.mediatorUrls, config, handle)
-          const response = await ditoEmbed!.approve(request).catch(() => undefined)
-          if (!response) return
-          const session = await completeDidMdWalletCallback(response)
-          if (!session) { void ditoEmbed?.cancel().catch(() => {}); return }
-          await onWalletConnected?.(session)
-        })().catch(error => {
-          void ditoEmbed?.cancel().catch(() => {})
-          report(error)
-        })
-      },
-      creating: handle => {
-        const config = readBisetConfig()
-        loginRequest = prepareDidMdWalletLoginRequest(config.mediatorUrls, config, handle).catch(error => {
-          console.warn('[did.md Wallet login] could not prepare the sign-in request; the identity is still created', errorText(error))
-          return undefined
-        })
-      },
-      created: () => {},
-      // The same tab goes to dito's top-level save page and comes back: to the wallet callback when
-      // the sign-in succeeded, otherwise to this very URL.
-      savePage: async () => {
-        const login = await loginRequest
-        // Straight to the last page: the sign-in's own /authorize page with the request, or, without one, the page
-        // that only shows the Passphrase. Yes there is the real submit the password managers need.
-        location.assign(login ? `${ditoOrigin}/authorize${login}` : `${ditoOrigin}/?embed=save-done`)
-      },
-      // Nothing to do here: the frame itself opens on the log-in form for the identity this browser holds.
-      existing: () => {},
-      unloaded: () => {},
-      error: message => setResult({ message, error: true }),
-    }).then(embed => { ditoEmbed = embed }).catch(report)
-  }, [embedded, ditoOrigin])
+    if (ownCreate) {
+      preloadSignup()
+      if (loginAs) return
+      // The wallet offers a random name, already checked; what is typed after is checked as it settles.
+      let current = true
+      const typed = alias.trim().toLowerCase()
+      setFree(undefined)
+      // A field the person cleared stays empty (no name is made for it) until something is typed.
+      if (!typed && !auto.current) return
+      const timer = setTimeout(() => {
+        void checkAlias(typed || undefined, askHost).then(found => {
+          if (!current) return
+          if (!typed) setAlias(found.alias)
+          if (!found.available && auto.current && typed && attempts.current < 5) { attempts.current += 1; setAlias(randomAlias()); return }
+          setFree(found.available)
+        }).catch(() => { if (current) setFree(null) })
+      }, typed && !auto.current ? 350 : 0)
+      return () => { current = false; clearTimeout(timer) }
+    }
+  }, [embedded, ownCreate ? alias : '', loginAs, askHost])
+
+  // Logging in: the Passphrase is typed in the wallet's own field (a frame holding that one field); this page asks the wallet to sign the
+  // sign-in request with it and takes the response. What is typed never reaches this page.
+  useEffect(() => {
+    if (!embedded || !loginAs || !box.current) return
+    preloadSignup()
+    setPassphraseHandlers({ submit: () => logInNow.current(), error: message => setResult({ message, error: true }) })
+    const away = showPassphraseOver(box.current)
+    return () => { away(); setPassphraseHandlers({}) }
+  }, [embedded, Boolean(loginAs)])
+  const logIn = () => {
+    setCreating(true)
+    setResult(undefined)
+    void (async () => {
+      const embed = await passphraseEmbed()
+      if (!embed) throw new Error('The wallet is not available here.')
+      if (!host) throw new Error('The wallet has not said whose account this is yet.')
+      const config = readBisetConfig()
+      const request = await prepareDidMdWalletLoginRequest(config.mediatorUrls, config, host)
+      const session = await completeDidMdWalletCallback(await embed.approve(request))
+      if (!session) throw new Error('The sign-in was not completed.')
+      await walletConnected(session)
+    })().catch(error => { setCreating(false); report(error) })
+  }
+  logInNow.current = logIn
 
   const connect = () => {
     setConnecting(true)
@@ -152,18 +191,52 @@ export function NewUserPage() {
     })().catch(error => { setConnecting(false); report(error) })
   }
 
+  const blocked = creating || (!loginAs && (free === false || free === undefined))
   return (
-    <div id="new-user-page" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 220px)', padding: '4px 0 20px' }}>
-      <div style={{ width: '100%', maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div id="nu-pigeon"><Pigeon /></div>
-        <div id="nu-create" style={{ display: embedded ? 'flex' : 'none', flexDirection: 'column', gap: 12 }}>
-          <iframe ref={frame} id="nu-dito-frame" title="Create your identity" style={{ width: '100%', height: 230, border: 0, background: 'transparent', colorScheme: 'light dark' }}
-            allow="clipboard-write; publickey-credentials-create; publickey-credentials-get" />
+    <div id="new-user-page">
+      <div className="nu-column">
+        <div id="nu-pigeon">
+          <Pigeon walking={creating || (embedded && !loginAs && (!known || free === undefined))} />
+          <div id="nu-tagline">Email reimagined for<br />Privacy and Identity</div>
         </div>
-        <div id="nu-wallet-login-row" style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}>
+        {ownCreate && !known && !loginAs ? <div id="nu-own-wait" /> : null}
+        {ownCreate && (known || loginAs) ? (
+          <form id="nu-own-create" onSubmit={event => { event.preventDefault(); if (loginAs) logIn(); else create() }}>
+            {/* The wallet's own create form, as it looks in its frame: a bold small heading, the field, the full-width button. */}
+            <div className="nu-block">
+              <label className="nu-label">
+                <span className="nu-heading">{loginAs ? 'Your account' : <>Mail alias <small>(can be changed later)</small></>}</span>
+                <span className="nu-field">
+                  <input id="nu-alias" ref={nameField} type="text" inputMode="email" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder={customServer ? `alias@${server.trim()}` : 'alias'} value={loginAs ?? alias} readOnly={Boolean(loginAs)} disabled={creating}
+                    data-bwignore="true" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
+                    onChange={event => { if (!loginAs) { auto.current = false; setAlias(event.target.value) } }}
+                    style={{ '--chars': (loginAs ?? alias).length || (loginAs ? 0 : customServer ? `alias@${server.trim()}`.length : 'alias'.length) } as React.CSSProperties} />
+                  {loginAs || (customServer && !alias && !editingServer) ? null : editingServer ? (
+                    <span className="nu-suffix">@<input id="nu-server" className="nu-server" type="text" inputMode="url" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="myserver.com" value={server} autoFocus
+                      data-bwignore="true" data-1p-ignore="true" data-lpignore="true" data-form-type="other"
+                      onChange={event => setServer(event.target.value.replace(/\s/g, ''))}
+                      onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); setEditingServer(false); if (!server.trim()) setServer(domain) } }}
+                      style={{ '--chars': server.length || 'myserver.com'.length } as React.CSSProperties} /></span>
+                  ) : <span className="nu-suffix">@<span className="nu-host">{server.trim() || domain}</span></span>}
+                  {loginAs ? null : (
+                    <button type="button" className="nu-edit" onClick={event => { event.preventDefault(); if (editingServer && !server.trim()) setServer(domain); setEditingServer(!editingServer) }}>{editingServer ? <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Done"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg> : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Edit"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>}</button>
+                  )}
+                </span>
+              </label>
+              {loginAs ? <div ref={box} className="nu-field nu-passphrase-box">{fieldShown ? null : 'Passphrase'}</div> : null}
+              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loginAs && free === undefined) ? <span className="nu-dots" role="status" aria-label={loginAs ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loginAs ? 'Log in' : free === false ? 'ID already taken' : 'Create'}</button>
+            </div>
+            {loginAs ? null : (
+              <a id="nu-terms-line" href={`https://${domain}`} target="_blank" rel="noreferrer">
+                By hosting your ID on {domain},<br />you agree to the terms of service.
+              </a>
+            )}
+          </form>
+        ) : null}
+        <div id="nu-wallet-login-row" hidden={embedded}>
           {/* "connect with [...]": the [...] is WALLET_DIRECTORY, not a hardcoded wallet. With one entry no picker renders. */}
           {WALLET_DIRECTORY.length > 1 ? (
-            <select id="nu-wallet-picker" value={walletId} style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 15.5 }}
+            <select id="nu-wallet-picker" value={walletId}
               onChange={event => {
                 setWalletId(event.target.value)
                 const entry = WALLET_DIRECTORY.find(candidate => candidate.id === event.target.value)
@@ -173,14 +246,12 @@ export function NewUserPage() {
             </select>
           ) : null}
           {/* Optional: a wallet resolved by the host an identity is published at (alice.did.md) instead of the directory's selection. */}
-          <input id="nu-wallet-suffix" type="text" placeholder="your did:web suffix (optional)" autoComplete="off" value={suffix} onChange={event => setSuffix(event.target.value)}
-            style={{ marginRight: 8, padding: '8px 10px', borderRadius: 8, font: 'inherit', fontSize: 15.5, width: 200 }} />
-          <button id="nu-wallet-login" type="button" disabled={connecting} onClick={connect}
-            style={{ padding: '10px 18px', border: 0, borderRadius: 8, background: 'var(--accent)', color: '#fff', font: 'inherit', fontSize: 15.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>Connect with your did</button>
+          <input id="nu-wallet-suffix" type="text" placeholder="your did:web suffix (optional)" autoComplete="off" value={suffix} onChange={event => setSuffix(event.target.value)} />
+          <button id="nu-wallet-login" className="nu-primary" type="button" disabled={connecting} onClick={connect}>Connect with your did</button>
         </div>
-        <div id="nu-wallet-result" aria-live="polite"
-          style={{ display: result ? 'block' : 'none', minHeight: 18, fontSize: 14.5, textAlign: 'center', overflowWrap: 'anywhere', color: result?.error ? '#ff3b30' : 'var(--text-dim)' }}>{result?.message}</div>
+        <div id="nu-wallet-result" aria-live="polite" hidden={!result} data-error={result?.error ? '' : undefined}>{result?.message}</div>
       </div>
+      <a id="nu-github" href="https://github.com/yno9/biset" target="_blank" rel="noreferrer" aria-label="biset on GitHub"><GitHubIcon size={24} /></a>
     </div>
   )
 }

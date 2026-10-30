@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
-import { avatarOf, displayName } from './did-display.ts'
+import { avatarOf, avatarSeed, displayName } from './did-display.ts'
 import { GeneratedAvatar } from './generated-avatar.tsx'
 import { avatarColor, previewText } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
@@ -145,7 +145,8 @@ export function LeftPane() {
     const label = isGroup ? latestGroup.subject || groupMembersLabel(row.groups, self) || 'no title' : counterpartLabel(row.groups, self) || shortSenderLabel(latest.from_name || latest.from || 'no title')
     return {
       row, label,
-      avatarSubject: isGroup ? label : shortSenderLabel(latest.from_name || latest.from || label),
+      // A person's picture is drawn from their address (the row's key names it), a group's from its name.
+      avatarSubject: isGroup ? label : avatarSeed(row.key.split(', ')[0] || latest.from || label),
       avatarImage: isGroup ? undefined : avatarOf(counterpartDid(row.groups, self)),
       unread: row.groups.some(g => g.messages.some(p => p.msg.seen !== true)),
       visible: isSpecialInbox(row.key) || !query || label.toLowerCase().includes(query) || row.groups.some(g => (g.subject ?? '').toLowerCase().includes(query)),

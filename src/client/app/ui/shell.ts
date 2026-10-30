@@ -27,12 +27,17 @@ type SignedNameHandler = (did: string, profile: SignedProfile) => void
 let onSignedName: SignedNameHandler | undefined
 export function setSignedNameHandler(handler: SignedNameHandler | undefined): void { onSignedName = handler }
 
-/** Shows the mail UI (an identity is signed in and its vault is open). The left pane starts open or
- * collapsed as the user left it, on a wide screen. */
+/** Shows the mail UI (an identity is signed in and its vault is open). The left pane starts as the user left it
+ * (none, compact or normal) on a wide screen, and compact the first time. */
 export function showApp(): void {
   if (!shown) {
     shown = true
-    try { patchShell({ singleCol: !isNarrow() && localStorage.getItem('lp-open') !== '1', paneCompact: localStorage.getItem('lp-compact') === '1' }) } catch { /* private browsing */ }
+    try {
+      // As the user left it; with nothing left (a first visit) the pane is open, and compact.
+      const open = localStorage.getItem('lp-open')
+      const compact = localStorage.getItem('lp-compact')
+      patchShell({ singleCol: !isNarrow() && open === '0', paneCompact: compact === null ? open === null : compact === '1' })
+    } catch { /* private browsing */ }
   }
   patchShell({ appShown: true })
 }

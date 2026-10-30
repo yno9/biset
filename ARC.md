@@ -1,7 +1,7 @@
 # Biset アーキテクチャ
 
 > 調査基準日: 2026-10-21（Asia/Tokyo）
-> 調査対象: `~/dev/v2/biset` の `main`（HEAD `60baf4a`）。DIDComm Messaging v2.1 への適合は 2026-10-09 に評価した（§9.9）。メール UI は `mail.did.md`（`./deploy.sh mail`）に、2026-10-21 のビルドを配備済み。
+> 調査対象: `~/dev/v2/biset` の `main`（HEAD `60baf4a`）。DIDComm Messaging v2.1 への適合は 2026-10-09 に評価した（§9.9）。メール UI は `did.md`（`./deploy.sh mail`）に、2026-10-21 のビルドを配備済み。
 >
 > 2026-10-08 版から、Delta Chat との相互運用（Autocrypt v1、Secure-Join、PGP 鍵の導出。§10）と、名前の整理（relationship seed → generation seed、`#didcomm-rotation` → `#biset-generation`）を反映して書き直した。
 > 変わった点は §1.4〜§1.6。方針は「現行コードを正とする」。将来案・保留は、現行の事実と混ぜずに明示する（§10.5 に Autocrypt v2 の保留）。
@@ -179,7 +179,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 |---|---|---|
 | **Mediator** | `src/server/mediator/index.ts` | ✅ 本番稼働（v2、`127.0.0.1:8791`、Caddy 経由で `mediator.biset.md`） |
 | biset-mimi | `src/server/mimi/index.ts` | 🔧 サーバーとしては動くが、クライアントからの呼び出し経路が無い（将来の MIMI クライアントのために残す） |
-| **クライアント** | `src/client/app/main.ts` | ✅ `mail.did.md`（`./deploy.sh mail`）。`t.biset.md` は廃止の方針。`file://` の `dist/index.html` でも動く |
+| **クライアント** | `src/client/app/main.ts` | ✅ `did.md`（`./deploy.sh mail`）。`t.biset.md` は廃止の方針。`file://` の `dist/index.html` でも動く |
 | tor | v2 の `tor@default`（did.md と共有） | ✅ Hidden Service が 2 つ（did.md の `didmd-app`、biset の mediator） |
 
 did.md は biset が運用するものではなく、依存する外部サービスである（identity の発行とホスト、wallet の承認）。
@@ -746,7 +746,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
   - テストは vitest + Testing Library（`test/ui/*.test.tsx`）。
 - `pnpm dev` は Vite の dev サーバー（:3000、HMR）。`/sw.js` と `/config.json` はそこで配る。
 - 実行時設定は `window.__BISET_CONFIG__`（`ui/config.ts` が読む唯一の場所。`config.json`（`BISET_CONFIG` で別の設定）を Vite の plugin が head に埋め込む。
-  出力先は `BISET_OUT_DIR`、mail.did.md は `BISET_CONFIG=ops/mail-did-md/config.json BISET_OUT_DIR=dist-mail`）。
+  出力先は `BISET_OUT_DIR`、did.md は `BISET_CONFIG=ops/mail-did-md/config.json BISET_OUT_DIR=dist-mail`）。
 
 | キー | 用途 |
 |---|---|
@@ -763,7 +763,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**biset の `deploy.sh` は Caddyfile を触らない**）:
   `mediator.biset.md` → `127.0.0.1:8791`（WebSocket の upgrade も Caddy の `reverse_proxy` がそのまま通す）、
   `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え）、`biset.md` → `/opt/biset/home`。
-- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`didmail.service`（`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。メール UI は `mail.did.md`（`./deploy.sh mail`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
+- systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`didmail.service`（`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。メール UI は `did.md`（`./deploy.sh mail`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
 - tor: `/etc/tor/torrc` の Hidden Service は 2 つ。`/var/lib/tor/biset-mediator/` → `127.0.0.1:8791`。**秘密鍵を失うと `.onion` が変わり、公開済みの DID Document がすべて古くなる**。
 - mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
 
@@ -824,7 +824,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 2. **本文を RFC 5322 として読む名残**: Vault の本文 object は `rawRfc5322` という名前で、`message-view.ts` は `rfc5322-headers.ts` で本文の先頭のヘッダを読む（旧メールの Message-ID／References、External Feed Post の `X-Source-Url`）。
    DIDComm のメッセージにはヘッダが無いので、`sourceUrl` を別の場所に移せば、ヘッダの読み取りは消せる。名前の変更（`rawRfc5322`→本文）は機械的だが差分が大きい。
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
-5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は配備するオリジン（`mail.did.md`）に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
+5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は配備するオリジン（`did.md`）に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
 6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`pnpm build` が使う `scripts/inline.mjs` が、clone から再現できない。**
 7. **dedupe の `alreadyProcessed()` が常に false**（`main.ts`）。
 8. **結線の無い UI と config の残骸**: `config-page.ts` の「New Relay」フォームと「Notifications」のトグル（`src.bak` の HTML を改変せずに移植する方針の結果で、意図した「空の UI」）。
@@ -860,7 +860,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 | Markdown ミラー | ✅ |
 | DIDComm の front door／1:1／group chat／DID Rotation／Trust Ping／Discover Features | ✅（DID Rotation は単体試験まで。本番の通しは未） |
 | mediator（SQLite、所有の証明、端末上限、WebSocket の live mode、relay-poller） | ✅（本番は 2026-10-03 のデプロイで入れ替え） |
-| メールアドレスとの送受信（didmail、WebFinger） | ✅ 本番（`mail.did.md`、MX／SPF／DKIM 設定済み） |
+| メールアドレスとの送受信（didmail、WebFinger） | ✅ 本番（`did.md`、MX／SPF／DKIM 設定済み） |
 | メールの PGP（導出した鍵、Autocrypt v1、暗号化メール） | ✅ Delta Chat と実機で確認 |
 | Delta Chat の Secure-Join（招待する側） | ✅ classic／chatmail。招待される側は未 |
 | Autocrypt v2（PQ） | ⏸ 保留（§10.5） |

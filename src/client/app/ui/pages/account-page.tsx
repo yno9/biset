@@ -1,7 +1,8 @@
 // The account page: the identity card (name, DID, capability expiry, and the DID document behind a
 // click), then what hangs off it (the mediator, the key notice, PGP: account/account-list.tsx). With
 // no identity yet, the one thing to do from here is sign up.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { addressOfHost } from '../did-display.ts'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createStore, useStore } from '../../react/store.ts'
 import { IslandTabs, useIslandWheel, type ThreadNav } from '../island.tsx'
 import { hamburgerTrigger } from '../hamburger-menu.tsx'
@@ -15,6 +16,8 @@ import { useOwnProfile } from '../account/use-own-profile.ts'
 import { requestDisplayName } from '../account/display-name-dialog.tsx'
 import { DeltaChatIcon } from '../account/deltachat-icon.tsx'
 import { OnionIcon } from '../account/onion-icon.tsx'
+import { GitHubIcon } from '../account/github-icon.tsx'
+import { APP_VERSION, applyUpdate, updateWaiting } from '../update.ts'
 import { readBisetConfig } from '../config.ts'
 import { copyInviteLink, joinDeltaChatInvite } from '../account/pgp-card.tsx'
 import { accountConfig, getAccountConfig } from '../account/state.ts'
@@ -126,18 +129,18 @@ export function AccountIsland() {
   const nav: ThreadNav = { position, count: TABS.length, go: step => { const next = TABS[position + step]; if (next) accountTab.set(next) } }
   useIslandWheel(fields, nav)
   if (!did) return null
-  const alias = name.replace(/\.did\.md$/, '@did.md')
+  const alias = addressOfHost(name)
   const shown = own.name?.trim() || alias
   return (
     <div id="conv-meta" className="conv-line2-low">
       <div id="conv-fields" ref={fields}>
         <div id="conv-to">
           <div id="conv-avatar" className="lp-avatar" role={profile ? 'button' : undefined} data-tip={profile ? (own.avatar ? 'Change profile picture' : 'Set profile picture') : undefined}
-            style={{ background: avatarColor(shown), ...(profile ? { cursor: 'pointer' } : {}) }}
+            style={{ background: avatarColor(alias.toLowerCase()), ...(profile ? { cursor: 'pointer' } : {}) }}
             // The picture is set where it is shown: a click on it asks for an image.
             onClick={profile ? () => {
               void chooseImage().then(file => file && cropAvatar(file)).then(avatar => { if (avatar) return profile.setAvatar(avatar) }).then(() => window.dispatchEvent(new Event(PROFILE_CHANGED))).catch(error => { if (errorText(error) !== 'Cancelled.') getAccountConfig()?.showMessage?.(errorText(error)) })
-            } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : <GeneratedAvatar name={shown} />}</div>
+            } : undefined}>{own.avatar ? <img className="lp-avatar-img" src={own.avatar} alt="" /> : <GeneratedAvatar name={alias.toLowerCase()} />}</div>
           <div id="conv-text">
             <div id="conv-line1">
               <span id="conv-name" role={profile && own.name ? 'button' : undefined} data-tip={profile && own.name ? 'Change display name' : undefined}
@@ -164,29 +167,58 @@ function FilesPanel() {
   )
 }
 
-/** The foot of the page, one centred row: Delta Chat (join someone's invite, or copy this identity's own invite link), and, when this app is
- * also served over Tor, its onion address to copy (the page's own, by the deployment's config). */
+type FootContext = 'delta' | 'version' | 'onion'
+const SOURCE_URL = 'https://github.com/yno9/biset'
+
+/** The foot of the page: three icons in a row (Delta Chat, the source and its version, and, when this app is also served over Tor, its onion
+ * address). Over an icon, its menu opens over the command box, in place of the field; a click anywhere else (the margins of the box included)
+ * puts it away. Without a mouse, a tap on the icon opens it. */
 export function AccountFoot() {
   const config = useStore(accountConfig)
   const pgp = config?.pgp
   const onion = readBisetConfig().appOnionUrl
-  if (!pgp && !onion) return <span id="cmd-acc-foot" />
+  const waiting = useStore(updateWaiting)
+  const [context, setContext] = useState<FootContext | null>(null)
+  useEffect(() => {
+    if (!context) return
+    const away = (event: PointerEvent): void => { if (!(event.target as Element | null)?.closest?.('[data-foot-item]')) setContext(null) }
+    document.addEventListener('pointerdown', away, true)
+    return () => document.removeEventListener('pointerdown', away, true)
+  }, [context])
   const showMessage = (text: string) => config?.showMessage?.(text)
+  const done = (action: () => void) => () => { setContext(null); action() }
+  // What each action does: the icon itself does it where there is only one (the source, the onion address); Delta Chat has two, so its icon only opens the menu.
+  const copyOnion = (): void => { if (onion) navigator.clipboard?.writeText(onion).then(() => showMessage('Onion URL copied')).catch(() => {}) }
+  const openSource = (): void => { if (waiting) applyUpdate(); else window.open(SOURCE_URL, '_blank', 'noopener,noreferrer') }
+  const icon = (id: FootContext, label: string, children: ReactNode, action?: () => void) => (
+    <button type="button" className={`foot-icon${context === id ? ' open' : ''}`} data-foot-item aria-label={label} title={label}
+      onPointerEnter={event => { if (event.pointerType === 'mouse') setContext(id) }}
+      onClick={() => { if (action) { setContext(null); action() } else setContext(id) }}>{children}</button>
+  )
   return (
     <div id="cmd-acc-foot">
-      {pgp ? (
-        <span id="cmd-acc-deltachat">
-          <DeltaChatIcon />
-          <button type="button" onClick={() => joinDeltaChatInvite(pgp, showMessage)}>Join</button>
-          <span aria-hidden="true">|</span>
-          <button type="button" onClick={() => copyInviteLink(pgp, showMessage)}>Invite</button>
-        </span>
-      ) : null}
-      {onion ? (
-        <span id="cmd-acc-onion">
-          <OnionIcon size={16} />
-          <button type="button" onClick={() => { navigator.clipboard?.writeText(onion).then(() => showMessage('Onion URL copied')).catch(() => {}) }}>Onion URL</button>
-        </span>
+      {pgp ? icon('delta', 'Delta Chat', <DeltaChatIcon />) : null}
+      {icon('version', waiting ? 'Update available' : `Version ${APP_VERSION}`, <><GitHubIcon />{waiting ? <i className="update-dot" /> : null}</>, openSource)}
+      {onion ? icon('onion', 'Onion URL', <OnionIcon size={16} />, copyOnion) : null}
+      {context ? (
+        <div className="foot-menu" role="menu">
+          {context === 'delta' && pgp ? (
+            <>
+              <button type="button" data-foot-item onClick={done(() => joinDeltaChatInvite(pgp, showMessage))}>Join an invite</button>
+              <span aria-hidden="true">|</span>
+              <button type="button" data-foot-item onClick={done(() => copyInviteLink(pgp, showMessage))}>Copy my invite</button>
+            </>
+          ) : null}
+          {context === 'version' ? (
+            <>
+              {waiting ? <button type="button" className="update-available" data-foot-item onClick={done(applyUpdate)}>Update available</button> : null}
+              <a href={SOURCE_URL} target="_blank" rel="noreferrer" data-foot-item onClick={() => setContext(null)}>GitHub · v{APP_VERSION}</a>
+            </>
+          ) : null}
+          {context === 'onion' && onion ? (
+            <button type="button" data-foot-item onClick={done(copyOnion)}>Copy onion URL</button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   )

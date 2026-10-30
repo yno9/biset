@@ -61,12 +61,6 @@
      27  Installed PWA — Dynamic Island / notch handling
    ============================================================================= */
 
-/* Config example for Recursive (variable font):
-     <weight>      300 … 1000
-     <slant>       -15 … 0
-     <casual>        0 … 1
-     <cursive>       0 … 1
-     <monospace>     0 … 1 */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    01  BRAND — title bar
@@ -75,14 +69,9 @@
   position: fixed;
   top: 19px;
   left: 21px;
-  font-family: "Recursive", system-ui, sans-serif;
+  font-family: "Noto Sans JP", system-ui, sans-serif;
   font-size: 17.5px;
   font-weight: 700;
-  font-variation-settings:
-    "slnt" 0,
-    "CASL" 0.5,
-    "CRSV" 0,
-    "MONO" 0;
   color: var(--text);
   opacity: 0.5;
 }
@@ -136,6 +125,15 @@
      color there hides the blur entirely and just looks like a flat bar. */
   --glass-strong-bg: rgba(255, 255, 255, 0.88);
   --pigeon-eye-color: #4e2626;
+  /* Status colors and the hairline, named once: errors and destructive actions, success, warnings, and the thin line of outlined controls. */
+  --danger: #ff3b30;
+  --success: #45a945;
+  --warning: #ff9f0a;
+  --warning-text: #b45309;
+  --line: #d0d0d0;
+  /* The filled button (Create, Log in): solid, the wallet's own blue. */
+  --primary: #0083ff;
+  --on-primary: #fff;
   /* "Background-matched glass" — the left-pane header's two circular buttons
      sit on --card, the reply box sits on --bg (a different, close-but-not-
      equal value — reusing one token for both left a faint curved seam where
@@ -186,6 +184,12 @@
     --glass-surface-bg: rgba(13, 13, 13, 0.55);
     --glass-surface-hi: rgba(23, 23, 23, 0.3);
     --glass-surface-lo: rgba(13, 13, 13, 0.15);
+    --danger: #ff6961;
+    --success: #5cc15c;
+    --warning: #ffb340;
+    --warning-text: #f0a04b;
+    --line: rgba(255, 255, 255, 0.18);
+    --primary: #1a8cff;
   }
 }
 
@@ -224,7 +228,7 @@ select {
   flex: 1;
 }
 #header-thread-title {
-  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+  font-family: "Noto Sans JP", sans-serif;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
@@ -266,7 +270,7 @@ select {
   background: rgba(128, 128, 128, 0.1);
 }
 .menu-item.danger {
-  color: #ff3b30;
+  color: var(--danger);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -877,7 +881,7 @@ select {
   color: #fff;
 }
 .cmd-page-btn.danger {
-  background: #ff3b30;
+  background: var(--danger);
   color: #fff;
 }
 .cmd-form {
@@ -926,7 +930,7 @@ select {
   height: 8px;
   margin-top: 6px;
   border-radius: 50%;
-  background: #ff9f0a;
+  background: var(--warning);
 }
 .acc-notice-body {
   min-width: 0;
@@ -1028,8 +1032,7 @@ select {
    not a separate element after it. */
 .cmd-acc-relay-row {
   position: relative;
-  font-family: "Recursive", ui-monospace, monospace;
-  font-variation-settings: "MONO" 1;
+  font-family: ui-monospace, monospace;
 }
 .cmd-acc-relay-row .cmd-input {
   width: 100%;
@@ -1037,12 +1040,11 @@ select {
   padding-right: 44px;
   font-family: inherit;
 }
-/* Log in's Email/Password/Add — same Recursive-mono treatment as the relay
+/* Log in's Email/Password/Add — same monospace treatment as the relay
    row and Sign up body; <input>/<button> don't inherit font-family from an
    ancestor by default, hence the explicit `inherit` on both children. */
 #cmd-acc-form {
-  font-family: "Recursive", ui-monospace, monospace;
-  font-variation-settings: "MONO" 1;
+  font-family: ui-monospace, monospace;
 }
 #cmd-acc-form .cmd-input,
 #cmd-acc-form .cmd-page-btn {
@@ -1067,8 +1069,7 @@ select {
   color: var(--text-dim);
 }
 #cmd-acc-signup-body {
-  font-family: "Recursive", ui-monospace, monospace;
-  font-variation-settings: "MONO" 1;
+  font-family: ui-monospace, monospace;
 }
 #cmd-acc-relay-badge {
   position: absolute;
@@ -1078,7 +1079,7 @@ select {
   pointer-events: none;
 }
 .cmd-acc-error {
-  color: #ff3b30;
+  color: var(--danger);
   font-size: 13px;
   margin-top: 8px;
 }
@@ -1202,7 +1203,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #ff3b30;
+  background: var(--danger);
   color: #fff;
   font-size: 14.5px;
   font-weight: 600;
@@ -1405,7 +1406,7 @@ a.lp-avatar:hover {
   cursor: pointer;
 }
 #lp-inbox-menu .menu-item.danger {
-  color: #ff3b30;
+  color: var(--danger);
 }
 #lp-inbox-menu .menu-item:not(.danger) {
   color: var(--text);
@@ -1512,9 +1513,9 @@ a.lp-avatar:hover {
   /* Flush to the top, no inset padding here. The notch inset (PWA only) is
      reserved OUTSIDE this scroll container, on #right-col — see section 27.
      Anything reserved inside it would scroll away with the content. */
-  padding: 0px 4px 4px 4px;
+  padding: 4px 4px 4px 4px;
 }
-#outer::-webkit-scrollbar {
+#outer:-webkit-scrollbar {
   display: none;
 }
 
@@ -1711,7 +1712,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   background: linear-gradient(to bottom, var(--bg) 10%, transparent);
   flex-shrink: 0;
   gap: 4px;
-  font-family: Recursive;
+  font-family: "Noto Sans JP", system-ui, sans-serif;
 }
 /* A 1px rule from the right of the subject pill to the row's right edge, level with the pill's middle (the row centres its items). */
 #thread-title-row::after {
@@ -1902,10 +1903,10 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .conv-member-chip {
   font: inherit; font-size: 12px; line-height: 1.4;
   padding: 1px 7px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--border, #d0d0d0); background: transparent; color: inherit; opacity: .8;
+  border: 1px solid var(--line); background: transparent; color: inherit; opacity: .8;
 }
-.conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
-.conv-member-add:hover { border-color: var(--border, #d0d0d0); color: inherit }
+.conv-member-chip:hover { opacity: 1; border-color: var(--danger); color: var(--danger) }
+.conv-member-add:hover { border-color: var(--line); color: inherit }
 
 /* The counterparty, as on the account page's identity card: picture, then name over address. */
 #conv-to:has(#conv-avatar) {
@@ -1981,6 +1982,14 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A contact with no name is shown by its address, alone: nothing is beside it to leave room for, so it is not held to 60% of a width that is
+   itself as wide as the address (the island sizes to its content, which is how the address ended up cut short inside a wide island). It
+   shortens only when the island has reached the edge of the screen. */
+#conv-name:only-child {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
 }
 #conv-address {
   min-width: 0;
@@ -2123,7 +2132,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   background: rgba(128, 128, 128, 0.14);
 }
 .acc-file-btn.danger {
-  color: #c0392b;
+  color: var(--danger);
 }
 /* A card's icon buttons (the mediator's: edit the server, enable Tor; the Identity host's: the DID log) and its text button (log in). */
 .acc-icon-btn,
@@ -2902,7 +2911,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   font-style: italic;
 }
 .t-unverified {
-  color: #b45309;
+  color: var(--warning-text);
   border: 1px solid;
   border-radius: 4px;
   padding: 0 4px;
@@ -2958,7 +2967,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   background: #8080801f;
 }
 .t-msg-delete-btn {
-  color: #e5484d;
+  color: var(--danger);
 }
 .t-edit-ta {
   box-sizing: border-box;
@@ -3854,7 +3863,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 #pw-error {
   font-size: 14.5px;
-  color: #ff3b30;
+  color: var(--danger);
   min-height: 18px;
 }
 
@@ -3931,7 +3940,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 #pw-error2 {
   font-size: 14.5px;
-  color: #ff3b30;
+  color: var(--danger);
   min-height: 18px;
 }
 #relay-status {
@@ -3963,11 +3972,16 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 #nu-pigeon {
   display: flex;
-  justify-content: center;
-  margin-bottom: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  container-type: inline-size;
+  margin-bottom: 20px;
   image-rendering: pixelated;
 }
+#nu-tagline { font-family: "Roboto Flex", system-ui, sans-serif; font-weight: 700; font-size: calc((100cqw - 112px) / 10); line-height: 1.3; white-space: nowrap; color: #4a515b; image-rendering: auto; }
 #nu-pigeon svg {
+  flex: none;
   width: 96px;
   height: 96px;
 }
@@ -4422,10 +4436,10 @@ html.pwa-standalone #app {
 .conv-member-chip {
   font: inherit; font-size: 12px; line-height: 1.4;
   padding: 1px 7px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--border, #d0d0d0); background: transparent; color: inherit; opacity: .8;
+  border: 1px solid var(--line); background: transparent; color: inherit; opacity: .8;
 }
-.conv-member-chip:hover { opacity: 1; border-color: #b00020; color: #b00020 }
-.conv-member-add:hover, .conv-member-leave:hover { border-color: var(--border, #d0d0d0); color: inherit }
+.conv-member-chip:hover { opacity: 1; border-color: var(--danger); color: var(--danger) }
+.conv-member-add:hover, .conv-member-leave:hover { border-color: var(--line); color: inherit }
 .conv-member-leave { opacity: .55 }
 
 
@@ -4478,7 +4492,7 @@ html.pwa-standalone #app {
   position: absolute;
   left: 0;
   top: 0;
-  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+  font-family: "Noto Sans JP", sans-serif;
   font-size: 15px;
   font-weight: 600;
   opacity: 0.78;
@@ -4592,7 +4606,7 @@ html.pwa-standalone #app {
 #conv-subject-input {
   font-size: 15px;
   font-weight: 400;
-  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+  font-family: "Noto Sans JP", sans-serif;
 }
 .conv-input::placeholder {
   color: var(--text-dim);
@@ -4623,6 +4637,16 @@ html.pwa-standalone #app {
   white-space: nowrap;
 }
 
+/* The foot: icons only. Over one, its menu covers the field (the reply-field is the positioned box, rounded like the menu). */
+#cmd-acc-foot .foot-icon { position: relative; z-index: 4; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border-radius: 50%; }
+#cmd-acc-foot .foot-icon:hover, #cmd-acc-foot .foot-icon.open { background: rgba(128, 128, 128, 0.14); color: var(--text); }
+#cmd-acc-foot .update-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
+#cmd-acc-foot .foot-menu { position: absolute; inset: -1px; z-index: 3; display: flex; align-items: center; justify-content: flex-start; gap: 18px; padding-left: 16px; border-radius: 30px; border: 1px solid rgba(128, 128, 128, 0.22); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06); background: var(--reply-bg); color: var(--text-dim); font-size: 14px; }
+#cmd-acc-foot .foot-menu a { color: inherit; text-decoration: none; padding: 2px 0; }
+#cmd-acc-foot .foot-menu button { padding-left: 0; padding-right: 0; }
+#cmd-acc-foot .foot-menu a:hover, #cmd-acc-foot .foot-menu button:hover { color: var(--text); }
+#cmd-acc-foot .foot-menu .update-available { color: var(--primary); }
+
 /* The account's box has no handle at the top of the field, so the field needs no room for it there. */
 .reply-box.me .reply-field {
   padding-top: 14px;
@@ -4646,7 +4670,7 @@ html.pwa-standalone #app {
   background: none;
   color: var(--text-dim);
   font: inherit;
-  font-family: "Noto Sans", "Noto Sans JP", sans-serif;
+  font-family: "Noto Sans JP", sans-serif;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -4719,3 +4743,81 @@ html.pwa-standalone #app {
   background: var(--bubble-me);
   color: var(--bubble-me-text);
 }
+
+/* The line under the island saying a message did not go: it stays, in red. */
+#conv-meta-expanded.conv-problem {
+  color: var(--danger);
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* The pigeon of the new-user page steps from foot to foot while the wallet is waited for. */
+.pigeon-walking .pigeon-foot { animation: pigeon-step .6s steps(1, end) infinite; }
+.pigeon-walking .pigeon-foot-b { animation-delay: -.3s; }
+@keyframes pigeon-step { 0% { transform: translateX(-1px); } 50% { transform: translateX(1px); } }
+@media (prefers-reduced-motion: reduce) { .pigeon-walking .pigeon-foot { animation: none; } }
+/* Waiting, the feet point left and step; once the wallet has answered, the toes turn to point right. */
+.pigeon-toe-r { display: none; }
+.pigeon-done .pigeon-toe-l { display: none; }
+.pigeon-done .pigeon-toe-r { display: inline; }
+
+/* Three dots that jump in turn while a name is being checked. */
+.nu-dots { display: inline-flex; gap: 4px; align-items: center; height: 16px; }
+.nu-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim, #888); animation: nu-dot .9s ease-in-out infinite; }
+.nu-dots i:nth-child(2) { animation-delay: .15s; }
+.nu-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes nu-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-5px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .nu-dots i { animation: nu-fade 1.4s ease-in-out infinite; } @keyframes nu-fade { 50% { opacity: 1; } } }
+
+/* The new-user page (sign-up and log-in): the pigeon, then the wallet's form. */
+#new-user-page { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: calc(100vh - 220px); padding: clamp(4px, 12vh, 120px) 0 20px; }
+#new-user-page .nu-column { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; }
+#nu-own-wait { height: 140px; }
+#nu-own-create { display: flex; flex-direction: column; gap: 14px; font-family: ui-monospace, monospace; }
+#nu-own-create .nu-block { display: flex; flex-direction: column; gap: 14px; }
+.nu-label { display: flex; flex-direction: column; margin: 0; }
+.nu-heading { display: block; font-family: "Roboto Flex", system-ui, sans-serif; font-weight: 700; font-size: 14px; line-height: 26px; color: var(--text); }
+/* A field: no fill, a hairline of grey. */
+.nu-field { display: flex; align-items: center; height: 56px; box-sizing: border-box; padding: 0 16px; border: solid 0.5px gray; border-radius: 8px; background: none; font: 200 16px/24px monospace; }
+.nu-heading small { font-weight: 400; font-size: 12.5px; color: var(--text-dim); }
+.nu-label > .nu-field { margin-top: 8px; }
+.nu-field input { flex: 0 1 auto; width: calc(var(--chars, 5) * 1ch + 2px); min-width: 0; max-width: 100%; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; color: inherit; }
+.nu-suffix { color: var(--text-dim); user-select: none; white-space: nowrap; }
+.nu-edit { margin-left: auto; padding: 0 0 0 8px; border: 0; background: transparent; color: var(--text-dim); font: 400 13px system-ui, sans-serif; cursor: pointer; }
+.nu-edit { display: flex; align-items: center; }
+.nu-edit:hover { color: var(--text); }
+/* Hovering the edit button underlines the host it would edit, as the open field is underlined. */
+.nu-host { height: 24px; box-shadow: inset 0 -0.5px 0 transparent; }
+.nu-field:has(.nu-edit:hover) .nu-host { box-shadow: inset 0 -0.5px 0 gray; animation: nu-blink 1s step-end infinite; }
+/* The underline blinks at the pace of the text caret (half a second on, half off). */
+@keyframes nu-blink { 50% { box-shadow: inset 0 -0.5px 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .nu-field:has(.nu-edit:hover) .nu-host { animation: none; } }
+.nu-suffix { display: flex; align-items: center; height: 24px; line-height: 24px; }
+/* The open field's underline is drawn inside its box so that swapping the text for it moves nothing. */
+.nu-field input.nu-server { height: 24px; line-height: 24px; box-shadow: inset 0 -0.5px 0 gray; }
+.nu-passphrase-box { color: #757575; line-height: 56px; }
+/* The filled button (Create, Log in, Connect). */
+.nu-primary { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; padding: 0 15px; border: 0; border-radius: 8px; background: var(--primary); color: var(--on-primary); font: inherit; font-size: 16px; line-height: 20px; text-align: center; cursor: pointer; }
+.nu-primary .nu-dots { height: 20px; justify-content: center; }
+.nu-primary .nu-dots i { background: var(--on-primary); }
+.nu-primary:disabled { opacity: 0.4; cursor: default; }
+.nu-primary[data-busy]:disabled { opacity: 1; }
+#nu-terms-line { display: block; padding: 10px 16px; border-radius: 8px; background: transparent; text-decoration: none; font-size: 13.5px; color: var(--text-dim); text-align: center; font-family: system-ui, sans-serif; transition: background-color 0.15s; }
+#nu-terms-line:hover { background: rgba(128, 128, 128, 0.08); }
+#nu-wallet-login-row { display: flex; align-items: center; justify-content: center; margin-top: 2px; }
+#nu-wallet-login-row[hidden] { display: none; }
+#nu-wallet-picker { margin-right: 8px; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 15.5px; }
+#nu-wallet-suffix { margin-right: 8px; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 15.5px; width: 200px; }
+#nu-wallet-login { width: auto; padding: 10px 18px; font-size: 15.5px; font-weight: 500; white-space: nowrap; }
+#nu-wallet-result { min-height: 18px; font-size: 14.5px; text-align: center; overflow-wrap: anywhere; color: var(--text-dim); }
+#nu-wallet-result[hidden] { display: none; }
+#nu-wallet-result[data-error] { color: var(--danger); }
+
+
+
+
+
+/* The network indicator (lft, ../lft): where the lftisland sits. Variables, because the indicator's own stylesheet is added last and wins against a rule here. */
+:root { --lft-net-top: 4px; --lft-net-right: 2px; }
+#nu-github { position: fixed; right: 12px; bottom: 16px; z-index: 70; display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; color: #4a515b; }
+#nu-github:hover { background: rgba(128, 128, 128, 0.14); }

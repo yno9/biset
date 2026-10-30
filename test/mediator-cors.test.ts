@@ -10,9 +10,9 @@ describe('the mediator\'s CORS answer', () => {
   }
 
   test('an allowed origin is echoed', async () => {
-    const response = await ask('https://mail.did.md', ['https://mail.did.md'])
+    const response = await ask('https://did.md', ['https://did.md'])
     expect(response.status).toBe(200)
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://mail.did.md')
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://did.md')
   })
 
   test('a page that hides its origin (Origin: null, e.g. a Tor Browser onion page) gets *, the only value a browser accepts for it', async () => {
@@ -21,6 +21,6 @@ describe('the mediator\'s CORS answer', () => {
   })
 
   test('an origin not allowed is refused', async () => {
-    expect((await ask('https://evil.example', ['https://mail.did.md'])).status).toBe(403)
+    expect((await ask('https://evil.example', ['https://did.md'])).status).toBe(403)
   })
 })
