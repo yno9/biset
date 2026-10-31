@@ -17,7 +17,7 @@ import {
 import { WALLET_DIRECTORY } from '../../../identity/wallet/wallet-directory.ts'
 import { ditoEmbedOrigin } from '../../../identity/wallet/dito-embed.ts'
 import { walletConnected } from './signup-frame.ts'
-import { GitHubIcon } from '../account/github-icon.tsx'
+import { AboutOverlay } from './about-overlay.tsx'
 import { GeneratedAvatar } from '../generated-avatar.tsx'
 import { avatarSeed } from '../did-display.ts'
 import { mixInk, setPartColors, usePartColors } from '../color-settings.ts'
@@ -174,6 +174,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   const setAlias = (next: string): void => provisionalAlias.set(next)
   const auto = useRef(true)
   const [roll, setRoll] = useState(0)
+  const [about, setAbout] = useState(false)
   const attempts = useRef(0)
   const [creating, setCreating] = useState(false)
   // Whether the name in the field is free, as the wallet finds it: undefined while it is being asked, null when it could not say
@@ -348,7 +349,10 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
         </div>
         <div id="nu-wallet-result" aria-live="polite" hidden={!result} data-error={result?.error ? '' : undefined}>{result?.message}</div>
       </div>
-      <a id="nu-github" href="https://github.com/yno9/biset" target="_blank" rel="noreferrer" aria-label="comail on GitHub"><GitHubIcon size={24} /></a>
+      <button type="button" id="nu-help" aria-label="About comail" onClick={() => setAbout(true)}>
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5" /><path d="M12 17.5h.01" /></svg>
+      </button>
+      {about ? <AboutOverlay onClose={() => setAbout(false)} /> : null}
     </div>
   )
 }

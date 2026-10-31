@@ -3644,6 +3644,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 .reply-box textarea {
   flex: 1;
+  min-width: 0; /* a textarea will not be narrower than its own width (20 columns) unless told: in a narrow field it pushed the shortcuts out of it */
   border: none;
   background: transparent;
   font-size: 16.5px;
@@ -5247,7 +5248,7 @@ html.pwa-standalone #app {
 }
 /* The network indicator (lft, ../lft): where the lftisland sits. Variables, because the indicator's own stylesheet is added last and wins against a rule here. */
 :root { --lft-net-top: 4px; --lft-net-right: 2px; }
-#nu-github {
+#nu-help {
   position: fixed;
   right: 0.75rem;
   bottom: 1rem;
@@ -5257,11 +5258,137 @@ html.pwa-standalone #app {
   justify-content: center;
   width: 4rem;
   height: 4rem;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
+  background: none;
   color: #4a515b;
+  cursor: pointer;
 }
-#nu-github:hover {
+#nu-help:hover {
   background: rgba(128, 128, 128, 0.14);
+}
+
+/* What comail is: slides over the page, changing by sliding up and down (ui/pages/about-overlay.tsx). */
+#about {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  animation: about-in .35s ease-out both;
+}
+@keyframes about-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.about-track {
+  height: 100%;
+  transition: transform .7s cubic-bezier(.65, 0, .35, 1);
+}
+.about-slide {
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1.25rem;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+.about-slide h2 {
+  margin: 0;
+  font-family: Outfit, system-ui, sans-serif;
+  font-size: 3rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -.03em;
+  color: var(--nu-ink, #0e3049);
+}
+.about-slide p {
+  margin: 0;
+  font-family: var(--nu-font, system-ui, sans-serif);
+  font-size: 1.125rem;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+/* The text of the slide that is not shown waits a little below, and comes up as its slide arrives. */
+.about-slide > * {
+  opacity: 0;
+  transform: translateY(1rem);
+  transition: opacity .5s ease .25s, transform .5s ease .25s;
+}
+.about-slide[data-active] > * {
+  opacity: 1;
+  transform: none;
+}
+#about-close,
+#about-github {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: #4a515b;
+  cursor: pointer;
+}
+#about-close:hover,
+#about-github:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+/* In the place of the ? that opened it (the page's own button is under the overlay): the same size, the same corner. */
+#about-close {
+  right: 0.75rem;
+  bottom: 1rem;
+  width: 4rem;
+  height: 4rem;
+}
+#about-close svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+#about-github {
+  left: 0.75rem;
+  bottom: 1rem;
+}
+#about-dots {
+  position: absolute;
+  top: 50%;
+  right: 1rem;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  transform: translateY(-50%);
+}
+#about-dots button {
+  width: 0.625rem;
+  height: 0.625rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(128, 128, 128, 0.4);
+  cursor: pointer;
+  transition: background .3s, transform .3s;
+}
+#about-dots button[aria-current] {
+  background: var(--nu-ink, #0e3049);
+  transform: scale(1.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  #about { animation: none; }
+  .about-track { transition: none; }
+  .about-slide > * { transition: none; }
 }
 
 /* Shown instead of the app where the browser has no IndexedDB (ui/storage-guard.ts). */
