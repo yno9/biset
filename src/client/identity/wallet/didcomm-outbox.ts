@@ -25,9 +25,14 @@ export interface WalletDidCommOutboxOptions {
   /** The message written as an OpenPGP-encrypted mail for the recipient's DID, when a key is held for it (undefined: send it as it is).
    * Asked at each attempt, with the message as it was written; the armor is made again on a retry, the DIDComm id stays. */
   encrypt?(toDid: string, content: string, message: OutboundChatMessage): Promise<{ armored: string; outerSubject: string } | undefined>
+  /** The reply token kept for the recipient's DID (didmail PROTOCOL.md §7.1): the proof, from its mail bridge, that this identity may write to it
+   * (undefined: none). Asked at each attempt. */
+  replyToken?(toDid: string): Promise<string | undefined>
+  /** The tokens a mail bridge answered with (an introduction), to keep with the contacts they are for. */
+  onReplyTokens?(tokens: Record<string, string>): Promise<void>
   /** This identity's display name, to tell the recipient with the message (undefined: none). Asked at each attempt. */
   fromName?(): Promise<string | undefined>
-  send?: (toDid: string, content: string, message: OutboundChatMessage) => Promise<{ ok: boolean; error?: string }>
+  send?: (toDid: string, content: string, message: OutboundChatMessage) => Promise<{ ok: boolean; error?: string; replyTokens?: Record<string, string> }>
   onDelivered?: (item: DidCommTransportOutboxRecord) => void
   onError(error: unknown, item: DidCommTransportOutboxRecord): void
 }
@@ -61,8 +66,10 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
     const autocrypt = await options.autocrypt?.(route.toDid).catch(() => undefined)
     const encrypted = await options.encrypt?.(route.toDid, content, message).catch(() => undefined)
     const fromName = await options.fromName?.().catch(() => undefined)
+    const replyToken = await options.replyToken?.(route.toDid).catch(() => undefined)
     return sendDidCommMessage(route.toDid, content, {
       ...(autocrypt ? { autocrypt } : {}),
+      ...(replyToken ? { replyToken } : {}),
       ...(fromName ? { fromName } : {}),
       ...(encrypted ? { encrypted: { armored: encrypted.armored } } : {}),
       fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, ...(route.fromPrior ? { fromPrior: route.fromPrior } : {}),
@@ -108,6 +115,8 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
               ...(group ? { thid: parseDidCommGroupAddress(metadata.threadId), audience: metadata.to ?? [item.toDid] } : answered ? { thid: answered } : {}),
             })
             if (!sent.ok) throw new Error(sent.error ?? 'DIDComm send failed')
+            // The message is accepted: a token the bridge returned with it (for an introduction) must not be lost with a failure after this.
+            if (sent.replyTokens) await options.onReplyTokens?.(sent.replyTokens).catch(error => options.onError(error, item))
 
             const latest = await options.readModel.snapshot()
             const alreadySent = latest.emails.find(candidate => candidate.id === item.emailId)?.mailboxIds.sent === true

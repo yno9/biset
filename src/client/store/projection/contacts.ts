@@ -26,6 +26,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { sha1 } from '@noble/hashes/legacy.js'
 import { bytesToBase64url, type CanonicalValue } from '../../../protocol/canonical.ts'
 import type { VaultMutationIntent } from './mutations.ts'
+import { REPLY_TOKEN_PATTERN } from '../../../protocol/didcomm/reply-token.ts'
 
 export const JMAP_CONTACTS_CAPABILITY = 'urn:ietf:params:jmap:contacts'
 /** JSContact vendor property holding DIDComm routing state (§12.2). */
@@ -33,6 +34,9 @@ export const DIDCOMM_CONTACT_PROPERTY = 'biset.md:didcomm'
 /** JSContact vendor property holding the OpenPGP keys a counterparty's mail told us (Autocrypt). Like the
  * DIDComm state, written only by DIDComm ingress. */
 export const AUTOCRYPT_CONTACT_PROPERTY = 'biset.md:autocrypt'
+/** JSContact vendor property holding the reply token a mail bridge gave for this contact's address (didmail PROTOCOL.md §7.1): the proof,
+ * kept with the contact, that this identity may write to it. A string; written only by DIDComm ingress. */
+export const REPLY_TOKEN_CONTACT_PROPERTY = 'biset.md:replyToken'
 /** Where the card's own fields came from, `{ name?: NameSource, avatar?: 'signed' | 'user' }`: a weaker source never replaces a
  * stronger one's value (what a person wrote is never replaced by what was found out). One property for all of them. */
 export const SOURCES_PROPERTY = 'biset.md:sources'
@@ -205,6 +209,9 @@ export function assertContactCard(value: unknown): LocalJmapContactCard {
   })
   if (value[DIDCOMM_CONTACT_PROPERTY] !== undefined) assertDidCommState(value[DIDCOMM_CONTACT_PROPERTY])
   if (value[AUTOCRYPT_CONTACT_PROPERTY] !== undefined) assertAutocryptState(value[AUTOCRYPT_CONTACT_PROPERTY])
+  if (value[REPLY_TOKEN_CONTACT_PROPERTY] !== undefined && (typeof value[REPLY_TOKEN_CONTACT_PROPERTY] !== 'string' || !REPLY_TOKEN_PATTERN.test(value[REPLY_TOKEN_CONTACT_PROPERTY] as string))) {
+    throw new TypeError(`contact card ${REPLY_TOKEN_CONTACT_PROPERTY} must be a reply token`)
+  }
   if (value[SOURCES_PROPERTY] !== undefined && !isObject(value[SOURCES_PROPERTY])) throw new TypeError(`contact card ${SOURCES_PROPERTY} must be an object`)
   return value as LocalJmapContactCard
 }
@@ -353,6 +360,18 @@ export function publicDidOf(card: LocalJmapContactCard): string | undefined {
   const services = [card.onlineServices.didcomm, ...Object.entries(card.onlineServices).filter(([key]) => key !== 'didcomm').sort(([a], [b]) => a.localeCompare(b)).map(([, service]) => service)]
   for (const service of services) if (isObject(service) && typeof service.uri === 'string' && service.uri.startsWith('did:')) return service.uri
   return undefined
+}
+
+/** The patch keeping `token` as the reply token of the contact `cardId` (replacing the one it had: the newest is the one the bridge accepts). */
+export function replyTokenPatch(cardId: string, token: string): ContactSetPayload {
+  if (!REPLY_TOKEN_PATTERN.test(token)) throw new TypeError('not a reply token')
+  return { cardId, patch: { [pointerToken(REPLY_TOKEN_CONTACT_PROPERTY)]: token } }
+}
+
+/** The reply token kept on a contact's card: sent with every message to it (didmail PROTOCOL.md §7.1). */
+export function replyTokenOf(card: LocalJmapContactCard | undefined): string | undefined {
+  const token = card?.[REPLY_TOKEN_CONTACT_PROPERTY]
+  return typeof token === 'string' && REPLY_TOKEN_PATTERN.test(token) ? token : undefined
 }
 
 /** The id of a key in the card's autocrypt state: a hash of its `keydata`. */
@@ -517,7 +536,7 @@ interface ContactCardSetResult {
 const SERVER_SET = new Set(['id'])
 
 /** The card properties only ingress writes: a JMAP client may not set them. */
-function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY || head === SOURCES_PROPERTY }
+function touchesDidComm(path: string): boolean { const head = pointer(path)[0]; return head === DIDCOMM_CONTACT_PROPERTY || head === AUTOCRYPT_CONTACT_PROPERTY || head === REPLY_TOKEN_CONTACT_PROPERTY || head === SOURCES_PROPERTY }
 
 /** Parses a ContactCard/set request against `cards` into the patches to
  * commit, and the per-item results a JMAP response reports. */
@@ -532,7 +551,7 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
     next: for (const [creationId, value] of Object.entries(arguments_.create)) {
       try {
         if (!isObject(value)) throw new TypeError('a card must be an object')
-        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, SOURCES_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by comail` }; continue next }
+        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, REPLY_TOKEN_CONTACT_PROPERTY, SOURCES_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by comail` }; continue next }
         if ([...SERVER_SET].some(key => key in value)) throw new TypeError('id is set by the server')
         const uid = typeof value.uid === 'string' && value.uid ? value.uid : newUid()
         const id = contactCardId(uid)

@@ -17,6 +17,7 @@ import { didCommRouteFromDocument } from '../../protocol/didcomm/doc-route.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { isTorEnvironment } from './mediator-endpoints.ts'
 import { didWebDidCommRoute, type DidWebDocument } from '../../protocol/didcomm/did-web.ts'
+import { replyTokensOf } from '../../protocol/didcomm/reply-token.ts'
 
 /** A did:peer:2 counterpart -- a mediator, or another device/bot addressed
  * directly by its did:peer rather than a did:vh identity (e.g. a service
@@ -95,7 +96,8 @@ async function resolveFrontDoorRoute(toDid: string, fetchImpl: typeof fetch): Pr
   return { recipients, did: canonical, endpointUri: expanded.url, hops: expanded.hops }
 }
 
-export type DidCommSendResult = { ok: true } | { ok: false; error: string }
+/** `replyTokens`: what a mail bridge answered an introduction with (didmail PROTOCOL.md §7.1), keyed by the bridge DID of the address. */
+export type DidCommSendResult = { ok: true; replyTokens?: Record<string, string> } | { ok: false; error: string }
 
 export interface SendDidCommMessageOptions {
   /** This device's own DIDComm kid (identity/bootstrap.ts's `enableDidComm`
@@ -157,5 +159,9 @@ export async function sendFrontDoorMessage(toDid: string, type: string, body: un
   if (!didCommAccepted(response.status)) {
     return { ok: false, error: `send failed: HTTP ${response.status} ${(await response.text().catch(() => '')).slice(0, 256)}` }
   }
-  return { ok: true }
+  // A mail bridge answers an accepted introduction with the token of the address, as JSON; any other 202 has no body.
+  const replyTokens = response.headers.get('content-type')?.includes('application/json')
+    ? await response.json().then((answer: unknown) => replyTokensOf((answer as { replyTokens?: unknown } | null)?.replyTokens), () => undefined)
+    : undefined
+  return { ok: true, ...(replyTokens ? { replyTokens } : {}) }
 }

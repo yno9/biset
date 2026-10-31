@@ -73,7 +73,7 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { autocryptKeyPatch, contactAvatar, contactCryptoKey, ownCryptoKeyPatch, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch } from '../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactAvatar, contactCryptoKey, ownCryptoKeyPatch, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch, replyTokenOf, replyTokenPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -813,6 +813,9 @@ async function configureWalletAccountIfPresent(
           mutationSink,
           route: publicDid => rotationManager.route(publicDid),
           fromName: async () => (await ownProfile()).name,
+          // To a mail address: the token its bridge gave for it (didmail PROTOCOL.md §7.1), kept on the contact's card.
+          replyToken: async toDid => replyTokenOf(contactCardForDid((await readModel.snapshot()).contactCards, toDid)),
+          onReplyTokens: tokens => keepReplyTokens(tokens),
           // To a mail address: this identity's OpenPGP key, which the bridge puts in an Autocrypt header.
           autocrypt: async toDid => ownAutocryptFor(toDid, ownMailAddress ? await pgp?.current().then(key => key && { address: ownMailAddress, privateKey: key.privateKey }) : undefined),
           // To a mail address whose key we hold and who asked for encryption: the message goes as an OpenPGP-encrypted mail.
@@ -851,10 +854,24 @@ async function configureWalletAccountIfPresent(
         // two messages that only someone with the invite can make; the answers make this identity a key-contact there.
         const sendSecureJoin = async (to: { did: string }, armored: string, options: { introduction?: boolean }) => {
           const route = await rotationManager.route(to.did)
+          const replyToken = replyTokenOf(contactCardForDid((await readModel.snapshot()).contactCards, route.toDid))
           const sent = await sendDidCommMessage(route.toDid, '', {
             fromKid: route.fromKid, x25519PrivateKey: route.x25519PrivateKey, subject: SECURE_JOIN_SUBJECT, encrypted: { armored }, ...(options.introduction ? { introduction: true } : {}),
+            ...(replyToken ? { replyToken } : {}),
           })
           if (!sent.ok) throw new Error(sent.error)
+          if (sent.replyTokens) await keepReplyTokens(sent.replyTokens)
+        }
+        // The reply tokens a mail bridge answered with (to an introduction), each kept on the card of the address it is for.
+        const keepReplyTokens = async (tokens: Record<string, string>) => {
+          const snapshot = await readModel.snapshot()
+          const intents = Object.entries(tokens).flatMap(([did, token]) => {
+            const card = contactCardForDid(snapshot.contactCards, did)
+            if (replyTokenOf(card) === token) return []
+            const created = didContactPatch(did)
+            return [...(card ? [] : [contactSetIntent(created)]), contactSetIntent(replyTokenPatch(card?.id ?? created.cardId, token))]
+          })
+          if (intents.length > 0) await mutationSink.commitIntents(intents, snapshot)
         }
         // A key a Secure-Join handshake has vouched for: kept on the contact's card, as verified.
         const learnVerifiedKey = async (who: { did: string }, keydata: string, name?: { text: string; source: 'signed' | 'invite' }) => {

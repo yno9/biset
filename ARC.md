@@ -566,6 +566,7 @@ didmail が SMTP で受けたメールを、宛先の did:vh の全 keyAgreement
 | `body.fromName` | `from[0].name` |
 | `body.replyTo`（DID） | `replyTo`。返信はこちらへ送る（`computeReplyContext`） |
 | `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
+| `body.replyTokens`（ブリッジ DID → トークン） | 連絡先カードの `biset.md:replyToken`（§10.3）。`dmarc` が `pass` の、ブリッジの DID からのもので、差出人と `replyTo` の DID の分だけ書く（`ingress-projector.ts`） |
 
 ### 10.4 PGP と Delta Chat（2026-10-21。方針は didmail の `PLAN.md` §9）
 メールの PGP は、**暗号操作を comail、メールの運搬を didmail** が分担する。秘密鍵と平文は端末から出ない。didmail は `Autocrypt:` ヘッダと PGP/MIME を中身を解釈せずに運ぶ（`body.autocrypt`、`body.encryption="openpgp"` ＋ `pgp` 添付。`didmail/PROTOCOL.md` §5.5、§7.4）。
@@ -614,6 +615,12 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 アドレスを DID に解決したあとは、普通の 1:1 の DIDComm 送信（Vault の outbox、`didcomm-outbox.ts`）。did:web 宛ては front door（相手の `keyAgreement` と `service`）へ authcrypt する。
 送った email は自分の DIDComm `id` を `messageId` に持ち、1:1 の返信は返信先の email を `inReplyTo` に持つ。outbox は、その email の `messageId` を `thid` にして送る（didmail はこれを `In-Reply-To` にする）。
 差出人は常にこの identity の DID。didmail が DID からアドレスを導出する（文書が apex 配下の `did:web` を名乗る did:vh だけが送れる）。
+
+**返信トークン**（didmail の返信のみモード。`didmail/PROTOCOL.md` §7.1）: didmail は、先に書いてきた宛先にしか送らせない。その許可を、didmail は記憶せず、連絡先ごとのトークンとして comail が持つ。
+- 受信したメールの `body.replyTokens`（差出人と `Reply-To` の DID ごと）を、その連絡先のカードの `biset.md:replyToken` に書く（新しいトークンで差し替える。`ingress-projector.ts`、`contacts.ts` の `replyTokenPatch`）。JMAP の `ContactCard/set` からは書けない。
+- 送るとき、outbox は、宛先のカードのトークンを `body.replyToken` に入れる（`didcomm-outbox.ts` の `replyToken`、`send-message.ts`）。
+- 最初のメッセージ（Secure-Join の招待、`body.introduction`）への 202 の応答の本文 `{"replyTokens": {…}}` も、同じ連絡先のカードに書く（`front-door-send.ts` が読み、`main.ts` の `keepReplyTokens` が書く）。
+- トークンは不透明な文字列で、comail は中身を解釈しない（`protocol/didcomm/reply-token.ts` は、形だけを確かめる）。
 
 ## 11. サーバー
 

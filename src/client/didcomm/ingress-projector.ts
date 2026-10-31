@@ -14,7 +14,7 @@ import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.t
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { isPing, isPingResponse, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation } from '../../protocol/didcomm/from-prior.ts'
-import { aliasPatch, autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { aliasPatch, autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, replyTokenOf, replyTokenPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
@@ -363,6 +363,19 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       if (body.autocrypt && body.auth?.dmarc === 'pass' && body.autocrypt.addr.toLowerCase() === mailAddressOfBridgeDid(senderDid)?.toLowerCase()) {
         const cardId = contactCardForDid(snapshot.contactCards, senderDid)?.id ?? didContactPatch(senderDid).cardId
         keyWrites.push(autocryptKeyPatch(cardId, { keydata: body.autocrypt.keydata, seenAt: sentAt, ...(body.autocrypt.preferEncrypt ? { preferEncrypt: body.autocrypt.preferEncrypt } : {}) }))
+      }
+      // The bridge's reply tokens (didmail PROTOCOL.md §7.1), each kept on the card of the address it is for: the sender's, and the
+      // `Reply-To`'s. Only from a bridge's mail that passed DMARC, and only for those two DIDs: what a sender can touch is its own card
+      // and the one it names as the place to answer.
+      if (body.replyTokens && body.auth?.dmarc === 'pass' && mailAddressOfBridgeDid(senderDid)) {
+        for (const [did, token] of Object.entries(body.replyTokens)) {
+          if (!sameIdentity(did, senderDid) && !(body.replyTo && sameIdentity(did, body.replyTo))) continue
+          const card = contactCardForDid(snapshot.contactCards, did)
+          if (replyTokenOf(card) === token) continue
+          const created = didContactPatch(did)
+          if (!card && !sameIdentity(did, senderDid)) keyWrites.push(created)
+          keyWrites.push(replyTokenPatch(card?.id ?? created.cardId, token))
+        }
       }
       const record = await buildMailMessageAdd({
         email: {
