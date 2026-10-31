@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<!-- Dev only (not part of the build): the name set in several typefaces, to choose the logotype by eye. Open /logo-fonts.html. The fonts come from Google Fonts here;
+     the app itself would embed the one chosen (Latin subset, a few KB). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>logo fonts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&family=Lexend:wght@100..900&family=Fredoka:wght@300..700&family=Readex+Pro:wght@160..700&display=swap">
+<style>
+  body { margin: 1.5rem; font: 0.875rem/1.4 system-ui, sans-serif; color: #1c1c1e; background: #fff; }
+  body.dark { color: #f2f2f7; background: #1c1c1e; }
+  .controls { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; align-items: center; padding: 0.75rem 0; background: inherit; border-bottom: 1px solid rgba(128, 128, 128, 0.3); }
+  .controls label { display: flex; align-items: center; gap: 0.5rem; }
+  .controls output { min-width: 3ch; color: #888; font-variant-numeric: tabular-nums; }
+  input[type="text"] { width: 8rem; font: inherit; padding: 0.25rem 0.5rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 1.5rem 2rem; margin-top: 1.5rem; }
+  .card { padding: 1rem; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.75rem; }
+  .card small { display: block; color: #888; font-size: 0.75rem; margin-bottom: 0.5rem; }
+  .logo { display: block; line-height: 1.2; white-space: nowrap; overflow: hidden; font-size: var(--size, 5rem); font-weight: var(--weight, 700); letter-spacing: var(--tracking, 0em); }
+  .logo .co { color: var(--co, inherit); }
+</style>
+</head>
+<body>
+<div class="controls">
+  <label>text <input id="text" type="text" value="comail"></label>
+  <label>weight <input id="weight" type="range" min="100" max="900" step="50" value="700"><output id="weightOut">700</output></label>
+  <label>letter-spacing <input id="tracking" type="range" min="-0.15" max="0.1" step="0.005" value="-0.05"><output id="trackingOut">-0.05</output>em</label>
+  <label>size <input id="size" type="range" min="2" max="9" step="0.25" value="5"><output id="sizeOut">5</output>rem</label>
+  <label><input id="tint" type="checkbox" checked> tint “co”</label>
+  <label><input id="dark" type="checkbox"> dark</label>
+</div>
+<div class="grid" id="grid"></div>
+<script>
+  // [family, note]: a variable family follows the weight slider within its range.
+  const FONTS = [
+    ['Outfit', '100–900'],
+    ['Lexend', '100–900'],
+    ['Fredoka', '300–700, round'],
+    ['Readex Pro', '160–700, Lexend’s relative'],
+  ]
+  const grid = document.getElementById('grid')
+  const cards = FONTS.map(([family, note]) => {
+    const card = document.createElement('div')
+    card.className = 'card'
+    const caption = document.createElement('small')
+    caption.textContent = `${family} · ${note}`
+    const logo = document.createElement('span')
+    logo.className = 'logo'
+    logo.style.fontFamily = `"${family}", sans-serif`
+    card.append(caption, logo)
+    grid.append(card)
+    return logo
+  })
+  const $ = id => document.getElementById(id)
+  const draw = () => {
+    const text = $('text').value || 'comail'
+    document.body.classList.toggle('dark', $('dark').checked)
+    document.body.style.setProperty('--weight', $('weight').value)
+    document.body.style.setProperty('--tracking', `${$('tracking').value}em`)
+    document.body.style.setProperty('--size', `${$('size').value}rem`)
+    document.body.style.setProperty('--co', $('tint').checked ? '#0083ff' : 'inherit')
+    $('weightOut').textContent = $('weight').value
+    $('trackingOut').textContent = $('tracking').value
+    $('sizeOut').textContent = $('size').value
+    for (const logo of cards) {
+      logo.replaceChildren()
+      const co = document.createElement('span')
+      co.className = 'co'
+      co.textContent = text.slice(0, 2)
+      logo.append(co, text.slice(2))
+    }
+  }
+  for (const id of ['text', 'weight', 'tracking', 'size', 'tint', 'dark']) $(id).addEventListener('input', draw)
+  draw()
+</script>
+</body>
+</html>

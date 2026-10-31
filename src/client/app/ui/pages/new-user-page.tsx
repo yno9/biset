@@ -20,6 +20,8 @@ import { walletConnected } from './signup-frame.ts'
 import { GitHubIcon } from '../account/github-icon.tsx'
 import { GeneratedAvatar } from '../generated-avatar.tsx'
 import { avatarSeed } from '../did-display.ts'
+import { mixInk, setPartColors, usePartColors } from '../color-settings.ts'
+import { CREATE_PRESET, CREATE_WORDS, CREATE_WORD_MS } from './create-words.ts'
 import { useStore } from '../../react/store.ts'
 import { randomAlias, heldHost, heldIdentity, checkAlias, createAccountInBackground, passphraseEmbed, passphraseReady, preloadSignup, walletKnown, setPassphraseHandlers, showPassphraseOver } from '../signup-preload.ts'
 
@@ -71,22 +73,76 @@ function Pigeon({ walking = false }: { walking?: boolean }) {
   )
 }
 
+// The Create button's label: a mail icon and the word for Create, which turn together through the languages of the preset (the old pair leaves
+// upward, the next comes in from below). With reduced motion it stays as it is.
+function CreateLabel() {
+  const words = CREATE_WORDS[CREATE_PRESET]
+  const [shown, setShown] = useState<{ now: number; before?: number }>({ now: 0 })
+  useEffect(() => {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const timer = setInterval(() => setShown(current => ({ now: (current.now + 1) % words.length, before: current.now })), CREATE_WORD_MS)
+    return () => clearInterval(timer)
+  }, [words.length])
+  // The icon is part of what turns: it goes and comes with the word.
+  const item = (word: string) => (
+    <>
+      <svg className="nu-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
+      {word}
+    </>
+  )
+  return (
+    <>
+      <span className="nu-sr">Create</span>
+      <span className="nu-word" aria-hidden="true">
+        {shown.before === undefined ? null : <span key={`before-${shown.before}`} className="nu-word-item" data-leaving="">{item(words[shown.before]!)}</span>}
+        <span key={`now-${shown.now}`} className="nu-word-item" data-entering={shown.before === undefined ? undefined : ''} onAnimationEnd={() => setShown(current => ({ now: current.now }))}>{item(words[shown.now]!)}</span>
+      </span>
+    </>
+  )
+}
+
+// The five colours the faces are drawn in, as one strip of five equal parts under the name, like its underline; a part is a colour picker (what is chosen is kept, and the faces follow).
+function AvatarPalette() {
+  const colors = usePartColors('avatar')
+  return (
+    <div id="nu-palette">
+      {colors.map((color, index) => (
+        <label key={index} className="nu-swatch" style={{ background: color }}>
+          <input type="color" value={color} aria-label={`Avatar colour ${index + 1}`}
+            onChange={event => setPartColors('avatar', colors.map((current, at) => at === index ? event.target.value : current))} />
+        </label>
+      ))}
+    </div>
+  )
+}
+
 // The face of the address in the field. When the name changes the new face slides up from the bottom of the circle over the one that is there,
 // which is taken away when it has finished.
-function SlidingAvatar({ name }: { name: string }) {
-  const [layers, setLayers] = useState([{ id: 0, name, fresh: false }])
+function SlidingAvatar({ name, roll, onClick }: { name: string; roll: number; onClick?: () => void }) {
+  type Layer = { id: number; name: string; fresh?: 'slide' | 'roll'; leaving?: boolean }
+  const [layers, setLayers] = useState<Layer[]>([{ id: 0, name }])
   const count = useRef(0)
+  const lastRoll = useRef(roll)
   useEffect(() => {
-    setLayers(current => current[current.length - 1]!.name === name ? current : [...current.slice(-1), { id: ++count.current, name, fresh: true }])
+    // A change that comes with a click (`roll` moved on) rolls the old face out to the right and the new one in from the left; any other slides up.
+    const rolling = roll !== lastRoll.current
+    lastRoll.current = roll
+    setLayers(current => {
+      const last = current[current.length - 1]!
+      if (last.name === name) return current
+      return [...current.slice(-1).map(layer => rolling ? { ...layer, leaving: true } : layer), { id: ++count.current, name, fresh: rolling ? 'roll' : 'slide' }]
+    })
   }, [name])
+  const rolling = layers.some(layer => layer.leaving || layer.fresh === 'roll')
   return (
-    <div id="nu-avatar">
+    <button type="button" id="nu-avatar" data-rolling={rolling ? '' : undefined} aria-label="Another face" disabled={!onClick} onClick={onClick}>
       {layers.map(layer => (
-        <span key={layer.id} className="nu-avatar-layer" data-fresh={layer.fresh ? '' : undefined} onAnimationEnd={() => setLayers(current => current.slice(-1))}>
+        <span key={layer.id} className="nu-avatar-layer" data-fresh={layer.fresh} data-leaving={layer.leaving ? '' : undefined}
+          onAnimationEnd={() => setLayers(current => current.slice(-1).map(({ id, name }) => ({ id, name })))}>
           <GeneratedAvatar name={layer.name} />
         </span>
       ))}
-    </div>
+    </button>
   )
 }
 
@@ -116,6 +172,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   // The name is on the screen at once (made here, as the wallet makes its own), and checked behind it; one that is taken is replaced.
   const [alias, setAlias] = useState(() => randomAlias())
   const auto = useRef(true)
+  const [roll, setRoll] = useState(0)
   const attempts = useRef(0)
   const [creating, setCreating] = useState(false)
   // Whether the name in the field is free, as the wallet finds it: undefined while it is being asked, null when it could not say
@@ -216,13 +273,22 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
     })().catch(error => { setConnecting(false); report(error) })
   }
 
+  // The page's one colour (the name and the buttons) is the five avatar colours mixed, darker than white needs (a contrast of 8 to 1).
+  const ink = mixInk(usePartColors('avatar'), 8)
   const blocked = creating || (!loginAs && (!known || free === false || free === undefined))
   return (
-    <div id="new-user-page">
+    <div id="new-user-page" style={{ '--nu-ink': ink } as React.CSSProperties}>
+      <header id="nu-header">
+        <div id="nu-brand">
+          <span id="nu-wordmark">comail</span>
+          <AvatarPalette />
+        </div>
+      </header>
       <div className="nu-column">
         <div id="nu-intro" data-enter={enter ? '' : undefined}>
           {/* The face of the address in the field, drawn as it is typed (the same one the account has once it is made). */}
-          <SlidingAvatar name={avatarSeed(loginAs ?? `${alias.trim()}@${domain}`)} />
+          <SlidingAvatar name={avatarSeed(loginAs ?? `${alias.trim()}@${domain}`)} roll={roll}
+            onClick={loginAs || creating ? undefined : () => { auto.current = true; setAlias(randomAlias()); setRoll(count => count + 1) }} />
           <div id="nu-lede">
             <Pigeon walking={creating || (embedded && !loginAs && (!known || free === undefined))} />
             <div id="nu-tagline">Email reimagined for<br />Privacy and Identity</div>
@@ -252,7 +318,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
                 </span>
               </label>
               {loginAs ? <div ref={box} className="nu-field nu-passphrase-box">{fieldShown ? null : 'Passphrase'}</div> : null}
-              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loginAs && (!known || free === undefined)) ? <span className="nu-dots" role="status" aria-label={loginAs ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loginAs ? 'Log in' : free === false ? 'ID already taken' : 'Create'}</button>
+              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loginAs && (!known || free === undefined)) ? <span className="nu-dots" role="status" aria-label={loginAs ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loginAs ? 'Log in' : free === false ? 'ID already taken' : <CreateLabel />}</button>
             </div>
             {loginAs ? null : (
               <a id="nu-terms-line" href={`https://${domain}`} target="_blank" rel="noreferrer">

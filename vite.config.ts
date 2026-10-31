@@ -55,7 +55,7 @@ function fontFiles(): { css: string; files: Map<string, string> } {
 // The licences of what is in the page. The packages whose code went into the bundle (and the fonts, which are in the page or beside it) are written
 // as a comment at the head of index.html: the notice and licence text that their licences ask to travel with the copies. Packages that
 // share one licence text are listed under it.
-const LICENSED_ASSETS = ['@fontsource/zen-kaku-gothic-antique', '@fontsource-variable/noto-sans-jp']
+const LICENSED_ASSETS = ['@fontsource/zen-kaku-gothic-antique', '@fontsource-variable/outfit', '@fontsource-variable/noto-sans-jp']
 function packageOf(id: string): string | undefined {
   const path = id.replace(/^\0/, '').replace(/\?.*$/, '')
   const at = path.lastIndexOf('node_modules/')

@@ -54,3 +54,48 @@ export function resetPartColors(id: string): void {
 
 /** Whether a part has colours of the person's own choosing. */
 export const usePartChosen = (id: string): boolean => id in useStore(chosen)
+
+const channels = (hex: string): number[] => [1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16))
+function luminance([red, green, blue]: number[]): number {
+  const linear = (value: number): number => { const unit = value / 255; return unit <= 0.03928 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4 }
+  return 0.2126 * linear(red!) + 0.7152 * linear(green!) + 0.0722 * linear(blue!)
+}
+
+const hex = (rgb: number[]): string => `#${rgb.map(value => Math.round(Math.min(255, Math.max(0, value))).toString(16).padStart(2, '0')).join('')}`
+const whiteContrast = (rgb: number[]): number => 1.05 / (luminance(rgb) + 0.05)
+
+function toHsl([red, green, blue]: number[]): { hue: number; saturation: number; lightness: number } {
+  const [r, g, b] = [red! / 255, green! / 255, blue! / 255]
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min
+  const lightness = (max + min) / 2
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1))
+  const hue = delta === 0 ? 0 : (max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60
+  return { hue: (hue + 360) % 360, saturation, lightness }
+}
+function fromHsl(hue: number, saturation: number, lightness: number): number[] {
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const f = (n: number): number => { const k = (n + hue / 30) % 12; return lightness - (chroma / 2) * Math.max(-1, Math.min(k - 3, 9 - k, 1)) }
+  return [f(0), f(8), f(4)].map(value => value * 255)
+}
+
+/** Colours (#rrggbb each) mixed into one that white text reads on (a contrast of `contrast` to 1).
+ *  - 'hue' (the default): the hue is the mean of the hues (each counted by its saturation), the saturation and the lightness are the means, and the
+ *    lightness is then lowered as far as white needs. Colours that are far apart in hue do not grey one another out, as they do in a mean of channels.
+ *  - 'mean': the mean of the channels, darkened toward black as far as white needs. A mix of bright, different colours is a light, dull one. */
+export function mixInk(colors: readonly string[], contrast = 4.5, method: 'hue' | 'mean' = 'hue'): string {
+  const all = colors.map(color => channels(color))
+  if (method === 'mean') {
+    const mean = [0, 1, 2].map(at => all.reduce((sum, rgb) => sum + rgb[at]!, 0) / all.length)
+    let rgb = mean
+    for (let scale = 1; whiteContrast(rgb) < contrast && scale > 0; scale -= 0.02) rgb = mean.map(value => value * scale)
+    return hex(rgb)
+  }
+  const hsl = all.map(toHsl)
+  const x = hsl.reduce((sum, { hue, saturation }) => sum + saturation * Math.cos(hue * Math.PI / 180), 0)
+  const y = hsl.reduce((sum, { hue, saturation }) => sum + saturation * Math.sin(hue * Math.PI / 180), 0)
+  const hue = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+  const saturation = hsl.reduce((sum, color) => sum + color.saturation, 0) / hsl.length
+  let lightness = hsl.reduce((sum, color) => sum + color.lightness, 0) / hsl.length
+  while (whiteContrast(fromHsl(hue, saturation, lightness)) < contrast && lightness > 0) lightness -= 0.01
+  return hex(fromHsl(hue, saturation, Math.max(0, lightness)))
+}
