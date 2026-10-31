@@ -9,6 +9,7 @@
 // messaging subsystem, confirmed with the user).
 import type { MailAuthResults } from '../store/projection/gateway.ts'
 import { identityKey } from '../../protocol/vh/identifier.ts'
+import { replyTokensOf } from '../../protocol/didcomm/reply-token.ts'
 
 export const BASIC_MESSAGE = 'https://didcomm.org/basicmessage/2.0/message'
 
@@ -43,6 +44,9 @@ export interface BasicMessageBody {
   encryption?: 'openpgp'
   /** NOT part of basicmessage/2.0: `openpgp` when the mail carries an OpenPGP signature (§5.4). */
   signature?: 'openpgp'
+  /** NOT part of basicmessage/2.0: the bridge's reply tokens (didmail PROTOCOL.md §7.1), keyed by the bridge DID of the address each is
+   * for (the sender, and the `Reply-To` when it differs): the proof, kept with that contact, that this identity may write to it. */
+  replyTokens?: Record<string, string>
 }
 
 interface AutocryptKey {
@@ -93,6 +97,7 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
   const { sentAt, subject, fromName, replyTo, encryption, signature } = body as Record<string, unknown>
   const auth = mailAuthOf((body as Record<string, unknown>).auth)
   const autocrypt = autocryptOf((body as Record<string, unknown>).autocrypt)
+  const replyTokens = replyTokensOf((body as Record<string, unknown>).replyTokens)
   return {
     content,
     // A time the Vault cannot read would fail the whole message on every redelivery: the receiver's own time stands in for it.
@@ -104,6 +109,7 @@ export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | 
     ...(autocrypt ? { autocrypt } : {}),
     ...(encryption === 'openpgp' ? { encryption } : {}),
     ...(signature === 'openpgp' ? { signature } : {}),
+    ...(replyTokens ? { replyTokens } : {}),
   }
 }
 
