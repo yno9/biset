@@ -3,6 +3,7 @@ import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { Favicon, generatedAvatarSvg } from '../../src/client/app/ui/favicon.tsx'
 import { accountConfig } from '../../src/client/app/ui/account/state.ts'
+import { addressOfHost, avatarSeed } from '../../src/client/app/ui/did-display.ts'
 import { provisionalAlias } from '../../src/client/app/ui/signup-preload.ts'
 
 const DID = 'did:vh:QmPLLKQAYjB94BqYvFx27z5xNb2CjZG6kxUWucjWwPCjDv'
@@ -48,4 +49,13 @@ test('with a picture the tab icon is that picture (round when the browser can dr
   await waitFor(() => expect(link().href).not.toContain('original'), { timeout: 3000 })
   expect(link().href.startsWith('data:image/')).toBe(true)
   expect(link().href.startsWith('data:image/svg+xml')).toBe(false) // a picture, not the drawn face
+})
+
+test('the icon is the face of the address, as the avatar shows it everywhere; the display name does not change it', async () => {
+  render(<Favicon />)
+  const shape = (svg: string): string => svg.replace(/\bid="[^"]*"/g, 'id=""').replace(/url\(#[^)]*\)/g, 'url(#)')
+  for (const name of ['Quiet Heron', 'Somebody Else']) {
+    act(() => accountConfig.set({ did: DID, wallet: { handle: '485c.did.md' }, profile: profile({ name }) } as never))
+    await waitFor(() => expect(shape(decodeURIComponent(link().href.split(',').slice(1).join(',')))).toBe(shape(generatedAvatarSvg(avatarSeed(addressOfHost('485c.did.md'))))))
+  }
 })
