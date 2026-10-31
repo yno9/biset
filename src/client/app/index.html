@@ -34,6 +34,10 @@ if (location.protocol !== 'file:') {
 <body>
 <div id="root"></div>
 
+<script type="module">
+/* Add ?debug to the address for an on-page console (eruda), for a phone that has no inspector. It is in the build, but loaded only then. */
+if (new URLSearchParams(location.search).has('debug')) import('eruda').then(({ default: eruda }) => eruda.init())
+</script>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

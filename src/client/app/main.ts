@@ -1,3 +1,4 @@
+import './ui/storage-guard.ts'
 import { mountNetworkActivity } from 'lft/net-activity-ui'
 import { watchNetwork } from 'lft/net-activity'
 import { networkNotes, networkRules } from './ui/network-declaration.ts'
@@ -109,7 +110,7 @@ let mediatorPollHandles: MediatorPollHandle[] = []
 
 // Where a did:vh's log is looked for, and the memory that refuses an older or forked copy of any log.
 // The bar across the top and the host the page is talking to, lit while it is on the network (lft: local first toolkit, ../lft).
-mountNetworkActivity({ label: 'top-right', rules: networkRules(), notes: networkNotes })
+mountNetworkActivity({ label: 'top-right', mark: 'dot', rules: networkRules(), notes: networkNotes })
 // What the wallet's frame does on the network is reported here, and joins the log.
 { const wallet = ditoEmbedOrigin(); if (wallet) watchNetwork().receiveFrom([wallet]) }
 startUpdates()

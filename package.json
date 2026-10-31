@@ -32,6 +32,7 @@
     "@types/ws": "^8.18.0",
     "@vitejs/plugin-react": "^6.1.2",
     "didcomm-node": "^0.4.1",
+    "eruda": "^3.4.3",
     "esbuild": "^0.25.0",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^21.0.1",

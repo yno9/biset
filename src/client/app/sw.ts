@@ -20,7 +20,7 @@ const SHELL = '/'
 
 // No skipWaiting here: a new version waits for the person's go-ahead.
 worker.addEventListener('install', (event) => {
-  ;(event as ExtendableEvent).waitUntil(caches.open(CACHE).then(cache => cache.addAll([new Request(SHELL, { cache: 'reload' }), ...__PRECACHE__])))
+  ;(event as ExtendableEvent).waitUntil(caches.open(CACHE).then(cache => cache.addAll([SHELL, ...__PRECACHE__].map(path => new Request(path, { cache: 'reload' })))))
 })
 
 worker.addEventListener('activate', (event) => {

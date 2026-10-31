@@ -1,6 +1,7 @@
 // Biset's own configuration. DID controller key material and pre-rotation belong to the did.md
 // Wallet that owns the Master mnemonic, so none of it is represented here.
 import { useState } from 'react'
+import { ColorsCard } from './colors-card.tsx'
 
 interface MarkdownVault { enabled(): boolean; observerSupported(): boolean; toggle(): Promise<void>; rescan(): Promise<void> }
 let markdownVault: MarkdownVault | undefined
@@ -32,6 +33,7 @@ export function ConfigPanel() {
         </div>
       </div>
       {'showDirectoryPicker' in window ? <VaultCard vault={markdownVault} /> : null}
+      <ColorsCard />
     </div>
   )
 }

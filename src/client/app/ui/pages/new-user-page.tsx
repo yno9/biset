@@ -18,6 +18,8 @@ import { WALLET_DIRECTORY } from '../../../identity/wallet/wallet-directory.ts'
 import { ditoEmbedOrigin } from '../../../identity/wallet/dito-embed.ts'
 import { walletConnected } from './signup-frame.ts'
 import { GitHubIcon } from '../account/github-icon.tsx'
+import { GeneratedAvatar } from '../generated-avatar.tsx'
+import { avatarSeed } from '../did-display.ts'
 import { useStore } from '../../react/store.ts'
 import { randomAlias, heldHost, heldIdentity, checkAlias, createAccountInBackground, passphraseEmbed, passphraseReady, preloadSignup, walletKnown, setPassphraseHandlers, showPassphraseOver } from '../signup-preload.ts'
 
@@ -26,6 +28,9 @@ export { setOnWalletConnected } from './signup-frame.ts'
 // A callback is consumed before ordinary session restore (its code is one-use and the URL is
 // cleared by the OAuth module after verification). Once per page load, however often this mounts.
 let callbackConsumed = false
+
+// The page slides in a little, the first time it is shown after the page has loaded (not again when it is turned back to).
+let entered = false
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
@@ -66,12 +71,32 @@ function Pigeon({ walking = false }: { walking?: boolean }) {
   )
 }
 
+// The face of the address in the field. When the name changes the new face slides up from the bottom of the circle over the one that is there,
+// which is taken away when it has finished.
+function SlidingAvatar({ name }: { name: string }) {
+  const [layers, setLayers] = useState([{ id: 0, name, fresh: false }])
+  const count = useRef(0)
+  useEffect(() => {
+    setLayers(current => current[current.length - 1]!.name === name ? current : [...current.slice(-1), { id: ++count.current, name, fresh: true }])
+  }, [name])
+  return (
+    <div id="nu-avatar">
+      {layers.map(layer => (
+        <span key={layer.id} className="nu-avatar-layer" data-fresh={layer.fresh ? '' : undefined} onAnimationEnd={() => setLayers(current => current.slice(-1))}>
+          <GeneratedAvatar name={layer.name} />
+        </span>
+      ))}
+    </div>
+  )
+}
+
 /** `loginAs`: the address of the identity this browser's wallet holds; the page then says it is a log-in as it. */
 export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   // The wallet holding an identity already (it says so once its frame is up): the address is then that one, and the button logs in.
   const held = useStore(heldIdentity)
   const loginAs = given ?? held
   const [result, setResult] = useState<Result>()
+  const [enter] = useState(() => { const first = !entered; entered = true; return first })
   const [connecting, setConnecting] = useState(false)
   const [suffix, setSuffix] = useState('')
   const [walletId, setWalletId] = useState(currentWallet().id)
@@ -191,17 +216,19 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
     })().catch(error => { setConnecting(false); report(error) })
   }
 
-  const blocked = creating || (!loginAs && (free === false || free === undefined))
+  const blocked = creating || (!loginAs && (!known || free === false || free === undefined))
   return (
     <div id="new-user-page">
-      <header id="nu-header"><span id="nu-logo">biset</span></header>
       <div className="nu-column">
-        <div id="nu-pigeon">
-          <Pigeon walking={creating || (embedded && !loginAs && (!known || free === undefined))} />
-          <div id="nu-tagline">Email reimagined for<br />Privacy and Identity</div>
+        <div id="nu-intro" data-enter={enter ? '' : undefined}>
+          {/* The face of the address in the field, drawn as it is typed (the same one the account has once it is made). */}
+          <SlidingAvatar name={avatarSeed(loginAs ?? `${alias.trim()}@${domain}`)} />
+          <div id="nu-lede">
+            <Pigeon walking={creating || (embedded && !loginAs && (!known || free === undefined))} />
+            <div id="nu-tagline">Email reimagined for<br />Privacy and Identity</div>
+          </div>
         </div>
-        {ownCreate && !known && !loginAs ? <div id="nu-own-wait" /> : null}
-        {ownCreate && (known || loginAs) ? (
+        {ownCreate ? (
           <form id="nu-own-create" onSubmit={event => { event.preventDefault(); if (loginAs) logIn(); else create() }}>
             {/* The wallet's own create form, as it looks in its frame: a bold small heading, the field, the full-width button. */}
             <div className="nu-block">
@@ -225,7 +252,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
                 </span>
               </label>
               {loginAs ? <div ref={box} className="nu-field nu-passphrase-box">{fieldShown ? null : 'Passphrase'}</div> : null}
-              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loginAs && free === undefined) ? <span className="nu-dots" role="status" aria-label={loginAs ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loginAs ? 'Log in' : free === false ? 'ID already taken' : 'Create'}</button>
+              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loginAs && (!known || free === undefined)) ? <span className="nu-dots" role="status" aria-label={loginAs ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loginAs ? 'Log in' : free === false ? 'ID already taken' : 'Create'}</button>
             </div>
             {loginAs ? null : (
               <a id="nu-terms-line" href={`https://${domain}`} target="_blank" rel="noreferrer">

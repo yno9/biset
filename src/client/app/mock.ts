@@ -94,7 +94,7 @@ if (new URLSearchParams(location.search).has('signup')) {
 }
 
 // The network indicator, as in the app; ?ping makes a request so it can be seen.
-mountNetworkActivity({ label: 'top-right', rules: networkRules(), notes: networkNotes })
+mountNetworkActivity({ label: 'top-right', mark: 'dot', rules: networkRules(), notes: networkNotes })
 if (new URLSearchParams(location.search).has('ping')) {
   // A few requests of the kinds the app makes, and one it did not declare.
   for (const [url, init] of [['https://did.md/log?scid=QmExample', undefined], ['https://alice.002053.xyz/.well-known/did.jsonl', undefined], ['https://mediator.biset.md/', { method: 'POST', body: 'x'.repeat(2400) }], ['https://example.org/.well-known/webfinger?resource=acct:bob@example.org', undefined], ['https://tracker.example/collect', { method: 'POST', body: 'id=1' }]] as const) void fetch(url, init).catch(() => {})

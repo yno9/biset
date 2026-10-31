@@ -5,7 +5,7 @@
 //   BISET_CONFIG   another deployment's config (e.g. ops/mail-did-md/config.json for did.md)
 //   BISET_OUT_DIR  where its page is written (default dist)
 import { execSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
@@ -36,7 +36,6 @@ function readConfig(): unknown {
 const nodeRequire = createRequire(import.meta.url)
 const FONTS: { pkg: string; css: string; keep?: RegExp }[] = [
   { pkg: '@fontsource-variable/noto-sans-jp', css: 'wght.css' }, // every unicode-range piece (Latin and Japanese): the browser fetches only those a text uses
-  { pkg: '@fontsource/zen-kaku-gothic-antique', css: 'latin-900.css' }, // the "biset" logotype of the new-user page: Latin only, weight 900
 ]
 function fontFiles(): { css: string; files: Map<string, string> } {
   const files = new Map<string, string>()
@@ -53,8 +52,38 @@ function fontFiles(): { css: string; files: Map<string, string> } {
   return { css: `${rules.join('\n')}\n`, files }
 }
 
+// The licences of what is in the page. The packages whose code went into the bundle (and the fonts, which are in the page or beside it) are written
+// as a comment at the head of index.html: the notice and licence text that their licences ask to travel with the copies. Packages that
+// share one licence text are listed under it.
+const LICENSED_ASSETS = ['@fontsource/zen-kaku-gothic-antique', '@fontsource-variable/noto-sans-jp']
+function packageOf(id: string): string | undefined {
+  const path = id.replace(/^\0/, '').replace(/\?.*$/, '')
+  const at = path.lastIndexOf('node_modules/')
+  if (at < 0) return undefined
+  const [scopeOrName, name] = path.slice(at + 'node_modules/'.length).split('/')
+  const dir = scopeOrName!.startsWith('@') ? `${scopeOrName}/${name}` : scopeOrName!
+  return path.slice(0, at) + 'node_modules/' + dir
+}
+function licenseNotice(moduleIds: Iterable<string>): string {
+  const roots = new Set<string>()
+  for (const id of moduleIds) { const root = packageOf(id); if (root) roots.add(root) }
+  for (const name of LICENSED_ASSETS) roots.add(dirname(nodeRequire.resolve(`${name}/package.json`)))
+  const byText = new Map<string, string[]>()
+  for (const root of [...roots].sort()) {
+    const info = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { name: string; version: string; license?: string }
+    const file = readdirSync(root).find(name => /^(licen[sc]e|copying)(\..*)?$/i.test(name))
+    const text = (file ? readFileSync(resolve(root, file), 'utf8').trim() : `Licence: ${info.license ?? 'not stated'} (no licence file in the package)`).replace(/-->/g, '--&gt;')
+    byText.set(text, [...(byText.get(text) ?? []), `${info.name}@${info.version}`])
+  }
+  return ['Third-party licences', ...[...byText].map(([text, names]) => `${names.join(', ')}\n\n${text}`)].join('\n\n----------------------------------------\n\n')
+}
+
+const bundledModules = new Set<string>()
+
 const biset = (): Plugin => ({
   name: 'biset',
+  // The modules whose code is in the bundle, for the licence notice.
+  renderChunk(_code, chunk) { for (const [id, rendered] of Object.entries(chunk.modules)) if (rendered.renderedLength > 0) bundledModules.add(id); return null },
   // The deployment's config reaches the page as a global, before the app script runs.
   transformIndexHtml: () => [{ tag: 'script', children: `window.__BISET_CONFIG__ = ${JSON.stringify(readConfig())};`, injectTo: 'head-prepend' }],
   // The fonts, next to the page.
@@ -66,6 +95,9 @@ const biset = (): Plugin => ({
     mkdirSync(out, { recursive: true })
     writeFileSync(resolve(out, 'fonts.css'), css)
     for (const [name, from] of files) copyFileSync(from, resolve(out, name))
+    // The licences, at the head of the page.
+    const page = resolve(process.env.BISET_OUT_DIR ?? 'dist', 'index.html')
+    if (existsSync(page) && bundledModules.size > 0) writeFileSync(page, readFileSync(page, 'utf8').replace('<head>', () => `<head>\n<!--\n${licenseNotice(bundledModules)}\n-->`))
   },
   // Dev: the Service Worker and config.json that the dev server of old (scripts/serve.mjs) served, and the fonts.
   configureServer(server) {

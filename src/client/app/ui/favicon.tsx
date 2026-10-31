@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client'
 import { useStore } from '../react/store.ts'
 import { accountConfig } from './account/state.ts'
 import { useOwnProfile } from './account/use-own-profile.ts'
-import { AVATAR_COLORS } from './format.ts'
+import { partColors, usePartColors } from './color-settings.ts'
 
 const SIZE = 64
 
@@ -17,7 +17,7 @@ const SIZE = 64
 export function generatedAvatarSvg(name: string): string {
   const host = document.createElement('div')
   const root = createRoot(host)
-  flushSync(() => root.render(<Avatar name={name || '?'} variant="beam" size={SIZE} colors={[...AVATAR_COLORS]} />))
+  flushSync(() => root.render(<Avatar name={name || '?'} variant="beam" size={SIZE} colors={[...partColors('avatar')]} />))
   const svg = host.innerHTML
   root.unmount()
   return svg.includes('xmlns=') ? svg : svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"')
@@ -50,6 +50,7 @@ export function Favicon() {
   const config = useStore(accountConfig)
   const did = config?.did ?? undefined
   const own = useOwnProfile(config?.profile)
+  const colors = usePartColors('avatar')
   useEffect(() => {
     const link = iconLink()
     if (!link) return
@@ -63,6 +64,6 @@ export function Favicon() {
     if (own.avatar) void roundPicture(own.avatar).then(href => show(href, href.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'))
     else timer = setTimeout(() => show(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedAvatarSvg(own.name?.trim() || label))}`, 'image/svg+xml'), 0)
     return () => { current = false; clearTimeout(timer) }
-  }, [did, own.name, own.avatar])
+  }, [did, own.name, own.avatar, colors])
   return null
 }

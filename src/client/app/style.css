@@ -203,7 +203,8 @@ body {
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
 }
-input,
+/* The inputs of the sign-up field are left out: they take the size of the field (so the alias matches the host beside it). */
+input:not(.nu-field input),
 textarea,
 select {
   font-size: 16px !important;
@@ -3970,20 +3971,112 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 #pigeon-eye {
   fill: var(--pigeon-eye-color, #1a1a1a);
 }
-#nu-pigeon {
+/* The logotype's font is in the page itself (a data: URI after the build, 9 KB): it needs no request, so it cannot be late or stale in a cache. */
+@font-face {
+  font-family: "Zen Kaku Gothic Antique";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url("../../../node_modules/@fontsource/zen-kaku-gothic-antique/files/zen-kaku-gothic-antique-latin-900-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Zen Kaku Gothic Antique";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../../../node_modules/@fontsource/zen-kaku-gothic-antique/files/zen-kaku-gothic-antique-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Zen Kaku Gothic Antique";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../../../node_modules/@fontsource/zen-kaku-gothic-antique/files/zen-kaku-gothic-antique-latin-700-normal.woff2") format("woff2");
+}
+#nu-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+#nu-logo {
+  margin: 0;
+  font-family: "Zen Kaku Gothic Antique", system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 4rem;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+/* The avatar slides up a little, once, when the page has loaded. */
+#nu-intro[data-enter] {
+  animation: nu-enter 0.5s ease-out both;
+}
+@keyframes nu-enter {
+  from { transform: translateY(0.75rem); }
+  to { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #nu-intro[data-enter] { animation: none; }
+}
+#nu-avatar {
+  position: relative;
+  width: 6rem;
+  height: 6rem;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.nu-avatar-layer {
+  position: absolute;
+  inset: 0;
+}
+/* The circle of #nu-avatar clips the layers: the face inside is square, so that it can slide. */
+#nu-avatar .avatar-generated {
+  border-radius: 0;
+}
+.nu-avatar-layer[data-fresh] {
+  animation: nu-avatar-up 0.4s ease-out both;
+}
+@keyframes nu-avatar-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nu-avatar-layer[data-fresh] { animation-duration: 0.01ms; }
+}
+/* The logo comes in once: from transparent, rising a few pixels into its place. */
+#nu-logo {
+  animation: nu-logo-in 0.6s ease-out both;
+}
+@keyframes nu-logo-in {
+  from { opacity: 0; transform: translateY(0.4rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #nu-logo { animation: none; }
+}
+#nu-lede {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 16px;
-  container-type: inline-size;
-  margin-bottom: 20px;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+#nu-lede svg {
+  display: none;
+  flex: none;
+  width: 2.75rem;
+  height: 2.75rem;
   image-rendering: pixelated;
 }
-#nu-tagline { font-family: "Roboto Flex", system-ui, sans-serif; font-weight: 700; font-size: calc((100cqw - 112px) / 10); line-height: 1.3; white-space: nowrap; color: #4a515b; image-rendering: auto; }
-#nu-pigeon svg {
-  flex: none;
-  width: 96px;
-  height: 96px;
+#nu-tagline {
+  display: none;
+  font-family: var(--nu-font);
+  font-weight: 500;
+  font-size: 1rem;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: nowrap;
+  image-rendering: auto;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -4762,65 +4855,354 @@ html.pwa-standalone #app {
 .pigeon-done .pigeon-toe-r { display: inline; }
 
 /* Three dots that jump in turn while a name is being checked. */
-.nu-dots { display: inline-flex; gap: 4px; align-items: center; height: 16px; }
-.nu-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim, #888); animation: nu-dot .9s ease-in-out infinite; }
-.nu-dots i:nth-child(2) { animation-delay: .15s; }
-.nu-dots i:nth-child(3) { animation-delay: .3s; }
-@keyframes nu-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-5px); opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .nu-dots i { animation: nu-fade 1.4s ease-in-out infinite; } @keyframes nu-fade { 50% { opacity: 1; } } }
+.nu-dots {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+  height: 1rem;
+}
+.nu-dots i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--text-dim, #888);
+  animation: nu-dot .9s ease-in-out infinite;
+}
+.nu-dots i:nth-child(2) {
+  animation-delay: .15s;
+}
+.nu-dots i:nth-child(3) {
+  animation-delay: .3s;
+}
+@keyframes nu-dot {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: .45;
+  }
+  30% {
+    transform: translateY(-0.25rem);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nu-dots i {
+    animation: nu-fade 1.4s ease-in-out infinite;
+  }
+  @keyframes nu-fade {
+    50% {
+      opacity: 1;
+    }
+  }
+}
 
 /* The new-user page (sign-up and log-in): the pigeon, then the wallet's form. */
-#new-user-page { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: calc(100vh - 220px); padding: clamp(4px, 12vh, 120px) 0 20px; }
-#new-user-page .nu-column { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 14px; }
-#new-user-page { position: relative; }
-#nu-header { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; height: 3.5rem; padding: 0 1.25rem; }
-#nu-logo { font-family: "Zen Kaku Gothic Antique", system-ui, sans-serif; font-weight: 900; font-size: 1.75rem; line-height: 1; letter-spacing: 0.01em; color: var(--text); }
-#nu-own-wait { height: 140px; }
-#nu-own-create { display: flex; flex-direction: column; gap: 14px; font-family: ui-monospace, monospace; }
-#nu-own-create .nu-block { display: flex; flex-direction: column; gap: 14px; }
-.nu-label { display: flex; flex-direction: column; margin: 0; }
-.nu-heading { display: block; font-family: "Roboto Flex", system-ui, sans-serif; font-weight: 700; font-size: 14px; line-height: 26px; color: var(--text); }
+#new-user-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: calc(100vh - 13.75rem);
+  padding: clamp(0.25rem, 12vh, 7.5rem) 0 1.25rem;
+}
+#new-user-page {
+  --nu-font: "Zen Kaku Gothic Antique", "Noto Sans JP", system-ui, sans-serif;
+}
+#new-user-page .nu-column {
+  width: 100%;
+  max-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+#nu-own-create {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  font-family: ui-monospace, monospace;
+}
+#nu-own-create .nu-block {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.nu-label {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.nu-heading {
+  display: block;
+  font-family: var(--nu-font);
+  font-weight: 700;
+  font-size: .75rem;
+  line-height: 1.75rem;
+  color: var(--text);
+}
 /* A field: no fill, a hairline of grey. */
-.nu-field { display: flex; align-items: center; height: 56px; box-sizing: border-box; padding: 0 16px; border: solid 0.5px gray; border-radius: 8px; background: none; font: 200 16px/24px monospace; }
-.nu-heading small { font-weight: 400; font-size: 12.5px; color: var(--text-dim); }
-.nu-label > .nu-field { margin-top: 8px; }
-.nu-field input { flex: 0 1 auto; width: calc(var(--chars, 5) * 1ch + 2px); min-width: 0; max-width: 100%; padding: 0; border: 0; outline: 0; background: transparent; font: inherit; color: inherit; }
-.nu-suffix { color: var(--text-dim); user-select: none; white-space: nowrap; }
-.nu-edit { margin-left: auto; padding: 0 0 0 8px; border: 0; background: transparent; color: var(--text-dim); font: 400 13px system-ui, sans-serif; cursor: pointer; }
-.nu-edit { display: flex; align-items: center; }
-.nu-edit:hover { color: var(--text); }
+.nu-field {
+  display: flex;
+  align-items: center;
+  height: 3.5rem;
+  box-sizing: border-box;
+  padding: 0 1rem;
+  border: solid 1px color-mix(in srgb, gray 55%, transparent); /* 1px, not 0.5px: a half pixel on a fractional box (1rem is 18.5px here) can lose an edge on iOS */
+  border-radius: 0.5rem;
+  background: none;
+  --nu-line: 1.5rem; /* one line height for the alias, the @, the host and the host editor, so they sit on the same line at every size */
+  font: 200 1rem/var(--nu-line) monospace;
+}
+.nu-heading small {
+  font-weight: 500;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.nu-label > .nu-field {
+  margin-top: 0.5rem;
+}
+.nu-field input {
+  flex: 0 1 auto;
+  width: calc(var(--chars, 5) * 1ch + 0.25rem);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+.nu-suffix {
+  color: var(--text-dim);
+  user-select: none;
+  white-space: nowrap;
+}
+.nu-edit {
+  margin-left: auto;
+  padding: 0 0 0 0.5rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: 400 0.75rem system-ui, sans-serif;
+  cursor: pointer;
+}
+.nu-edit {
+  display: flex;
+  align-items: center;
+}
+.nu-edit:hover {
+  color: var(--text);
+}
 /* Hovering the edit button underlines the host it would edit, as the open field is underlined. */
-.nu-host { height: 24px; box-shadow: inset 0 -0.5px 0 transparent; }
-.nu-field:has(.nu-edit:hover) .nu-host { box-shadow: inset 0 -0.5px 0 gray; animation: nu-blink 1s step-end infinite; }
+.nu-host {
+  height: var(--nu-line);
+  box-shadow: inset 0 -0.5px 0 transparent;
+}
+.nu-field:has(.nu-edit:hover) .nu-host {
+  box-shadow: inset 0 -0.5px 0 gray;
+  animation: nu-blink 1s step-end infinite;
+}
 /* The underline blinks at the pace of the text caret (half a second on, half off). */
-@keyframes nu-blink { 50% { box-shadow: inset 0 -0.5px 0 transparent; } }
-@media (prefers-reduced-motion: reduce) { .nu-field:has(.nu-edit:hover) .nu-host { animation: none; } }
-.nu-suffix { display: flex; align-items: center; height: 24px; line-height: 24px; }
+@keyframes nu-blink {
+  50% {
+    box-shadow: inset 0 -0.5px 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nu-field:has(.nu-edit:hover) .nu-host {
+    animation: none;
+  }
+}
+.nu-suffix {
+  display: flex;
+  align-items: center;
+  height: var(--nu-line);
+  line-height: var(--nu-line);
+}
 /* The open field's underline is drawn inside its box so that swapping the text for it moves nothing. */
-.nu-field input.nu-server { height: 24px; line-height: 24px; box-shadow: inset 0 -0.5px 0 gray; }
-.nu-passphrase-box { color: #757575; line-height: 56px; }
+.nu-field input.nu-server {
+  height: var(--nu-line);
+  line-height: var(--nu-line);
+  box-shadow: inset 0 -0.5px 0 gray;
+}
+.nu-passphrase-box {
+  color: #757575;
+  line-height: 3.5rem;
+}
 /* The filled button (Create, Log in, Connect). */
-.nu-primary { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; padding: 0 15px; border: 0; border-radius: 8px; background: var(--primary); color: var(--on-primary); font: inherit; font-size: 16px; line-height: 20px; text-align: center; cursor: pointer; }
-.nu-primary .nu-dots { height: 20px; justify-content: center; }
-.nu-primary .nu-dots i { background: var(--on-primary); }
-.nu-primary:disabled { opacity: 0.4; cursor: default; }
-.nu-primary[data-busy]:disabled { opacity: 1; }
-#nu-terms-line { display: block; padding: 10px 16px; border-radius: 8px; background: transparent; text-decoration: none; font-size: 13.5px; color: var(--text-dim); text-align: center; font-family: system-ui, sans-serif; transition: background-color 0.15s; }
-#nu-terms-line:hover { background: rgba(128, 128, 128, 0.08); }
-#nu-wallet-login-row { display: flex; align-items: center; justify-content: center; margin-top: 2px; }
-#nu-wallet-login-row[hidden] { display: none; }
-#nu-wallet-picker { margin-right: 8px; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 15.5px; }
-#nu-wallet-suffix { margin-right: 8px; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 15.5px; width: 200px; }
-#nu-wallet-login { width: auto; padding: 10px 18px; font-size: 15.5px; font-weight: 500; white-space: nowrap; }
-#nu-wallet-result { min-height: 18px; font-size: 14.5px; text-align: center; overflow-wrap: anywhere; color: var(--text-dim); }
-#nu-wallet-result[hidden] { display: none; }
-#nu-wallet-result[data-error] { color: var(--danger); }
-
-
-
-
-
+.nu-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-family: var(--nu-font);
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.25rem;
+  text-align: center;
+  cursor: pointer;
+}
+.nu-primary .nu-dots {
+  height: 1.25rem;
+  justify-content: center;
+}
+.nu-primary .nu-dots i {
+  background: var(--on-primary);
+}
+.nu-primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.nu-primary[data-busy]:disabled {
+  opacity: 1;
+}
+#nu-terms-line {
+  display: block;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: transparent;
+  text-decoration: none;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: center;
+  font-family: var(--nu-font);
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+#nu-terms-line:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+#nu-wallet-login-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.25rem;
+}
+#nu-wallet-login-row[hidden] {
+  display: none;
+}
+#nu-wallet-picker {
+  margin-right: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-size: 1rem;
+}
+#nu-wallet-suffix {
+  margin-right: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-size: 1rem;
+  width: 12.5rem;
+}
+#nu-wallet-login {
+  width: auto;
+  padding: 0.75rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+#nu-wallet-result {
+  min-height: 1.25rem;
+  font-size: 1rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+#nu-wallet-result[hidden] {
+  display: none;
+}
+#nu-wallet-result[data-error] {
+  color: var(--danger);
+}
 /* The network indicator (lft, ../lft): where the lftisland sits. Variables, because the indicator's own stylesheet is added last and wins against a rule here. */
 :root { --lft-net-top: 4px; --lft-net-right: 2px; }
-#nu-github { position: fixed; right: 12px; bottom: 16px; z-index: 70; display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; color: #4a515b; }
-#nu-github:hover { background: rgba(128, 128, 128, 0.14); }
+#nu-github {
+  position: fixed;
+  right: 0.75rem;
+  bottom: 1rem;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  color: #4a515b;
+}
+#nu-github:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+/* Shown instead of the app where the browser has no IndexedDB (ui/storage-guard.ts). */
+#no-storage {
+  box-sizing: border-box;
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: 20vh 1.5rem 2rem;
+  font-family: system-ui, sans-serif;
+  color: var(--text);
+}
+#no-storage h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  line-height: 1.4;
+}
+#no-storage p {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+/* The Config tab's colours (ui/pages/colors-card.tsx). */
+.colors-part {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+.colors-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.colors-pickers {
+  display: flex;
+  gap: 0.5rem;
+}
+.colors-pickers input[type="color"] {
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+.colors-pickers input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.colors-pickers input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+.colors-pickers input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+.colors-samples {
+  display: flex;
+  gap: 0.5rem;
+}
+.colors-face {
+  position: relative;
+  width: 2.5rem;
+  height: 2.5rem;
+}

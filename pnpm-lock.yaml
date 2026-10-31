@@ -233,6 +233,9 @@ importers:
       didcomm-node:
         specifier: ^0.4.1
         version: 0.4.1
+      eruda:
+        specifier: ^3.4.3
+        version: 3.4.3
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -1277,6 +1280,9 @@ packages:
   entities@7.0.1:
     resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
     engines: {node: '>=0.12'}
+
+  eruda@3.4.3:
+    resolution: {integrity: sha512-J2TsF4dXSspOXev5bJ6mljv0dRrxj21wklrDzbvPmYaEmVoC+2psylyRi70nUPFh1mTQfIBsSusUtAMZtUN+/w==}
 
   es-module-lexer@1.7.0:
     resolution: {integrity: sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==}
@@ -2377,6 +2383,8 @@ snapshots:
   dom-accessibility-api@0.5.16: {}
 
   entities@7.0.1: {}
+
+  eruda@3.4.3: {}
 
   es-module-lexer@1.7.0: {}
 
