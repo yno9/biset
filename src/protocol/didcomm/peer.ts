@@ -5,7 +5,7 @@
 // recipient-update targets this DID's keyAgreement kid. did:peer:2 needs no
 // network resolution (the keys are IN the DID string), which is what lets a
 // mediator authenticate itself with zero external dependencies -- unlike
-// biset users' own did:vh, which the mediator never needs or wants to be.
+// comail users' own did:vh, which the mediator never needs or wants to be.
 // Lives under didcomm/, not mediator/, because the CLIENT decodes it too
 // (mediator-coordinate.ts/mediator-pickup.ts, Phase 4) -- a browser needs
 // this module to talk to a mediator, without pulling in mediator/'s

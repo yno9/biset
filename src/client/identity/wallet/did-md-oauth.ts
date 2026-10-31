@@ -53,7 +53,7 @@ export function currentWallet(): WalletDirectoryEntry { return selectedWallet }
 const CALLBACK_PATH = '/wallet/callback'
 // What the capability is for (the device-capability transaction data's scope); `openid` is the request's own scope.
 const REQUESTED_SCOPES = ['biset:login', 'biset:device', 'biset:routing', 'biset:messaging', 'biset:vault']
-// Biset's own capability credential type, asked for by the DCQL query.
+// Comail's own capability credential type, asked for by the DCQL query.
 const CAPABILITY_TYPE = 'biset.md/MessengerCapability'
 // This deployment's relying-party DID (`rpDid` in __BISET_CONFIG__): sent as client_metadata.rp_did. The wallet believes it
 // only when the DID's own document publishes the redirect URL as a SIOPRedirectTarget; the request itself is not signed.
@@ -64,7 +64,7 @@ function rpDid(): string | undefined {
 const DID_DOCUMENT_EDIT_DETAIL = 'urn:did-core:document-edit:v1'
 // The did.md-operated SMTP relay is a separate process, but shares did.md's
 // authority service.  This detail is Root-signed as part of the ordinary
-// Wallet device capability; no controller/update key reaches Biset.
+// Wallet device capability; no controller/update key reaches Comail.
 export const DID_MD_JUST_CONNECTED_KEY = 'biset-did-md-just-connected-v1'
 const encoder = new TextEncoder()
 
@@ -100,7 +100,7 @@ function validServiceEndpointEntry(value: unknown): boolean {
 }
 
 export function walletConfiguration(value: DidMdWalletConfiguration = {}): WalletConfiguration {
-  const walletDeviceName = value.walletDeviceName ?? 'Biset'
+  const walletDeviceName = value.walletDeviceName ?? 'Comail'
   const didDocumentServices = value.didDocumentServices ?? defaultDidDocumentServices
   if (!Array.isArray(didDocumentServices) || !didDocumentServices.length || didDocumentServices.length > 64) throw new Error('DID Document services configuration is invalid')
   const ids = new Set<string>()
@@ -255,16 +255,16 @@ async function bisetMediatorFor(values: readonly string[]): Promise<DidMdBisetMe
   const index = values.findIndex(value => typeof value === 'string' && value.trim())
   if (index === -1) return undefined
   let url: URL
-  try { url = new URL(values[index]!) } catch { throw new Error('Biset DIDComm mediator URL is invalid') }
+  try { url = new URL(values[index]!) } catch { throw new Error('Comail DIDComm mediator URL is invalid') }
   const onion = url.protocol === 'http:' && isOnionUrl(url.toString())
-  if ((url.protocol !== 'https:' && !onion) || url.username || url.password || url.search || url.hash) throw new Error('Biset DIDComm mediator URL is invalid')
+  if ((url.protocol !== 'https:' && !onion) || url.username || url.password || url.search || url.hash) throw new Error('Comail DIDComm mediator URL is invalid')
   const mediatorUrl = url.toString()
   const info = await fetchMediatorInfo(mediatorUrl)
   // Named by its did:web, or by its did:peer (a mediator that is not at an https URL): either is a DID a document can name.
-  if (!info.xKid || !(info.did.startsWith('did:web:') || info.did.startsWith('did:peer:'))) throw new Error('Biset DIDComm mediator did not provide a valid routing key')
+  if (!info.xKid || !(info.did.startsWith('did:web:') || info.did.startsWith('did:peer:'))) throw new Error('Comail DIDComm mediator did not provide a valid routing key')
   if (!onion) return { mediatorUrl, routingKid: info.xKid, mediatorDid: info.did }
   if (info.did.startsWith('did:peer:')) return { mediatorUrl, routingKid: info.xKid, mediatorDid: info.did }
-  if (!info.edPub) throw new Error('Biset DIDComm mediator lists no authentication key to name it over Tor')
+  if (!info.edPub) throw new Error('Comail DIDComm mediator lists no authentication key to name it over Tor')
   return { mediatorUrl, routingKid: info.xKid, mediatorDid: encodePeerDid2(info.xPub, info.edPub, { uri: mediatorUrl.replace(/\/$/, '') }) }
 }
 
@@ -440,7 +440,7 @@ export async function rootAuthority(handle: string, document: DidDocument | null
 
 function capabilityDetails(value: unknown, pending: ResolvedPendingAuthorization): { didCommDevice?: NonNullable<ResolvedPendingAuthorization['bisetDidCommDevice']> } {
   // Absent when nothing was requested.
-  if (value !== undefined && !Array.isArray(value)) throw new Error('did.md returned invalid Biset authorization details')
+  if (value !== undefined && !Array.isArray(value)) throw new Error('did.md returned invalid Comail authorization details')
   const edits = ((value ?? []) as unknown[]).filter(item => { try { return asObject(item, 'authorization detail').type === DID_DOCUMENT_EDIT_DETAIL } catch { return false } })
   if (pending.documentEdit) {
     if (edits.length !== 1) throw new Error('did.md did not return one DID document edit detail')
@@ -511,7 +511,7 @@ async function capabilityFromResponse(value: unknown, pending: ResolvedPendingAu
   const subject = asObject(vc.credentialSubject, 'device capability subject')
   if (vc.issuer !== pending.did || subject.audience !== pending.clientId || subject.deviceJkt !== pending.deviceJkt || Date.parse(subject.expiresAt as string) <= Date.now()) throw new Error('did.md returned an invalid device capability')
   const scope = subject.scope as string[]
-  if (!scope.includes('biset:device') || !scope.includes('biset:vault')) throw new Error('did.md did not enroll this Biset device')
+  if (!scope.includes('biset:device') || !scope.includes('biset:vault')) throw new Error('did.md did not enroll this Comail device')
   const proof = asObject(vc.proof, 'device capability proof') as unknown as DataIntegrityProof
   // Data Integrity Proof convention: verify over the credential WITHOUT its
   // own `proof` property -- the same shape did.md's server checks (see
@@ -651,7 +651,7 @@ function pendingFromSession(session: DidMdDeviceSession): ResolvedPendingAuthori
     v: 3, wallet: session.wallet, clientId: session.clientId, state: '', nonce: '', did: session.did,
     handle: session.handle, verificationMethod: session.verificationMethod, rootPublicKey: session.rootPublicKey,
     deviceJkt: session.deviceJkt, privateKey: session.privateKey, publicJwk: session.publicJwk,
-    vaultDeviceId: session.vaultDeviceId ?? (() => { throw new Error('This did.md Wallet session predates this Biset version; connect it again.') })(),
+    vaultDeviceId: session.vaultDeviceId ?? (() => { throw new Error('This did.md Wallet session predates this Comail version; connect it again.') })(),
     // None when the capability carries none (a sign-in after a move to another host): the refresh must not expect one.
     ...(storedEdit ? { documentEdit: storedEdit as DidCoreDocumentEdit } : {}),
     ...(session.bisetDidCommDevice ? { bisetDidCommDevice: session.bisetDidCommDevice } : {}),
@@ -687,7 +687,7 @@ async function walletRequestUrl(client: WalletClient, pending: DidMdPendingAutho
     ...(pending.handle !== undefined ? { login_hint: pending.handle } : {}),
     dcql_query: JSON.stringify({ credentials: [{ id: 'capability', format: 'ldp_vc', meta: { type_values: [['VerifiableCredential', CAPABILITY_TYPE]] } }] }),
     transaction_data: JSON.stringify(transactionData),
-    client_metadata: JSON.stringify({ client_name: 'Biset', ...(configured ? { rp_did: configured } : {}) }),
+    client_metadata: JSON.stringify({ client_name: 'Comail', ...(configured ? { rp_did: configured } : {}) }),
   })
   request.search = params.toString()
   return request.toString()
@@ -861,7 +861,7 @@ export async function beginDidMdDocumentEdit(change: DidMdDocumentChange, config
     delete pending.bisetDidCommDevice
   } else if (change.kind === 'mediator') {
     const mediator = await bisetMediatorFor(change.mediatorUrls)
-    if (!mediator) throw new Error('Biset DIDComm mediator is not configured')
+    if (!mediator) throw new Error('Comail DIDComm mediator is not configured')
     if (previousDevice) pending.previousBisetDidCommDevice = previousDevice
     pending.bisetDidCommDevice = await newBisetDidCommDevice(session.did, mediator)
     const retired = retiredMediatorEndpoints(previousDevice, mediator, configuredService(config, 'didcomm').id)
@@ -1024,7 +1024,7 @@ export async function disconnectDidMdWallet(): Promise<void> {
 /** This browser's identity as a Vault author. */
 export async function openDidMdWalletVaultDevice(): Promise<DidMdVaultDevice> {
   const session = await readDidMdDeviceSession()
-  if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Connect did.md Wallet again to use this Biset device')
+  if (!session?.vaultDeviceId || session.v !== 3) throw new Error('Connect did.md Wallet again to use this Comail device')
   rememberVhLocation(session.did, session.handle)
   return { did: session.did, handle: session.handle, deviceId: session.vaultDeviceId }
 }
@@ -1038,8 +1038,8 @@ export async function openDidMdWalletBisetDidCommDevice(): Promise<DidMdBisetDid
   if (!session || session.v !== 3 || !stored) return undefined
   const privateMaterial = await openDidMdBisetDidCommDeviceMaterial(stored)
   const derivedPublic = x25519.getPublicKey(privateMaterial.x25519PrivateKey)
-  if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Biset DIDComm private key does not match its Wallet-authorized public key')
-  if (stored.xKid !== deviceKid(session.did, derivedPublic)) throw new Error('Biset DIDComm device key identifier is invalid')
+  if (!derivedPublic.every((byte, index) => byte === stored.x25519PublicKey[index])) throw new Error('Comail DIDComm private key does not match its Wallet-authorized public key')
+  if (stored.xKid !== deviceKid(session.did, derivedPublic)) throw new Error('Comail DIDComm device key identifier is invalid')
   return { did: session.did, xKid: stored.xKid, x25519PrivateKey: privateMaterial.x25519PrivateKey, mediatorDeviceSecret: privateMaterial.mediatorDeviceSecret, mediatorUrl: stored.mediatorUrl, routingKid: stored.routingKid, ...(stored.mediatorOnionUrl ? { mediatorOnionUrl: stored.mediatorOnionUrl } : {}) }
 }
 

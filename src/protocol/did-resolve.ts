@@ -1,4 +1,4 @@
-// One way to resolve a DID document whatever its method. biset holds identities of two kinds: a did:vh (no host in the DID: its
+// One way to resolve a DID document whatever its method. comail holds identities of two kinds: a did:vh (no host in the DID: its
 // log is looked for where the contact is known by, or at a watcher), and the did:web document a did:vh publishes beside itself (a
 // shadow, derived from the log; didmail's bridges are did:web too). Callers that only need "the document of this DID" call this
 // and do not branch on the method themselves.

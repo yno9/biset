@@ -1,11 +1,11 @@
-// DID Rotation between biset identities (PLAN-refactor.md §4.3, §7-3, §12.5):
+// DID Rotation between comail identities (PLAN-refactor.md §4.3, §7-3, §12.5):
 // a conversation starts on the front door (this device's key in the public
 // DID document) and, with a counterparty that says it understands the
 // `from_prior` header, moves to a did:peer this identity derives for that
 // counterparty alone (Y).
 //
 // - Whether to move is asked with Discover Features 2.0: a `header` query for
-//   `from_prior`. biset answers the same query for itself.
+//   `from_prior`. comail answers the same query for itself.
 // - Y is derived from the generation seed and the counterparty's public DID
 //   (peer.ts), its service naming this identity's mediator by DID. Every
 //   device derives the same Y; the contact card records that this identity
@@ -101,7 +101,7 @@ export function startedOwnRotations(cards: readonly LocalJmapContactCard[], publ
 
 // ---- Discover Features 2.0 ----
 
-/** What biset discloses about itself. */
+/** What comail discloses about itself. */
 const OWN_FEATURES: Array<{ 'feature-type': string; id: string }> = [
   { 'feature-type': 'protocol', id: 'https://didcomm.org/basicmessage/2.0' },
   { 'feature-type': 'protocol', id: TRUST_PING },

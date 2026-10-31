@@ -8,7 +8,7 @@
  * under one signature by a real member (`GroupInfoTBS.signer`, a leaf
  * index resolved from the *same* embedded tree) -- no separate provenance
  * mechanism is needed. `HandshakeBundle.groupInfo` (protocol-types.ts) is
- * already an existing, optional wire field biset's own client produces via
+ * already an existing, optional wire field comail's own client produces via
  * `groupInfoForExternalJoin` (src/client/mls/group.ts) using bare `encodeGroupInfo`
  * (not MLSMessage-wrapped, matching that same client convention for
  * Welcome) -- decoding it here is genuinely new, since biset-mimi has so

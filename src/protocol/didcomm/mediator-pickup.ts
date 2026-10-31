@@ -12,7 +12,7 @@ import { openDidCommPayload } from './open.ts'
 import { SenderKeyNotPublishedError } from './sender-key.ts'
 import { STATUS_REQUEST, STATUS, DELIVERY_REQUEST, DELIVERY, MESSAGES_RECEIVED } from './mediator-protocol.ts'
 
-/** A Pickup 3.0 status, plus biset's `missed`: the mediator dropped copies
+/** A Pickup 3.0 status, plus comail's `missed`: the mediator dropped copies
  * meant for this inbox (it was dormant, or full) since it last asked -- the
  * device should catch up from a sibling via Vault Sync. */
 export interface InboxStatus { messageCount: number; missed: boolean }
@@ -33,7 +33,7 @@ export async function pickupStatus(mediator: MediatorInfo, inbox: MediatorInboxC
 // mediator removes it. `rawJwe` is the still-packed envelope this was
 // decrypted from -- carried alongside the convenience-unpacked
 // `plaintext`/`senderKid` for a caller that needs to feed it through its own
-// full verify-and-project pipeline (biset's own DidCommIngressProjector does
+// full verify-and-project pipeline (comail's own DidCommIngressProjector does
 // its own decrypt + replay-dedup from the raw bytes, not from
 // already-decrypted content it would otherwise have to trust blind).
 export interface DeliveredMessage { plaintext: unknown; senderKid: string; ackId: string; rawJwe: DidCommJWE | DidCommJws }
@@ -192,7 +192,7 @@ export function mediatorLiveUrl(mediatorUrl: string): string {
 
 /** Pickup 3.0 messages-received: confirms the listed ids are durably stored
  * so the mediator drops them from THIS inbox (siblings keep their copies).
- * `recipient_did` and `device` are biset additions to the body, naming
+ * `recipient_did` and `device` are comail additions to the body, naming
  * which of the sender's inboxes the ids belong to. */
 export async function acknowledgeMessages(mediator: MediatorInfo, inbox: MediatorInboxClient, ackIds: string[], fetchImpl: typeof fetch = defaultFetch()): Promise<InboxStatus> {
   if (ackIds.length === 0) return pickupStatus(mediator, inbox, fetchImpl)

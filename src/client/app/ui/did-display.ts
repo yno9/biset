@@ -21,7 +21,7 @@ export function avatarSeed(who: string): string {
   return (trimmed.startsWith('did:') ? labelForDid(trimmed) : trimmed).toLowerCase()
 }
 
-/** How a DID is shown to a person: as a mail address, `hrdcv7qkr@nine.testrun.org`, `alice@did.md`. biset's principle is that a
+/** How a DID is shown to a person: as a mail address, `hrdcv7qkr@nine.testrun.org`, `alice@did.md`. comail's principle is that a
  * person sees addresses, not DIDs; a screen that shows a DID on purpose (the identity card, a debugging line) says so and does
  * not come through here. Everything else that names someone calls this, so a rule changed here changes it everywhere.
  *

@@ -26,7 +26,7 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
   encrypted?: { armored: string }
   /** This is the first message to an address that has not written to us -- the user chose to write first (didmail PROTOCOL.md §7.1). */
   introduction?: boolean
-  /** This identity's display name, told to the recipient (a biset extension; the receiver keeps it on the sender's contact card). */
+  /** This identity's display name, told to the recipient (a comail extension; the receiver keeps it on the sender's contact card). */
   fromName?: string
 }
 

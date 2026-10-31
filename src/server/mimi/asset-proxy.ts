@@ -7,7 +7,7 @@
  * advertised by this deployment.
  *
  * draft-ietf-mimi-protocol-06 §5.10.3 makes a gateway required for a fully
- * conformant hub.  Biset scopes that optional deployment role out until it
+ * conformant hub.  Comail scopes that optional deployment role out until it
  * can be supplied with a real OHTTP gateway, peer-asset registration, and
  * relay integration; operators must not describe this class as OHTTP-capable.
  */

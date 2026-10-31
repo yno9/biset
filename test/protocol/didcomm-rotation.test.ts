@@ -1,4 +1,4 @@
-// DID Rotation between biset identities (PLAN-refactor.md §4.3, §12.5): the
+// DID Rotation between comail identities (PLAN-refactor.md §4.3, §12.5): the
 // route each message takes, what ingress learns from `from_prior`, and the
 // device-side manager that asks, starts and confirms a move.
 import { describe, expect, test } from 'vitest'
@@ -32,7 +32,7 @@ import { sendFrontDoorMessage } from '../../src/client/didcomm/front-door-send.t
 
 const MEDIATOR = 'did:web:mediator.example'
 
-/** A biset identity: a did:vh with one front-door device key and the
+/** A comail identity: a did:vh with one front-door device key and the
  * rotation key of its seed published under authentication. */
 function identity(domain: string) {
   const root = ed25519.keygen()

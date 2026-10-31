@@ -325,7 +325,7 @@ describe('MIMI Phase 0 HTTP flow', () => {
     deployment.close()
   })
 
-  test('three clients create, add, claim KeyPackages, then receive a commit through biset delivery APIs', async () => {
+  test('three clients create, add, claim KeyPackages, then receive a commit through comail delivery APIs', async () => {
     const alice = client('did:web:alice', 'phone', 1)
     // Bob and Charlie are added via real MLS `add` proposals below, so their
     // MimiCredential (and the private key that signs their own later

@@ -2,7 +2,7 @@
 //
 // Upstream ts-mls delegates HPKE to `@hpke/core`, which is ~687KB minified —
 // five times the size of the MLS implementation it supports — because it
-// carries every KEM, KDF and AEAD the HPKE registry defines. biset uses
+// carries every KEM, KDF and AEAD the HPKE registry defines. comail uses
 // exactly one MLS ciphersuite, which pins exactly one HPKE suite:
 //
 //     DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-128-GCM

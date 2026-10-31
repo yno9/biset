@@ -1,4 +1,4 @@
-// New-user onboarding: since N1 (2026-09-05) one job only, the did.md Wallet login. biset never
+// New-user onboarding: since N1 (2026-09-05) one job only, the did.md Wallet login. comail never
 // mints, restores, or holds a controller key of its own; did.md is the identity issuer.
 //
 // Same-site with dito (did.md) the sign-in and creation fields are dito's, in a frame
@@ -23,7 +23,7 @@ import { avatarSeed } from '../did-display.ts'
 import { mixInk, setPartColors, usePartColors } from '../color-settings.ts'
 import { CREATE_PRESET, CREATE_WORDS, CREATE_WORD_MS } from './create-words.ts'
 import { useStore } from '../../react/store.ts'
-import { randomAlias, heldHost, heldIdentity, checkAlias, createAccountInBackground, passphraseEmbed, passphraseReady, preloadSignup, walletKnown, setPassphraseHandlers, showPassphraseOver } from '../signup-preload.ts'
+import { randomAlias, provisionalAlias, heldHost, heldIdentity, checkAlias, createAccountInBackground, passphraseEmbed, passphraseReady, preloadSignup, walletKnown, setPassphraseHandlers, showPassphraseOver } from '../signup-preload.ts'
 
 export { setOnWalletConnected } from './signup-frame.ts'
 
@@ -170,7 +170,8 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   // Creating is drawn here and done by the wallet out of sight (its `wallet.create`); the wallet's own form is shown only to log in.
   const ownCreate = embedded
   // The name is on the screen at once (made here, as the wallet makes its own), and checked behind it; one that is taken is replaced.
-  const [alias, setAlias] = useState(() => randomAlias())
+  const alias = useStore(provisionalAlias)
+  const setAlias = (next: string): void => provisionalAlias.set(next)
   const auto = useRef(true)
   const [roll, setRoll] = useState(0)
   const attempts = useRef(0)
@@ -275,6 +276,8 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
 
   // The page's one colour (the name and the buttons) is the five avatar colours mixed, darker than white needs (a contrast of 8 to 1).
   const ink = mixInk(usePartColors('avatar'), 8)
+  // The face of the address in the field (the tab's icon is the same face: favicon.tsx).
+  const face = avatarSeed(loginAs ?? `${alias.trim()}@${domain}`)
   const blocked = creating || (!loginAs && (!known || free === false || free === undefined))
   return (
     <div id="new-user-page" style={{ '--nu-ink': ink } as React.CSSProperties}>
@@ -287,7 +290,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
       <div className="nu-column">
         <div id="nu-intro" data-enter={enter ? '' : undefined}>
           {/* The face of the address in the field, drawn as it is typed (the same one the account has once it is made). */}
-          <SlidingAvatar name={avatarSeed(loginAs ?? `${alias.trim()}@${domain}`)} roll={roll}
+          <SlidingAvatar name={face} roll={roll}
             onClick={loginAs || creating ? undefined : () => { auto.current = true; setAlias(randomAlias()); setRoll(count => count + 1) }} />
           <div id="nu-lede">
             <Pigeon walking={creating || (embedded && !loginAs && (!known || free === undefined))} />
@@ -345,7 +348,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
         </div>
         <div id="nu-wallet-result" aria-live="polite" hidden={!result} data-error={result?.error ? '' : undefined}>{result?.message}</div>
       </div>
-      <a id="nu-github" href="https://github.com/yno9/biset" target="_blank" rel="noreferrer" aria-label="biset on GitHub"><GitHubIcon size={24} /></a>
+      <a id="nu-github" href="https://github.com/yno9/biset" target="_blank" rel="noreferrer" aria-label="comail on GitHub"><GitHubIcon size={24} /></a>
     </div>
   )
 }

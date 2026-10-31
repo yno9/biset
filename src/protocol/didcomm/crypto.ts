@@ -1,4 +1,4 @@
-// DIDComm v2 JWE construction, pure TypeScript — no wasm, matches biset's
+// DIDComm v2 JWE construction, pure TypeScript — no wasm, matches comail's
 // single-file/`file://` architecture (ARC.md).
 //
 // Ported from src.bak/did/didcomm/crypto.ts (that file's own header: every
@@ -387,7 +387,7 @@ export interface UnpackedAuthcrypt { plaintext: Uint8Array; senderKid: string }
 
 /** Resolves the sender's X25519 public key for the kid named in the JWE's
  * `apu`/`skid` header — the caller already knows how to resolve a DID
- * (biset's own resolver, or a did:peer self-decode).
+ * (comail's own resolver, or a did:peer self-decode).
  *
  * `senderKid` is UNVERIFIED input at the point this is called: it is read
  * straight from the sender-supplied `apu` header of a message that has not

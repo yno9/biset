@@ -260,7 +260,7 @@ export function decodeGroupInfoResponseWire(text: string): GroupInfoResponse {
 }
 
 /** The Distribution-Service-supplied bundle before HPKE sealing (draft's
- * GroupInfoRatchetTreeTBE, §5.6) -- biset's own JSON encoding rather than the
+ * GroupInfoRatchetTreeTBE, §5.6) -- comail's own JSON encoding rather than the
  * draft's TLS presentation form, consistent with §3's wire policy. Pending
  * proposals are never populated (protocol-types.ts's doc comment). */
 export function encodeGroupInfoRatchetTreeBundle(groupInfo: Uint8Array, ratchetTree: Uint8Array | undefined): Uint8Array {

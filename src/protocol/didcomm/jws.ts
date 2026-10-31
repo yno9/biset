@@ -175,7 +175,7 @@ export async function verifyDidCommJws(jws: DidCommJws, resolveKey: SigningKeyRe
 }
 
 /** Signs a plaintext message with an Ed25519 key `kid` (EdDSA), as a General
- * JWS JSON: the one algorithm biset signs with. `kid` must be referenced from
+ * JWS JSON: the one algorithm comail signs with. `kid` must be referenced from
  * the signer DID's `authentication` for a recipient to accept it. */
 export function signDidCommMessage(plaintext: object, kid: string, privateKey: Uint8Array): DidCommJws {
   const protectedHeader = bytesToBase64url(new TextEncoder().encode(JSON.stringify({ typ: DIDCOMM_SIGNED_MEDIA_TYPE, alg: 'EdDSA', kid })))

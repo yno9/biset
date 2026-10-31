@@ -1,4 +1,4 @@
-// Biset's own configuration. DID controller key material and pre-rotation belong to the did.md
+// Comail's own configuration. DID controller key material and pre-rotation belong to the did.md
 // Wallet that owns the Master mnemonic, so none of it is represented here.
 import { useState } from 'react'
 import { ColorsCard } from './colors-card.tsx'

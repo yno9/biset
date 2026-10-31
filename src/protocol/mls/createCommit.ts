@@ -82,7 +82,7 @@ export interface CreateCommitOptions {
   /** biset: see updatePath.ts's own note on createUpdatePath's matching
    * parameter -- replaces the COMMITTER's own credential as part of their
    * own UpdatePath, with no proposal involved. Every other option here is
-   * upstream; this one is biset's. */
+   * upstream; this one is comail's. */
   ownCredentialUpdate?: Credential
 }
 

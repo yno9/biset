@@ -16,14 +16,14 @@ export function isBasicMessage(msg: { type?: string }): boolean { return msg.typ
 
 export interface BasicMessageBody {
   content: string
-  /** NOT part of basicmessage/2.0 (whose only attribute is `content`): a biset
+  /** NOT part of basicmessage/2.0 (whose only attribute is `content`): a comail
    * extension. An ISO millisecond timestamp, for the order of messages sent
    * within one second -- the official `created_time` header is epoch seconds.
    * Always from the same instant as `created_time` (and, for a bridged mail,
    * the mail's own `Date:`). Optional: a sender without it is read by its
    * `created_time`. */
   sentAt?: string
-  /** NOT part of basicmessage/2.0: a biset extension, the subject line of a
+  /** NOT part of basicmessage/2.0: a comail extension, the subject line of a
    * mail-shaped message. A receiver that does not know it ignores it. */
   subject?: string
   /** NOT part of basicmessage/2.0: the sender's display name (a bridged

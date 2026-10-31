@@ -1,6 +1,6 @@
 // Route selection out of a resolved did:vh document -- what replaced
 // buildRoutingDoc's mediator branches when routing.json was retired
-// (2026-09-16). biset no longer BUILDS this document: did.md Wallet writes
+// (2026-09-16). comail no longer BUILDS this document: did.md Wallet writes
 // the `#didcomm` service and the device keys through
 // `urn:did-core:document-edit:v1`, so the only thing left to pin down on
 // this side is how a sender reads it back. Shapes match a live

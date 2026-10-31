@@ -117,6 +117,9 @@ function open(text: string): void {
   showComposePage()
 }
 
+/** Whether the path names something to open (a person's address, a group): then the page that opens is not the one the app starts on. */
+export const namesRoute = (pathname: string = location.pathname): boolean => routeOf(pathname) !== undefined
+
 /** Opens what the address bar names once the page it needs is ready (the messages have arrived, the pages are set up), then keeps
  * the address bar following the screen. `pathname` is the address bar's, unless a caller stands in for it. */
 let started = false
@@ -137,7 +140,10 @@ export function startRouting(pathname: string = location.pathname): void {
   const startedAt = Date.now()
   let lastCount = -1
   let steady = 0
-  const timer = window.setInterval(() => {
+  let timer: number | undefined
+  let opened = false
+  // Looked at once straight away (with no account there is nothing to wait for, so the page is open before the app is shown), then at each beat.
+  const check = (): void => {
     const waited = Date.now() - startedAt
     // With no account (its page is the sign-up) there is nothing to wait for: no messages will come, and the compose page is open to all.
     const accountless = getAccountConfig()?.did === null
@@ -148,11 +154,14 @@ export function startRouting(pathname: string = location.pathname): void {
     lastCount = count
     const settled = accountless || isOwnToken(text) || steady >= 3
     if ((pageReady && settled) || waited > 6000) {
+      opened = true
       window.clearInterval(timer)
       open(text)
       follow()
     }
-  }, 150)
+  }
+  check()
+  if (!opened) timer = window.setInterval(check, 150)
 }
 
 // The helper's conversation is opened once it exists: a message just sent shows up in the messages a moment later.

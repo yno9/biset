@@ -9,7 +9,7 @@ describe('protocol canonical encoding', () => {
   })
 
   test('binds hashes to their domain label', () => {
-    const body = new TextEncoder().encode('biset')
+    const body = new TextEncoder().encode('comail')
     expect(domainHash('biset/vault/object/v1', body)).not.toBe(domainHash('biset/ingress/v1', body))
     expect(canonicalHash('biset/vault/object/v1', { a: 1, b: 2 }))
       .toBe(canonicalHash('biset/vault/object/v1', { b: 2, a: 1 }))

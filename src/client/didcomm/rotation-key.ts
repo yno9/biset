@@ -15,7 +15,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { encodeMultikey } from '../../protocol/vh/multikey.ts'
 import { authenticationKeyOf } from '../../protocol/didcomm/from-prior.ts'
 
-/** The id of the key that marks the generation of biset's generation seed in the DID document: its public half
+/** The id of the key that marks the generation of comail's generation seed in the DID document: its public half
  * says which seed is the identity's now (replacing the seed, as when a device is removed, publishes the next
  * generation's), and it signs the DID Rotation. Fixed, so that every device asking for "the" key asks for the same one
  * (did.md's `ifAbsent` keeps the first one approved). It is not `#didcomm`, the service's id: a document's ids are

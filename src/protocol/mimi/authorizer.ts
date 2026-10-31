@@ -190,7 +190,7 @@ export function keyMaterialResponse(targetUser: string, packages: PublishedKeyPa
  * Two independent ways a request's claimed credential can be trusted, tried
  * in order -- either is sufficient:
  *
- * 1. The original biset sidecar check: exact match against `memberCredentials`
+ * 1. The original comail sidecar check: exact match against `memberCredentials`
  *    (populated from a client-signed `initialState`/`stateUpdate` sidecar,
  *    cross-checked at commit time against real `add` proposals for anyone
  *    newly added -- store.ts's `assertAddedCredentialsBackedByMls`).

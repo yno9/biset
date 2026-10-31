@@ -25,7 +25,7 @@ export class MimiClientTransport {
   async frankingAgent(mode: MimiClientMode, roomId: string) { return decodeFrankingAgentDataWire(await this.get(mode, `/v1/mimi/franking-agent/${encodeURIComponent(roomId)}`)) }
   async groupInfo(mode: MimiClientMode, roomId: string, input: GroupInfoRequest) { return decodeGroupInfoResponseWire(await this.post(mode, `/groupInfo/${encodeURIComponent(roomId)}`, encodeGroupInfoRequestWire(input))) }
   async keyMaterial(mode: MimiClientMode, input: KeyMaterialRequest) { return decodeKeyMaterialResponseWire(await this.post(mode, `/keyMaterial/${encodeURIComponent(input.targetUser)}`, encodeKeyMaterialRequestWire(input))) }
-  /** Biset's own extension (§5.1, PLAN_biset-mimi-server.md) -- publishes
+  /** Comail's own extension (§5.1, PLAN_biset-mimi-server.md) -- publishes
    * this client's own spare KeyPackages so someone else can later add it to
    * a room via `keyMaterial`. The MIMI draft leaves this client-server step
    * unspecified. */

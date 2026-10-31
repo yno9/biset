@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 // The vendored MLS crypto, checked against something other than itself.
 //
 // `src/protocol/mls/crypto/implementation/noble/hpke.ts` replaces @hpke/core
-// with an implementation of RFC 9180 written for biset's single ciphersuite.
+// with an implementation of RFC 9180 written for comail's single ciphersuite.
 // That is exactly the kind of change that passes every functional test while
 // being subtly wrong — every party would agree with every other party because
 // they all run the same wrong code. So it is checked two ways here, neither of
@@ -35,7 +35,7 @@ const suite = await mlsSuite()
 
 console.log('\n=== RFC 9420 crypto-basics vectors (cipher suite 1) ===')
 const v = vectors[0]!
-ok('the vector file is the suite biset speaks', v.cipher_suite === 1)
+ok('the vector file is the suite comail speaks', v.cipher_suite === 1)
 
 // KDF: expand_with_label / derive_secret / derive_tree_secret.
 const expanded = await expandWithLabel(unhex(v.expand_with_label.secret), v.expand_with_label.label, unhex(v.expand_with_label.context), v.expand_with_label.length, suite.kdf)
@@ -84,7 +84,7 @@ ok('and our own ciphertext round trips to the same key', hex(roundTrip) === v.en
 
 console.log('\n=== Differential against @hpke/core ===')
 const theirs = new CipherSuite({ kem: new DhkemX25519HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes128Gcm() })
-const info = enc.encode('biset differential test')
+const info = enc.encode('comail differential test')
 const aad = enc.encode('aad')
 const plaintext = enc.encode('the same bytes must come back')
 

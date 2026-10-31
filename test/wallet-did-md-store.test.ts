@@ -62,7 +62,7 @@ async function pendingFixture(): Promise<DidMdPendingAuthorization> {
   }
 }
 
-describe('did.md Biset DIDComm device material sealing', () => {
+describe('did.md Comail DIDComm device material sealing', () => {
   test('round-trips a context-bound DIDComm private key', async () => {
     const x25519PublicKey = bytes(129)
     const privateMaterial = { x25519PrivateKey: bytes(161), mediatorDeviceSecret: bytes(33) }

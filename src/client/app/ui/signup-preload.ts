@@ -100,3 +100,7 @@ export async function checkAlias(alias?: string, host?: string): Promise<{ alias
 
 /** A name of six digits (`048213`). */
 export const randomAlias = (): string => String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0')
+
+/** The name the account will be made with while there is none: the sign-up page shows it in its field, a message written with no account makes the
+ * account with it, and the tab's icon is its face (the person's avatar is not settled until the account is; this stands in for it). */
+export const provisionalAlias = createStore(randomAlias())

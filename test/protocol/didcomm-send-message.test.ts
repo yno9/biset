@@ -152,7 +152,7 @@ describe('sendDidCommMessage', () => {
     })
   })
 
-  test('uses the newest Biset front-door device instead of an older published key', () => {
+  test('uses the newest Comail front-door device instead of an older published key', () => {
     const oldPrivateKey = x25519.utils.randomSecretKey()
     const newestPrivateKey = x25519.utils.randomSecretKey()
     // The suffix-bound `#didcomm-biset-<suffix>` form (config.json's

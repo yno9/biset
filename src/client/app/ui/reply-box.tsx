@@ -1,15 +1,16 @@
 // The reply box in #reply-dock: a textarea that grows with its text, and a send button (or
 // Ctrl/Cmd+Enter). What was typed survives refreshes and switching threads; it is cleared when it
 // is sent, and put back if the send fails.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { createStore, useStore } from '../react/store.ts'
 import { computeReplyContext } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
 import { syncDockPosition } from './scroll.ts'
 import { savePendingSend, sendComposed, sendProblem, signingUp } from './pages/compose-page.tsx'
-import { randomAlias, canSignUpInBackground, createAccountInBackground, heldIdentity } from './signup-preload.ts'
+import { randomAlias, canSignUpInBackground, createAccountInBackground, heldIdentity, provisionalAlias } from './signup-preload.ts'
 import { getAccountConfig } from './account/state.ts'
+import { shell } from './stores.ts'
 import { sendToHelper } from './helper.ts'
 
 export interface ReplySendInput {
@@ -83,8 +84,10 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
   const [sending, setSending] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const [dragged, setDragged] = useState(draggedHeight)
-  // A new message opens full height (the box is mounted again for it: a key in right-col.tsx), whatever height the others were dragged to.
-  useLayoutEffect(() => { if (!group && mode === 'normal') setDragged(openFullHeight()) }, [group, mode])
+  // A new message opens full height (the box is mounted again for it: a key in right-col.tsx), whatever height the others were dragged to. It is
+  // measured once the app is on screen: a page opened before that (a link to an address, with no account) has no boxes to measure, and the field would open far too tall.
+  const appShown = useSyncExternalStore(shell.subscribe, () => shell.get().appShown)
+  useLayoutEffect(() => { if (appShown && !group && mode === 'normal') setDragged(openFullHeight()) }, [group, mode, appShown])
   const latest = useRef({ group, config })
   latest.current = { group, config }
 
@@ -155,8 +158,9 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
       setSending(true)
       void (async () => {
         try {
-          try { await createAccountInBackground() }
-          catch (error) { if (!/taken/.test(String(error instanceof Error ? error.message : error))) throw error; await createAccountInBackground(randomAlias()) }
+          // The account is made with the name its face was drawn from (the tab's icon); a name that is taken is replaced, and the face with it.
+          try { await createAccountInBackground(provisionalAlias.get()) }
+          catch (error) { if (!/taken/.test(String(error instanceof Error ? error.message : error))) throw error; provisionalAlias.set(randomAlias()); await createAccountInBackground(provisionalAlias.get()) }
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error)
           console.info('[signup] the account was not made in the background:', reason)

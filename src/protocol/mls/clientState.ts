@@ -850,7 +850,7 @@ export async function applyProposals(
     // updated) member cannot compute; with no path the commit secret is a zero
     // buffer, every party derives the same next epoch, and a member removed by
     // a single-Remove commit goes on decrypting everything sent afterwards.
-    // Device removal being cryptographic is why biset adopted MLS at all
+    // Device removal being cryptographic is why comail adopted MLS at all
     // (src/mls/self-group.ts), so this one line is the fork's reason for
     // existing. Pinned by test/mls-core.test.ts.
     const needsUpdatePath = allProposals.length === 0 || grouped.update.length > 0 || grouped.remove.length > 0

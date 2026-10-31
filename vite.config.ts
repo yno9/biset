@@ -80,8 +80,8 @@ function licenseNotice(moduleIds: Iterable<string>): string {
 
 const bundledModules = new Set<string>()
 
-const biset = (): Plugin => ({
-  name: 'biset',
+const comail = (): Plugin => ({
+  name: 'comail',
   // The modules whose code is in the bundle, for the licence notice.
   renderChunk(_code, chunk) { for (const [id, rendered] of Object.entries(chunk.modules)) if (rendered.renderedLength > 0) bundledModules.add(id); return null },
   // The deployment's config reaches the page as a global, before the app script runs.
@@ -124,7 +124,7 @@ export default defineConfig({
   base: './',
   publicDir: false,
   define: { __BISET_VERSION__: JSON.stringify(appVersion()) },
-  plugins: [react(), biset(), viteSingleFile()],
+  plugins: [react(), comail(), viteSingleFile()],
   // lft is a sibling checkout (linked in package.json): its source is served and compiled from there.
   server: { port: 3000, fs: { allow: [resolve('.'), resolve('../lft')] } },
   build: {

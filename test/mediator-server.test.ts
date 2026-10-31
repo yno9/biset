@@ -278,7 +278,7 @@ describe('blind mediator', () => {
 })
 
 // What a standard DIDComm client sends: the bodies exactly as Coordinate
-// Mediation 3.0 and Pickup 3.0 define them, with no biset `device` label.
+// Mediation 3.0 and Pickup 3.0 define them, with no comail `device` label.
 describe('a standard client of the mediator', () => {
   test('registers, is queued to, picks up and acknowledges without naming a device', async () => {
     const { request, forward, store } = freshMediator()

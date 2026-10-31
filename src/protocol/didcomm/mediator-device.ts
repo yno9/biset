@@ -21,7 +21,7 @@ function mediatorDeviceLabel(deviceSecret: Uint8Array, did: string): string {
 /** The inbox a request that names no `device` belongs to: one per sending
  * key. Coordinate Mediation 3.0 and Pickup 3.0 have no `device` field -- a
  * standard client holds one inbox per key it authenticates with -- so the
- * mediator derives the label from the key's own kid. `device` is a biset
+ * mediator derives the label from the key's own kid. `device` is a comail
  * extension for the case where several devices share ONE key (a
  * relationship did:peer), which a kid cannot tell apart. */
 export function defaultDeviceLabel(senderKid: string): string {

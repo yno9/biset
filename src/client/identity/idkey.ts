@@ -1,4 +1,4 @@
-// The stable internal identity key -- biset's SECOND thin method abstraction,
+// The stable internal identity key -- comail's SECOND thin method abstraction,
 // alongside `resolveDidDocument(did)`.
 //
 // A did:vh DID is `did:vh:{SCID}` and nothing else: it names no host, so moving the
@@ -13,7 +13,7 @@
 import { vhScidOf } from '../../protocol/vh/identifier.ts'
 
 /** Normalizes an identity string (a DID, or a plain email for a DID-less
- * relay) to the key biset indexes it under internally. Total and lossless for
+ * relay) to the key comail indexes it under internally. Total and lossless for
  * anything it doesn't recognize: an email or a malformed did:vh both come
  * back unchanged, so callers can pass whatever identifier they hold without
  * pre-checking what it is. */

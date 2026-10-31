@@ -19,7 +19,7 @@ export interface DidCommPlaintext {
   // only ever in answer to a `please_ack` (mediator/server.ts's problemReply).
   ack?: string[]
   // please_ack: the sender asking to be told the message arrived. Read, not
-  // written -- biset never requests one, but the mediator must recognize one
+  // written -- comail never requests one, but the mediator must recognize one
   // to know when answering with `ack` is warranted.
   please_ack?: string[]
   // return_route (DIDComm v2.1 transports / Pickup 3.0): "all" asks the

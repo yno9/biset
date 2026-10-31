@@ -48,7 +48,7 @@ export interface RecipientEntry {
 }
 
 /** recipient-query -> recipient: the DIDs registered for this key, here at
- * most the one it owns, each with the `last_seen` of its inboxes (a biset
+ * most the one it owns, each with the `last_seen` of its inboxes (a comail
  * extension, `devices`). Throws on any transport or protocol failure: never
  * prune on "couldn't ask". */
 export async function queryRecipients(mediator: MediatorInfo, own: DidCommSender, fetchImpl: typeof fetch = defaultFetch()): Promise<RecipientEntry[]> {

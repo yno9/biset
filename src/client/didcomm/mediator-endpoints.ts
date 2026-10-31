@@ -51,10 +51,10 @@ export function preferredMediatorUrl(endpoints: MediatorEndpoints, torReachable:
  * even attempts a `.onion` fetch (I-3) and no Tor Browser fingerprinting
  * (User-Agent, screen size, timezone, ...) is ever consulted (I-6).
  *
- * Until biset's own app is additionally served over an onion address, this
+ * Until comail's own app is additionally served over an onion address, this
  * is always false and every session behaves exactly as before (I-5) --
  * accepting Tor Browser *visitors of the mediator* without them dialing in
- * from an onion biset front end is a later increment, not this plan's v1.
+ * from an onion comail front end is a later increment, not this plan's v1.
  */
 export function isTorEnvironment(hostname: string = safeLocationHostname()): boolean {
   return isOnionUrl(`http://${hostname}`)

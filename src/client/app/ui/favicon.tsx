@@ -8,6 +8,9 @@ import { useStore } from '../react/store.ts'
 import { accountConfig } from './account/state.ts'
 import { useOwnProfile } from './account/use-own-profile.ts'
 import { partColors, usePartColors } from './color-settings.ts'
+import { avatarSeed } from './did-display.ts'
+import { readBisetConfig } from './config.ts'
+import { heldIdentity, provisionalAlias } from './signup-preload.ts'
 
 const SIZE = 64
 
@@ -51,11 +54,20 @@ export function Favicon() {
   const did = config?.did ?? undefined
   const own = useOwnProfile(config?.profile)
   const colors = usePartColors('avatar')
+  // With no account the person's avatar is not settled: the face of the name the account will be made with stands in (the sign-up page draws the same), or
+  // of the identity this browser's wallet already holds.
+  const held = useStore(heldIdentity)
+  const alias = useStore(provisionalAlias)
+  const deployment = readBisetConfig()
+  const standIn = avatarSeed(held ?? `${alias.trim()}@${(deployment.identityDomain || deployment.mailGateways[0] || '').toLowerCase()}`)
   useEffect(() => {
     const link = iconLink()
     if (!link) return
     original ??= { href: link.href, type: link.type }
-    if (!did) { link.href = original.href; link.type = original.type; return }
+    if (!did) {
+      const timer = setTimeout(() => { link.type = 'image/svg+xml'; link.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedAvatarSvg(standIn))}` }, 0)
+      return () => clearTimeout(timer)
+    }
     // The address the identity is published at (a did:vh DID names none).
     const label = config?.wallet?.handle ?? ''
     let current = true
@@ -64,6 +76,6 @@ export function Favicon() {
     if (own.avatar) void roundPicture(own.avatar).then(href => show(href, href.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'))
     else timer = setTimeout(() => show(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedAvatarSvg(own.name?.trim() || label))}`, 'image/svg+xml'), 0)
     return () => { current = false; clearTimeout(timer) }
-  }, [did, own.name, own.avatar, colors])
+  }, [did, own.name, own.avatar, colors, standIn])
   return null
 }

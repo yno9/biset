@@ -220,7 +220,7 @@ ok('removeMembers(..., false) emits a PrivateMessage commit',
   decodeMlsMessage(privateWire.commit, 0)?.[0]?.wireformat === 'mls_private_message',
   String(decodeMlsMessage(privateWire.commit, 0)?.[0]?.wireformat))
 
-// A leaf that isn't a biset DID URL must not be read as a member.
+// A leaf that isn't a comail DID URL must not be read as a member.
 let rejected = false
 try { await generateOwnKeyPackage({} as never, new Uint8Array(32)) } catch { rejected = true }
 ok('a credential without a key fragment is refused', rejected)

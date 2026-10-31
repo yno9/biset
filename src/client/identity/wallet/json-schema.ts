@@ -11,7 +11,7 @@
  * did-md-oauth.ts and did.md's own server.ts).
  *
  * Why not ajv (or another existing library) instead: neither did.md nor
- * Biset has a JSON Schema/validation-library dependency anywhere today --
+ * Comail has a JSON Schema/validation-library dependency anywhere today --
  * every wire-format check in both repos is a small hand-written function.
  * ajv's default compilation strategy also generates and evaluates JS code
  * at runtime (`new Function`), which this application -- a key-management

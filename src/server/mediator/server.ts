@@ -29,7 +29,7 @@
 //
 // Ownership says nothing about WHICH of X's devices is asking, and a
 // relationship did:peer shares one key across all of them, so a request MAY
-// also name its inbox with a `device` label (a biset extension field): one
+// also name its inbox with a `device` label (a comail extension field): one
 // inbox per (X, device), at most `maxDevicesPerDid` per X. A request without
 // `device` -- every standard client's -- uses the inbox derived from its own
 // sending key (`defaultDeviceLabel`). A Forward for X is copied into every
@@ -480,7 +480,7 @@ export function createMediator({
       case RECIPIENT_QUERY: {
         // One entry per registered DID (Coordinate Mediation 3.0): the DID
         // this key owns, if it has any inbox here. `devices` -- one
-        // `last_seen` per inbox -- is a biset extension: what a user needs to
+        // `last_seen` per inbox -- is a comail extension: what a user needs to
         // see at the device limit. The inboxes' device labels are NOT listed:
         // anyone holding a DID's key may query, and a relationship did:peer's
         // key is shared by every device -- including one the identity later

@@ -1,6 +1,6 @@
 // ── スレッド判定 ──────────────────────────────────────────────────────────────
 //
-// biset は JMAP クライアントなので、スレッドの単位は JMAP の Thread
+// comail は JMAP クライアントなので、スレッドの単位は JMAP の Thread
 // （email.threadId）そのもの。こちらで Subject 等から独自に推測はしない。
 //
 // ただし DeltaChat は In-Reply-To / References を暗号化 MIME の中にしか置かない。

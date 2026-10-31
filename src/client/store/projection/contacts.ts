@@ -189,7 +189,7 @@ function assertAutocryptState(value: unknown): void {
 }
 
 /** Checks a whole card: RFC 9553's required properties, RFC 9610's
- * `addressBookIds`, the Id-typed maps biset reads, and the DIDComm state. */
+ * `addressBookIds`, the Id-typed maps comail reads, and the DIDComm state. */
 export function assertContactCard(value: unknown): LocalJmapContactCard {
   if (!isObject(value)) throw new TypeError('contact card must be an object')
   if (value['@type'] !== 'Card' || value.version !== '1.0') throw new TypeError('contact card must be a JSContact 1.0 Card')
@@ -346,7 +346,7 @@ export function counterpartyOfRotatedDid(cards: readonly LocalJmapContactCard[],
   return undefined
 }
 
-/** The public DID of a card: its `didcomm` online service (what biset writes),
+/** The public DID of a card: its `didcomm` online service (what comail writes),
  * else the first online service whose uri is a DID (a card written by hand). */
 export function publicDidOf(card: LocalJmapContactCard): string | undefined {
   if (!isObject(card.onlineServices)) return undefined
@@ -532,7 +532,7 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
     next: for (const [creationId, value] of Object.entries(arguments_.create)) {
       try {
         if (!isObject(value)) throw new TypeError('a card must be an object')
-        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, SOURCES_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by biset` }; continue next }
+        for (const managed of [DIDCOMM_CONTACT_PROPERTY, AUTOCRYPT_CONTACT_PROPERTY, SOURCES_PROPERTY]) if (managed in value) { result.notCreated[creationId] = { type: 'forbidden', description: `${managed} is managed by comail` }; continue next }
         if ([...SERVER_SET].some(key => key in value)) throw new TypeError('id is set by the server')
         const uid = typeof value.uid === 'string' && value.uid ? value.uid : newUid()
         const id = contactCardId(uid)
@@ -553,7 +553,7 @@ export function contactCardSet(arguments_: Record<string, unknown>, cards: reado
       if (!card) { result.notUpdated[id] = { type: 'notFound', description: 'no such card' }; continue }
       try {
         const patch = assertPatchShape(value)
-        if (Object.keys(patch).some(touchesDidComm)) { result.notUpdated[id] = { type: 'forbidden', description: `${DIDCOMM_CONTACT_PROPERTY} is managed by biset` }; continue }
+        if (Object.keys(patch).some(touchesDidComm)) { result.notUpdated[id] = { type: 'forbidden', description: `${DIDCOMM_CONTACT_PROPERTY} is managed by comail` }; continue }
         for (const path of Object.keys(patch)) {
           const tokens = pointer(path)
           if (tokens[0] === 'id' || tokens[0] === 'uid' || tokens[0] === '@type') throw new TypeError(`${tokens[0]} is immutable`)

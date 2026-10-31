@@ -30,7 +30,7 @@ export type DidMdPendingAuthorization = {
   /** Omitted for a Wallet request that edits nothing. */
   documentEdit?: DidCoreDocumentEdit
   /** Present only for a Wallet approval that explicitly publishes this
-   * browser's Biset DIDComm endpoint. */
+   * browser's Comail DIDComm endpoint. */
   bisetDidCommDevice?: DidMdBisetDidCommDeviceMaterial & {
     mediatorUrl: string
     routingKid: string
@@ -182,34 +182,34 @@ async function materialWrappingKey(): Promise<CryptoKey> {
         result = candidate
         store.put(candidate, MATERIAL_KEY_ID)
       }
-      request.onerror = () => reject(request.error ?? new Error('Could not read Biset device wrapping key'))
-      transaction.oncomplete = () => result ? resolve(result) : reject(new Error('Could not create Biset device wrapping key'))
-      transaction.onerror = () => reject(transaction.error ?? new Error('Could not save Biset device wrapping key'))
-      transaction.onabort = () => reject(transaction.error ?? new Error('Biset device wrapping key transaction aborted'))
+      request.onerror = () => reject(request.error ?? new Error('Could not read Comail device wrapping key'))
+      transaction.oncomplete = () => result ? resolve(result) : reject(new Error('Could not create Comail device wrapping key'))
+      transaction.onerror = () => reject(transaction.error ?? new Error('Could not save Comail device wrapping key'))
+      transaction.onabort = () => reject(transaction.error ?? new Error('Comail device wrapping key transaction aborted'))
     })
   } finally { db.close() }
 }
 
 function assertDidCommPrivateMaterial(value: OpenDidMdBisetDidCommDeviceMaterial): void {
-  if (!(value.x25519PrivateKey instanceof Uint8Array) || value.x25519PrivateKey.length !== 32 || !(value.mediatorDeviceSecret instanceof Uint8Array) || value.mediatorDeviceSecret.length !== 32) throw new TypeError('Biset DIDComm device private material is invalid')
+  if (!(value.x25519PrivateKey instanceof Uint8Array) || value.x25519PrivateKey.length !== 32 || !(value.mediatorDeviceSecret instanceof Uint8Array) || value.mediatorDeviceSecret.length !== 32) throw new TypeError('Comail DIDComm device private material is invalid')
 }
 
 function assertSealedDidCommMaterial(value: DidMdBisetDidCommDeviceMaterial): void {
   if (value.v !== 2 || !(value.x25519PublicKey instanceof Uint8Array) || value.x25519PublicKey.length !== 32
     || !(value.sealed?.iv instanceof Uint8Array) || value.sealed.iv.length !== 12
     || !(value.sealed?.ciphertext instanceof Uint8Array) || value.sealed.ciphertext.length < 17) {
-    throw new TypeError('Biset DIDComm device material is invalid')
+    throw new TypeError('Comail DIDComm device material is invalid')
   }
 }
 
-/** Seals a Biset DIDComm X25519 private leaf with a context-bound envelope
+/** Seals a Comail DIDComm X25519 private leaf with a context-bound envelope
  * under this origin's non-extractable browser key. */
 export async function sealDidMdBisetDidCommDeviceMaterial(
   x25519PublicKey: Uint8Array,
   privateMaterial: OpenDidMdBisetDidCommDeviceMaterial,
 ): Promise<DidMdBisetDidCommDeviceMaterial> {
   assertDidCommPrivateMaterial(privateMaterial)
-  if (!(x25519PublicKey instanceof Uint8Array) || x25519PublicKey.length !== 32) throw new TypeError('Biset DIDComm device public key is invalid')
+  if (!(x25519PublicKey instanceof Uint8Array) || x25519PublicKey.length !== 32) throw new TypeError('Comail DIDComm device public key is invalid')
   const key = await materialWrappingKey()
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const additionalData = didCommMaterialAad(x25519PublicKey)
@@ -228,10 +228,10 @@ export async function openDidMdBisetDidCommDeviceMaterial(value: DidMdBisetDidCo
     const ciphertext = new Uint8Array(value.sealed.ciphertext.length); ciphertext.set(value.sealed.ciphertext)
     const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData }, key, ciphertext)
     decoded = JSON.parse(new TextDecoder().decode(plaintext))
-  } catch { throw new Error('Biset DIDComm device material could not be decrypted on this browser') }
-  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Biset DIDComm device material is invalid')
+  } catch { throw new Error('Comail DIDComm device material could not be decrypted on this browser') }
+  if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('Comail DIDComm device material is invalid')
   const input = decoded as Record<string, unknown>
-  if (input.v !== 2 || !Array.isArray(input.x25519PrivateKey) || !Array.isArray(input.mediatorDeviceSecret)) throw new Error('Biset DIDComm device material is invalid')
+  if (input.v !== 2 || !Array.isArray(input.x25519PrivateKey) || !Array.isArray(input.mediatorDeviceSecret)) throw new Error('Comail DIDComm device material is invalid')
   const privateMaterial = { x25519PrivateKey: new Uint8Array(input.x25519PrivateKey), mediatorDeviceSecret: new Uint8Array(input.mediatorDeviceSecret) }
   assertDidCommPrivateMaterial(privateMaterial)
   return privateMaterial

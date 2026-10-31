@@ -1,6 +1,6 @@
-// The one MLS ciphersuite biset speaks, and the one place it is instantiated.
+// The one MLS ciphersuite comail speaks, and the one place it is instantiated.
 //
-// PLANMLS.md picks ts-mls; biset carries a fork of it in `vendor/` (see
+// PLANMLS.md picks ts-mls; comail carries a fork of it in `vendor/` (see
 // `vendor/VENDOR.md` for why), and this module is the whole of the rest of the
 // app's coupling to it — a suite change is a change here and nowhere else.
 //

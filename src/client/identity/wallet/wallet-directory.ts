@@ -1,6 +1,6 @@
 /**
  * PLAN4 (~/did.md/PLAN4-wallet-connector.md): the "connect with [...]" wallet
- * button abstraction. biset accepts any wallet that speaks the did.md
+ * button abstraction. comail accepts any wallet that speaks the did.md
  * protocol family (SIOPv2/OID4VP-shaped, see ~/did.md/SPEC.md §5) -- did-md-
  * oauth.ts is not dito-specific code that happens to also work elsewhere;
  * it is the SIOPv2/OID4VP client, and dito is one entry in this directory,

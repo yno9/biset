@@ -1,4 +1,4 @@
-# Biset アーキテクチャ
+# Comail アーキテクチャ
 
 > 調査基準日: 2026-10-21（Asia/Tokyo）
 > 調査対象: `~/dev/v2/biset` の `main`（HEAD `60baf4a`）。DIDComm Messaging v2.1 への適合は 2026-10-09 に評価した（§9.9）。メール UI は `did.md`（`./deploy.sh mail`）に、2026-10-21 のビルドを配備済み。
@@ -8,10 +8,10 @@
 
 ## 0. 要約
 
-- **Biset は、メールと DIDComm のデータを利用者の端末側（ブラウザの IndexedDB）に暗号化して保管する通信クライアント**である。
+- **Comail は、メールと DIDComm のデータを利用者の端末側（ブラウザの IndexedDB）に暗号化して保管する通信クライアント**である。
   サーバーに恒久的なメールボックスやメッセージ履歴は無い。
-- **identity は外部（did.md）が発行・ホストする。** biset は did:vh と did:web を解決するクライアントに徹し、公開文書を自分では書かない。
-  利用者は did.md Wallet（SIOPv2／OID4VP）で biset の端末を承認し、biset は端末鍵（thumbprint）に束縛された端末セッションを持つ（§5）。
+- **identity は外部（did.md）が発行・ホストする。** comail は did:vh と did:web を解決するクライアントに徹し、公開文書を自分では書かない。
+  利用者は did.md Wallet（SIOPv2／OID4VP）で comail の端末を承認し、comail は端末鍵（thumbprint）に束縛された端末セッションを持つ（§5）。
 - **端末集合の唯一の権威は DID Document の `keyAgreement`** である。送信者は全端末の鍵に 1 通で暗号化し（multiplexed encryption）、
   mediator は端末ごとの受信箱に配る。端末を外すことは、DID Document から鍵を消すことと同じ意味になる（§5.6、§9）。
 - **長期の正本は端末の暗号化 Vault（event ＋ 暗号文 object ＋ SegmentKey）**で、UI が読む JMAP 形の projection は
@@ -19,9 +19,9 @@
 - **複数端末の同期は DIDComm 上の「Vault Sync」**で、自分の DID 宛ての通常の DIDComm メッセージとして送る。専用サーバーも専用の鍵も無い（§8）。
 - **mediator は DIDComm v2.1 の標準手順で話す**: HTTPS POST と WebSocket、`return_route`、Pickup 3.0 の live mode、
   `application/didcomm-encrypted+json`、Trust Ping（§11.1）。
-- biset が自分で運用するサーバーは **mediator** だけ。did.md への認可要求は署名しない（rp-signer は 2026-10 に廃止、§5.2）。
-  **メールは biset の外**: 別リポジトリの **didmail**（SMTP ⇄ DIDComm bridge）が外部アドレスを `did:web` の DID として見せ、
-  biset はそれを普通の DIDComm の相手として扱う。アドレスから DID へは WebFinger で引く（§10）。
+- comail が自分で運用するサーバーは **mediator** だけ。did.md への認可要求は署名しない（rp-signer は 2026-10 に廃止、§5.2）。
+  **メールは comail の外**: 別リポジトリの **didmail**（SMTP ⇄ DIDComm bridge）が外部アドレスを `did:web` の DID として見せ、
+  comail はそれを普通の DIDComm の相手として扱う。アドレスから DID へは WebFinger で引く（§10）。
 - **メールの PGP は Delta Chat と相互運用する**（Autocrypt v1 ＋ Secure-Join）。PGP 鍵は generation seed から導出し、主鍵は DID 文書の `#biset-generation`（Ed25519）そのもの（§10.4）。**Autocrypt v2（PQ）は保留**（§10.5）。
 - **世代（VCK）・routing alias・関係秘密・ML-KEM・Vault event の署名・MLS 端末証明書は、すべて撤去済み**（§1.4）。
 
@@ -126,9 +126,9 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
   同一 entity への競合は per-entity の last-writer-wins で解決する。CRDT ライブラリは使わない。
 - **端末集合の権威は DID Document だけ。** mediator は信頼の根拠にしない（ただの仲介役）。最初の端末かどうかも DID ログで決める（§9.2）。
 - **mediator は blind queue。** 内側の DIDComm JWE を復号しない。Vault plaintext・SegmentKey を知る必要が無い。
-- **identity の発行とホスティングは biset の責務ではない。** biset は解決するクライアントに徹し、公開文書を書かない。
+- **identity の発行とホスティングは comail の責務ではない。** comail は解決するクライアントに徹し、公開文書を書かない。
   wallet は SIOPv2 の serverless な形で、サーバー側の失効の仕組みは持たない。
-- **復旧に必要な履歴本体を biset のサーバーに置かない。** 履歴の移送経路は二本だけ（起動中の兄弟端末との Vault Sync、利用者が持つ JMAP export ファイル）。
+- **復旧に必要な履歴本体を comail のサーバーに置かない。** 履歴の移送経路は二本だけ（起動中の兄弟端末との Vault Sync、利用者が持つ JMAP export ファイル）。
 - **DID と到達手段（URL）は別物。** 相手ごとの did:peer（Y）には mediator の DID だけを埋め、URL（clearnet・onion）は mediator の DID の解決で得る（§9.8）。
 - **同じ意味の処理は共通関数に 1 つだけ置く。** endpoint の選択（`service-endpoint.ts`）、keyAgreement の読み取り（`keyAgreementRecipients`）、
   DIDComm の HTTP 送信（`didCommPost`）などは、この方針で統合された。
@@ -152,7 +152,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 ## 3. システム全体像
 
 ```text
-┌──────────────────────── Biset Client（ブラウザ） ───────────────────────┐
+┌──────────────────────── Comail Client（ブラウザ） ───────────────────────┐
 │ UI ─ JMAP projection（派生）                                            │
 │        ▲ VaultProjector（唯一の writer）                                │
 │  IndexedDB Vault（ログ層）  ／ did.md Wallet セッション ／ DIDComm      │
@@ -180,10 +180,10 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | **Mediator** | `src/server/mediator/index.ts` | ✅ 本番稼働（v2、`127.0.0.1:8791`、Caddy 経由で `mediator.biset.md`） |
 | biset-mimi | `src/server/mimi/index.ts` | 🔧 サーバーとしては動くが、クライアントからの呼び出し経路が無い（将来の MIMI クライアントのために残す） |
 | **クライアント** | `src/client/app/main.ts` | ✅ `did.md`（`./deploy.sh mail`）。`t.biset.md` は廃止の方針。`file://` の `dist/index.html` でも動く |
-| tor | v2 の `tor@default`（did.md と共有） | ✅ Hidden Service が 2 つ（did.md の `didmd-app`、biset の mediator） |
+| tor | v2 の `tor@default`（did.md と共有） | ✅ Hidden Service が 2 つ（did.md の `didmd-app`、comail の mediator） |
 
-did.md は biset が運用するものではなく、依存する外部サービスである（identity の発行とホスト、wallet の承認）。
-本番の biset と did.md は**同じホスト v2 に同居**している（Caddy、tor、did.md の各サービス）。
+did.md は comail が運用するものではなく、依存する外部サービスである（identity の発行とホスト、wallet の承認）。
+本番の comail と did.md は**同じホスト v2 に同居**している（Caddy、tor、did.md の各サービス）。
 
 ## 4. 信頼境界
 
@@ -198,8 +198,8 @@ did.md は biset が運用するものではなく、依存する外部サービ
 
 ### 4.2 did.md を信頼する範囲
 did.md は identity の発行元かつホスト、wallet の承認者である。知り得るのは公開文書と、承認・capability に伴う metadata。
-Vault plaintext・SegmentKey・generation seed を知る必要は無く、**wallet から biset へ渡る秘密は無い**（derived secret の要求は撤去済み）。
-biset は did.md の controller 鍵を保持しない。
+Vault plaintext・SegmentKey・generation seed を知る必要は無く、**wallet から comail へ渡る秘密は無い**（derived secret の要求は撤去済み）。
+comail は did.md の controller 鍵を保持しない。
 
 ### 4.3 Mediator を信頼する範囲
 blind queue。内側の JWE は読めない。観測できるのは、登録された DID と端末ラベル、受信箱ごとの queue 数・時刻、接続元 IP、外側 Forward の `next`（宛先 DID）。
@@ -218,13 +218,13 @@ import は確認ダイアログを経て、別の identity の export は拒否�
 
 ## 5. Identity と did.md Wallet
 
-### 5.1 biset は identity を作らない
-発行とホスティングは did.md が行う。biset は did:vh を**解決**し、wallet の承認を経て端末を登録する。
+### 5.1 comail は identity を作らない
+発行とホスティングは did.md が行う。comail は did:vh を**解決**し、wallet の承認を経て端末を登録する。
 
 ### 5.2 認証経路（SIOPv2 / OID4VP）
 
 `src/client/identity/wallet/did-md-oauth.ts` が唯一の入口である。OAuth は使わない（メタデータ・クライアント登録・トークン・DPoP・リフレッシュ・`iss` 応答のどれも無い）。
-biset は **鍵を持たない RP** として、OpenID4VP 1.0 §5.9.3 の `redirect_uri` 形式で wallet に頼む。要求は署名しない。
+comail は **鍵を持たない RP** として、OpenID4VP 1.0 §5.9.3 の `redirect_uri` 形式で wallet に頼む。要求は署名しない。
 
 | 項目 | 値 |
 |---|---|
@@ -243,7 +243,7 @@ biset は **鍵を持たない RP** として、OpenID4VP 1.0 §5.9.3 の `redir
 
 ### 5.3 capability と端末セッション
 
-- capability は **Biset 所有の VC-DM 2.0**（`type: biset.md/MessengerCapability`）。形は
+- capability は **Comail 所有の VC-DM 2.0**（`type: biset.md/MessengerCapability`）。形は
   `src/client/identity/wallet/schemas/biset-messenger-capability.schema.json`（JSON Schema 2020-12）が唯一の正本で、
   `json-schema.ts`（`eval` を使わない最小の解釈器）が検証する。`authorizationDetails` は省略可能で、要素は DID 編集だけ。
 - 検証の順序: スキーマ → `issuer`・`audience`・`deviceJkt`・期限・必須 scope（`biset:device`、`biset:vault`）→ Data Integrity Proof（Root 鍵）→
@@ -255,7 +255,7 @@ biset は **鍵を持たない RP** として、OpenID4VP 1.0 §5.9.3 の `redir
 
 ### 5.4 DID Document の編集契約（`urn:did-core:document-edit:v1`）
 
-biset は DID Document を直接書かず、**編集の要求を wallet に渡し、承認後に wallet が署名付きログへ書く**。契約は did.md 側にある。
+comail は DID Document を直接書かず、**編集の要求を wallet に渡し、承認後に wallet が署名付きログへ書く**。契約は did.md 側にある。
 
 | 項目 | 意味 |
 |---|---|
@@ -269,7 +269,7 @@ biset は DID Document を直接書かず、**編集の要求を wallet に渡�
 | `removeEndpoints: [{serviceId, match}]` | `match` の全プロパティが一致する endpoint を、その service から削除する。全部消えたら service ごと消える |
 
 - **適用は承認の瞬間に、wallet が持つ現在の状態に対して行う**（`did.md/packages/wallet/src/did-document-edit.ts` の `withDidDocumentEdit`）。
-- biset の使い方（`buildDocumentEdit`）: `#didcomm` は常に `merge`。ログインは clearnet の要素だけを足す。「Enable Tor」は clearnet と onion の 2 要素を足す。
+- comail の使い方（`buildDocumentEdit`）: `#didcomm` は常に `merge`。ログインは clearnet の要素だけを足す。「Enable Tor」は clearnet と onion の 2 要素を足す。
   「Edit server」は mediator が**変わるときだけ**、古い `routingKid` に一致する要素を `removeEndpoints` で消す。
 - **承認後の検証**（`did-document-edit-check.ts`）: replace なら「公開された service が要求と一致」、merge なら「要求した要素をすべて含む」、
   `removeEndpoints` なら「一致する要素が残っていない」。公開結果は、CDN を避けた読み取り（`freshFetch`）で確かめる。
@@ -282,7 +282,7 @@ biset は DID Document を直接書かず、**編集の要求を wallet に渡�
 | `service #didcomm`（`DIDCommMessaging`） | `{uri, accept, routingKeys}`。**単一の map、または clearnet＋onion の配列**。`routingKeys` は mediator の did:peer の kid |
 | `service #udi-wallet-issuer` | did.md が付ける |
 
-**`#didcomm` の優先順位**: 配列の順序が所有者の希望順（DIDComm 2.1）。biset は clearnet を先に置く。
+**`#didcomm` の優先順位**: 配列の順序が所有者の希望順（DIDComm 2.1）。comail は clearnet を先に置く。
 
 ### 5.6 端末集合・端末の外し方
 
@@ -429,7 +429,7 @@ INIT/ACCEPT の握手は無い（P0 で撤去）。
 - **経路**（`did-rotation.ts` の `chooseRoute`、1:1・group・応答の全部がこれを通る）: 宛先は相手の連絡先の `rotations` のうち最新の DID、無ければ公開 DID。
   送り元は、自分の移動を始めていれば Y、そうでなければ端末の front door の鍵。Y からは、相手が Y に書いてくるまで `from_prior`（`iss` = 公開 DID、seed の署名鍵）を付ける。
   seed が使えない端末（届く前など）や、公開 DID Document の `#didcomm` が mediator を DID でなく URL で指す identity（Y に埋められない）は、front door から送る。
-- **移るかどうか**: Discover Features 2.0 で `header` の `from_prior` を問い合わせる（相手へ初めて送った後、または相手から届いた後、セッションごとに 1 回）。biset 自身も応答する。送り主を認証しない（anoncrypt の）Discover Features には応答も処理もしない。
+- **移るかどうか**: Discover Features 2.0 で `header` の `from_prior` を問い合わせる（相手へ初めて送った後、または相手から届いた後、セッションごとに 1 回）。comail 自身も応答する。送り主を認証しない（anoncrypt の）Discover Features には応答も処理もしない。
   対応を表明した相手には、Y の受信箱を mediator に登録してから、連絡先に `own.<Y>.startedAt` を書き、Y から `from_prior` 付きの ping を送る。相手が Y に書いてきたら `confirmedAt`。
   相手が `from_prior` 付きで来たら、こちらも移る。
 - **Y**: seed と相手の公開 DID から導く did:peer:2（`deriveRelationshipPeerIdentity`）。service の `uri` は公開 DID Document の `#didcomm` の mediator（`did:web`）。どの端末でも同じ Y になる。
@@ -492,7 +492,7 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 - **選択の規則**（`protocol/didcomm/service-endpoint.ts` の `selectDidCommEndpoint`）: 単一 map はそのまま。集合は clearnet を返し、Tor 環境（`preferOnion`）で、`routingKeys` が同一の onion があれば onion を返す。
   onion のみ・空・不正な要素の集合は route なし。読み取りの経路（通常の送信、`did:web`、mail bridge、mail relay、Vault Sync）がこの規則に揃っている。
 - **Tor 環境の判定**（`isTorEnvironment`）は、**ページ自身が onion のホストから配信されているときだけ**真になる。
-  biset の app は onion からは配信されていないため、現状では常に偽。WebSocket の URL は入口の URL から作る（https → wss、onion の http → ws）。
+  comail の app は onion からは配信されていないため、現状では常に偽。WebSocket の URL は入口の URL から作る（https → wss、onion の http → ws）。
 - **DID には URL を埋めない**: Y の service は mediator の DID（§9.2）。`sameMediatorUrl`（`mediator-endpoints.ts`）は、clearnet と onion を同じ mediator の別名として扱う。
 - **実機**: onion での登録・Forward の POST・配信は 2026-10-01 に SSE 時代の実装で確認した。**WebSocket 化後の onion 経由は未確認**（❓）。
 - **rate limit の注意**: mediator は `x-forwarded-for` の先頭、無ければ接続元 IP を単位に 1 分あたり 3000 件を数える（WebSocket はフレームごと）。
@@ -505,21 +505,21 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 **MUST を満たしていないもの（❌）**: 無し（2026-10-09 にすべて直した）。
 
 **2026-10-09 に直した MUST**
-| 要件 | 仕様 | biset |
+| 要件 | 仕様 | comail |
 |---|---|---|
-| 鍵合意の曲線 | X25519・P-384・P-256 を MUST | 3 つとも暗号化・復号できる（`key-agreement.ts`。NIST 曲線は ECDH の x 座標を Z にし、受け取った点が曲線上にあるかを確かめる）。DID 文書の Multikey と JWK、did:peer:2 から読む。1 つの JWE は 1 つの曲線（`epk` が 1 つ）なので、authcrypt は送り手と同じ曲線の鍵へ、Forward は mediator の鍵の 1 つの曲線で包む。**biset 自身の鍵は X25519 だけ**なので、鍵合意の鍵が P-256／P-384 しか無い相手とは authcrypt できない（anoncrypt と Forward はできる） |
+| 鍵合意の曲線 | X25519・P-384・P-256 を MUST | 3 つとも暗号化・復号できる（`key-agreement.ts`。NIST 曲線は ECDH の x 座標を Z にし、受け取った点が曲線上にあるかを確かめる）。DID 文書の Multikey と JWK、did:peer:2 から読む。1 つの JWE は 1 つの曲線（`epk` が 1 つ）なので、authcrypt は送り手と同じ曲線の鍵へ、Forward は mediator の鍵の 1 つの曲線で包む。**comail 自身の鍵は X25519 だけ**なので、鍵合意の鍵が P-256／P-384 しか無い相手とは authcrypt できない（anoncrypt と Forward はできる） |
 | 署名つきメッセージ（JWS） | General／Flattened の処理、EdDSA・ES256・ES256K の検証、少なくとも 1 つで署名 | `jws.ts`・`open.ts`。署名の鍵は署名者の DID の `authentication` にあるものだけ。authcrypt と署名の両方があれば、署名者は authcrypt の送り主と同じ DID でなければエラー。anoncrypt の中の署名は送り主を認証する（Basic Message なども受け取れる）。暗号化されていない署名つきメッセージも受け取れる（受信箱から）。署名は EdDSA（mediator の problem-report）。`from_prior` も 3 つの署名アルゴリズムを受け付ける |
 | `id` の比較 | 大文字小文字を区別しない（MUST） | 重複の検出と group の `thid` は小文字にそろえて比べる（mediator は前から） |
 | 宛先の整合性（group） | 平文の `to` は暗号文の `kid` の DID を含む | §9.4（移った参加者への分だけ、`to` のその参加者の項目を did:peer にする） |
 
 **SHOULD・推奨を満たしていないもの（⚠️）**
 
-| 要件 | 仕様 | biset |
+| 要件 | 仕様 | comail |
 |---|---|---|
 | `id` の長さ | 32 バイト以下（ただし同じ節で UUID を推奨。UUID は 36 文字で、仕様の中で食い違っている） | UUID（36 文字） |
 | 受け手の `to` の確認 | 自分が `to` に無いとき、受け入れは拒否してはならず（MUST NOT）、利用者に警告する（SHOULD） | 受け入れて、コンソールに警告するだけ（利用者には出さない）。仕様の「整合性の違反は MUST でエラー」と食い違う |
 | endpoint の切り替え | 届かなければ別の endpoint を試す（SHOULD） | 1 つを選ぶだけ。endpoint の組は clearnet と onion で、onion は Tor 環境でしか届かないため、切り替えても通常のブラウザでは意味が無い |
-| `lang` | 人が読む文字列には `lang` で言語を示す（SHOULD） | Basic Message に `lang` を付けない（書いた言語を biset は知らない）。mediator の problem-report には付ける |
+| `lang` | 人が読む文字列には `lang` で言語を示す（SHOULD） | Basic Message に `lang` を付けない（書いた言語を comail は知らない）。mediator の problem-report には付ける |
 | problem-report | 処理できないときの返事として望ましい（一般的な要件ではない） | クライアントは相手に problem-report を返さない（mediator は返す）。受け取った problem-report は `didcomm.control` に記録するだけで、表示しない |
 | 暗号化されていない署名つきメッセージの POST | 転送のメディアタイプは中身に合わせる | mediator は `application/didcomm-encrypted+json` 以外を 415 で拒否する（mediator への要求は authcrypt を前提にした設計。Forward は anoncrypt） |
 | P-521 | 任意 | 対応しない |
@@ -546,9 +546,9 @@ mediator は clearnet（`https://mediator.biset.md`）と onion（v3 Hidden Serv
 
 ## 10. メール
 
-**biset はメールを送らないし、SMTP を知らない**。メールは別リポジトリの **didmail**（`~/dev/v2/didmail`、構成は `ARC.md`、仕様は `PROTOCOL.md`）が担い、
+**comail はメールを送らないし、SMTP を知らない**。メールは別リポジトリの **didmail**（`~/dev/v2/didmail`、構成は `ARC.md`、仕様は `PROTOCOL.md`）が担い、
 外部アドレス `local@domain` を `did:web:{bridge}:{domain}:{local}` の DID（文書はアクセスのたびに生成）として見せる。
-biset にとって外部アドレスは、その DID を持つ普通の DIDComm の相手であり、送受信は Basic Message 2.0 だけ。2026-10-09 に旧 mail-bridge（`mail-plugin`、`mail-relay`、`mail-bridge/1.0` の型、client の RFC 5322 組み立て）を撤去した。
+comail にとって外部アドレスは、その DID を持つ普通の DIDComm の相手であり、送受信は Basic Message 2.0 だけ。2026-10-09 に旧 mail-bridge（`mail-plugin`、`mail-relay`、`mail-bridge/1.0` の型、client の RFC 5322 組み立て）を撤去した。
 
 ### 10.1 アドレスから DID へ（WebFinger）
 compose の宛先にメールアドレスがあると、`resolveMailAddressDid`（`client/didcomm/address-resolver.ts`）が WebFinger（RFC 7033）で DID を引く。
@@ -568,7 +568,7 @@ didmail が SMTP で受けたメールを、宛先の did:vh の全 keyAgreement
 | `body.auth`（SPF／DKIM／DMARC） | `auth`（JMAP 外の拡張）。`dmarc` が `pass` でなければ、スレッドで差出人に「unverified」を付ける |
 
 ### 10.4 PGP と Delta Chat（2026-10-21。方針は didmail の `PLAN.md` §9）
-メールの PGP は、**暗号操作を biset、メールの運搬を didmail** が分担する。秘密鍵と平文は端末から出ない。didmail は `Autocrypt:` ヘッダと PGP/MIME を中身を解釈せずに運ぶ（`body.autocrypt`、`body.encryption="openpgp"` ＋ `pgp` 添付。`didmail/PROTOCOL.md` §5.5、§7.4）。
+メールの PGP は、**暗号操作を comail、メールの運搬を didmail** が分担する。秘密鍵と平文は端末から出ない。didmail は `Autocrypt:` ヘッダと PGP/MIME を中身を解釈せずに運ぶ（`body.autocrypt`、`body.encryption="openpgp"` ＋ `pgp` 添付。`didmail/PROTOCOL.md` §5.5、§7.4）。
 
 **鍵は導出する**（`client/pgp/derive.ts`、`own.ts`）。generation seed（§6）から決定的に作り、保管も同期もしない。全端末が同じ鍵（同じバイト列の証明書）になる。
 - 主鍵: DID 文書の `#biset-generation` と同じ Ed25519（EdDSA legacy、v4）。DID 文書が PGP 鍵のフィンガープリントを保証する。
@@ -578,7 +578,7 @@ didmail が SMTP で受けたメールを、宛先の did:vh の全 keyAgreement
 - アカウントページの「PGP key」カードは、フィンガープリント、公開鍵のコピー、**「Copy Delta Chat invite」**（Secure-Join の招待リンク）。seed が Vault に入るまでは、カードが取得を繰り返し確かめる。
 
 **Delta Chat とは Secure-Join で鍵つき連絡先になる**（`pgp/securejoin.ts`）。Delta Chat v2 は暗号化したチャットを「鍵つき連絡先」（フィンガープリントで識別）にだけ書く。`Autocrypt:` ヘッダだけでは鍵つき連絡先にならない。
-- 招待トークンは seed と日付から導き（30 日有効）、保管しない。biset は**招待される側ではなく、招待する側**。`vc-request-pubkey` と `vc-request-with-auth` に答える。答えは `Chat-Version: 1.0` 付き。
+- 招待トークンは seed と日付から導き（30 日有効）、保管しない。comail は**招待される側ではなく、招待する側**。`vc-request-pubkey` と `vc-request-with-auth` に答える。答えは `Chat-Version: 1.0` 付き。
 - パスワード付きのメッセージは、Delta Chat が受け付ける形に限られる: **SKESK v6（AES-128、OCB、salt つき S2K SHA-256）＋ SEIPD v2（OCB、8 KiB チャンク）**。v4 の SKESK ＋ SEIPD v1 だと「Modification Detection Code error」になる。openpgp.js は SKESK v6 を作れないので手組みした（`symmetric.ts`、`ocb.ts`。OCB は RFC 7253 のテストベクタで確認）。
 - 実機: classic アカウントと chatmail アカウントの両方で、握手と双方向の暗号化メッセージを確認した（2026-10-21）。
 
@@ -586,7 +586,7 @@ didmail が SMTP で受けたメールを、宛先の did:vh の全 keyAgreement
 - 暗号化メールは暗号文のまま保管し（`pgp/stored.ts`）、一覧を更新するときに開く（`pgp/open.ts`。世代ごとの鍵を試す。署名が相手の鍵で検証できたかも記録）。内側の `Date`／`Subject` を表示に使う（Delta Chat は外側の `Date` を乱数にし、`Subject` を `[...]` にする）。
 - 送るときは、`shouldEncrypt`（相手の鍵が `verified`、または `prefer-encrypt=mutual` の相互）なら暗号化する（`pgp/compose.ts`）。内側に本物の件名・Message-ID・自分の `Autocrypt:`・`Chat-Version: 1.0`、外側の件名は `[...]`。宛先と自分の両方に暗号化し、自分の鍵で署名する。
 - メールの `Autocrypt:` の鍵は、DMARC が通ったものだけを連絡先（`biset.md:autocrypt`）に覚える。
-- **まだ**: 暗号化メールの内側の `Autocrypt:`／gossip の取り込み、署名の表示、biset が「招待される側」になる Secure-Join。
+- **まだ**: 暗号化メールの内側の `Autocrypt:`／gossip の取り込み、署名の表示、comail が「招待される側」になる Secure-Join。
 
 ### 10.5 Autocrypt v2（PQ）は保留（2026-10-21）
 **判断**: Delta Chat が出すまで実装しない。現行は v4 鍵（EdDSALegacy／ECDH cv25519）で、これは Delta Chat の今の形式。
@@ -594,7 +594,7 @@ didmail が SMTP で受けたメールを、宛先の did:vh の全 keyAgreement
 外部の状況（2026-10-21 に確認）:
 - Delta Chat（chatmail/core）の最新は v2.64.0（10/20）で、Autocrypt 2 の記載は無い。実装は Draft の PR #8318（「WIP: feat: Autocrypt2」、10/10 に force-push、レビューなし、リリース時期未定）。ヘッダでの運び方、Secure-Join、gossip は Issue #8317 にも書かれていない。
 - 仕様 draft-autocrypt-openpgp-v2-cert は -03（2026-07-06）が最新。失効は 2027-01-07。
-- openpgp.js の ML-KEM は GitHub `main`（PR #2022、2026-07-10）にだけある。npm の最新と biset の依存は 6.3.2 で、ML-KEM が無い。
+- openpgp.js の ML-KEM は GitHub `main`（PR #2022、2026-07-10）にだけある。npm の最新と comail の依存は 6.3.2 で、ML-KEM が無い。
 
 済んでいる検証（コードはリポジトリに入っていない。使い捨ての作業場所のみ）:
 - `main` で draft-03 のテストベクタ（cert と TSK）をすべて読めた。暗号化→復号の往復も通った。
@@ -621,7 +621,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 - 自分の `did:peer:2` を SQLite に持つ。**公開 URL（https）が DID の service に埋まる**ため、`MEDIATOR_PUBLIC_URL` を変えると DID が変わり、起動時に fail closed する。
 - プロトコル: Coordinate Mediation 3.0（登録）、Routing 2.0（Forward）、Pickup 3.0（status／delivery-request／messages-received／live-delivery-change）、Trust Ping 2.0、
   Discover Features 2.0、Report Problem 2.0。
-- **Coordinate Mediation 3.0**: `mediate-grant` の `routing_did` は配列（自分の DID 1 つ）。`recipient-update` の `device`、`recipient` の各要素の `device`／`last_seen` は biset の拡張。
+- **Coordinate Mediation 3.0**: `mediate-grant` の `routing_did` は配列（自分の DID 1 つ）。`recipient-update` の `device`、`recipient` の各要素の `device`／`last_seen` は comail の拡張。
   `recipient-query` は `paginate {limit, offset}` に従い、指定があれば `pagination {count, offset, remaining}` を返す。
   **一覧に端末ラベルは出さない**（最終利用日だけ）。Y の鍵は全端末で共有されるので、外された端末も問い合わせられ、ラベルが見えれば残った端末の受信箱を名指しで消せてしまう。ラベルは推測できない値。
 - **Discover Features 2.0**: `queries` に `disclose` で答える（`*` のワイルドカード可）。開示するのは、protocol（coordinate-mediation 3.0、routing 2.0、messagepickup 3.0、trust-ping 2.0、
@@ -632,19 +632,19 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
   - 応答は、要求に **`return_route: "all"`** があるときだけ、同じ接続（HTTP の応答、または socket）に返す。無ければ HTTP は本文なしの 202、socket は何も返さない。
   - **live mode** は WebSocket かつ `return_route: "all"` のときだけ有効にできる（それ以外は problem-report `e.m.live-mode-not-supported`）。
     新着は、live を有効にした鍵宛てに authcrypt した `delivery` メッセージとして push する。**push したコピーも ACK まで queue に残る**。接続が切れると live は解除される。
-- **受信箱 = (DID, 端末ラベル)**。登録（recipient-update）は、その DID 自身の keyAgreement 鍵から authcrypt されたものだけを受け付ける（所有の証明。Coordinate Mediation 3.0 が「将来の課題」とする部分を biset が補う）。
+- **受信箱 = (DID, 端末ラベル)**。登録（recipient-update）は、その DID 自身の keyAgreement 鍵から authcrypt されたものだけを受け付ける（所有の証明。Coordinate Mediation 3.0 が「将来の課題」とする部分を comail が補う）。
   - did:peer の鍵は DID そのものから読む。did:vh の鍵は、**mediator が運用者の watcher に聞いて**読む（`log-state.ts`。DIDComm の流儀。2026-10-07、did:vh へ 2026-10-25）。
     解決は https のみ・リダイレクトなし・5 秒・1 MB の上限で、CDN を越えるよう毎回一意のクエリを付ける。ホストは、名前（末尾のドットや IPv4 の省略形・16 進形も含めて、内部名・IP リテラルを拒否）と、**名前が解決する全アドレス**（ループバック・私設・リンクローカル・CGNAT・マルチキャスト・予約済み。IPv4 射影と NAT64 は中の IPv4 で判定）の両方が公開のものに限る。結果は 5 分間信頼し、鍵が見つからなければ（10 秒に 1 回まで）解決し直す。
     ネットワークが落ちているときは、1 時間以内に確認した状態なら使い、無ければ 503。**5 分ごとに、受信箱を持つ全 did:vh を解決し直し**、DID から外れた端末の受信箱を失効させる（`MEDIATOR_DID_REFRESH_SECONDS`）。
-    - 解決を使わない配備（`MEDIATOR_DID_RESOLVE=0`、または watcher 無指定）では、client が `POST /did-log` で渡した検証済みのログだけを知る。これは**DIDComm ではない biset 独自の入口**で、古いログは無視し（`stale`）、同じ履歴から分かれたログは 409（`forked`）で拒否する。
+    - 解決を使わない配備（`MEDIATOR_DID_RESOLVE=0`、または watcher 無指定）では、client が `POST /did-log` で渡した検証済みのログだけを知る。これは**DIDComm ではない comail 独自の入口**で、古いログは無視し（`stale`）、同じ履歴から分かれたログは 409（`forked`）で拒否する。
   - **did:vh（2026-10-25。dito の `PLAN-didvh.md`）**: `did:vh:<SCID>` は場所を含まないので、ログの置き場所を DID から求められない。mediator は `MEDIATOR_VH_WATCHERS=https://did.md`（`GET /log?scid=` を返す origin。did.md のホストは、どの名前の下でも返す）に**運用者が指定した watcher だけ**にログを聞く（`createVhWatcherResolver`）。DID やメッセージが取得元を指定することはできない。watcher への接続の守りは https のみ・公開ホストのみ・リダイレクトなし・上限。ログは `protocol/vh/resolver.ts` で全エントリを検証する（`state.id` は常に DID と完全一致、`portable` と未知のパラメータは拒否、witness を設定したログは無視せず拒否）。watcher に聞けなかったときは 503、ログが無い・検証できない・別の DID のものなら 401。**版の記憶**（古いログ、同じ履歴から分かれたログを拒否）の核は `protocol/freshness.ts` にある。mediator の `did_states` は版番号と全エントリの `versionId`（`version_ids_json`）を持ち、同じ番号の別ログ（分岐）を見分ける。名前の表示は `protocol/vh/didweb.ts`: did:vh の文書と、それが名乗る `did:web:alice.did.md` の `did.json` が**双方向に一致**したときだけ `alice@did.md` と呼ぶ（検証できなければ DID のまま。アドレスは作らない）。dito の `packages/vh` とは `test/fixtures/did-vh-vectors.json`（ログ33件と did:web の影15件）で同じ判定を保証する。
-  - **did:vh のクライアント側（2026-10-25）**: biset が持つ識別子は、SCID と別名（did:web の host）の二つで、前者が identity、後者が人に見せる名前。**biset が扱う DID メソッドは did:vh と did:web だけ**で、did:webvh には対応しない（did:webvh の実装も did:web の文書を持つので、biset は did:web のクライアントとして相互運用する）。`identityKey` は did:vh をそのまま（fragment を除いて）キーにする。DID の解決は `protocol/did-resolve.ts` の `resolveDidDocument` に一本化した（署名の検証、送信先の解決、送信者の鍵）。did:vh のログは、(1) 連絡先がそれで知られている host（`alice@did.md` → `alice.did.md` の `/.well-known/did.jsonl`）、(2) `vhWatchers`（config）の順に探し、検証できた最初の写しを使う。探す場所は「どこを見るか」だけで、信頼の根拠ではない。**アドレス→DID**（`address-resolver.ts`）は、WebFinger が did:vh を返したとき、その DID のログが `did:web:<name>.<apex>` を `alsoKnownAs` に挙げ、そこの `did.json` が導出と一致することを確かめてから受け入れる（返事だけでは他人の DID を名乗れる）。**表示**: did:vh の `labelForDid` は、双方向に検証できたアドレス（連絡先カードの `emails` に、検証後にだけ書く）で、無ければ DID のまま。**アドレス → DID（WebFinger だけ）**: アドレスのドメインの WebFinger（RFC 7033）に聞く。どのドメインも、自分のアドレスの持ち主を自分で答える（`name` から場所を推測する約束をクライアントは持たない）。did.md の WebFinger は dito のホストが答え、`alice@did.md` に `aliases: ["did:web:alice.did.md"]` を返す（`alice@did.md` ⇒ `alice.did.md` の対応は did.md のホストの命名で、did:web も did:vh もメールアドレスについては何も定めていない）。答えは**ポインタ**で、biset は DID を読んで確かめるまで何も送らない: did:web なら（did:web の仕様どおり）`https://alice.did.md/.well-known/did.json` を取り、その `alsoKnownAs` の `did:vh:<SCID>?src=…` を読み（did:vh: Advertising DID Log Sources）、`src` の場所のログを取り（The `src` Option）、ログと did:web 文書を双方向に確かめる（`resolveTrustedDid`）。`alsoKnownAs` に did:vh がなければ普通の did:web の相手。確かめられない DID は拒否する（did:web の文書には戻らない）。ドメインが did:vh と `?src=` を直接返す場合は、ログが見つかって検証できることだけを確かめる。ドメインに答えがなければ、設定のゲートウェイ（メールブリッジ）の WebFinger に聞き、ブリッジの DID を得る。
+  - **did:vh のクライアント側（2026-10-25）**: comail が持つ識別子は、SCID と別名（did:web の host）の二つで、前者が identity、後者が人に見せる名前。**comail が扱う DID メソッドは did:vh と did:web だけ**で、did:webvh には対応しない（did:webvh の実装も did:web の文書を持つので、comail は did:web のクライアントとして相互運用する）。`identityKey` は did:vh をそのまま（fragment を除いて）キーにする。DID の解決は `protocol/did-resolve.ts` の `resolveDidDocument` に一本化した（署名の検証、送信先の解決、送信者の鍵）。did:vh のログは、(1) 連絡先がそれで知られている host（`alice@did.md` → `alice.did.md` の `/.well-known/did.jsonl`）、(2) `vhWatchers`（config）の順に探し、検証できた最初の写しを使う。探す場所は「どこを見るか」だけで、信頼の根拠ではない。**アドレス→DID**（`address-resolver.ts`）は、WebFinger が did:vh を返したとき、その DID のログが `did:web:<name>.<apex>` を `alsoKnownAs` に挙げ、そこの `did.json` が導出と一致することを確かめてから受け入れる（返事だけでは他人の DID を名乗れる）。**表示**: did:vh の `labelForDid` は、双方向に検証できたアドレス（連絡先カードの `emails` に、検証後にだけ書く）で、無ければ DID のまま。**アドレス → DID（WebFinger だけ）**: アドレスのドメインの WebFinger（RFC 7033）に聞く。どのドメインも、自分のアドレスの持ち主を自分で答える（`name` から場所を推測する約束をクライアントは持たない）。did.md の WebFinger は dito のホストが答え、`alice@did.md` に `aliases: ["did:web:alice.did.md"]` を返す（`alice@did.md` ⇒ `alice.did.md` の対応は did.md のホストの命名で、did:web も did:vh もメールアドレスについては何も定めていない）。答えは**ポインタ**で、comail は DID を読んで確かめるまで何も送らない: did:web なら（did:web の仕様どおり）`https://alice.did.md/.well-known/did.json` を取り、その `alsoKnownAs` の `did:vh:<SCID>?src=…` を読み（did:vh: Advertising DID Log Sources）、`src` の場所のログを取り（The `src` Option）、ログと did:web 文書を双方向に確かめる（`resolveTrustedDid`）。`alsoKnownAs` に did:vh がなければ普通の did:web の相手。確かめられない DID は拒否する（did:web の文書には戻らない）。ドメインが did:vh と `?src=` を直接返す場合は、ログが見つかって検証できることだけを確かめる。ドメインに答えがなければ、設定のゲートウェイ（メールブリッジ）の WebFinger に聞き、ブリッジの DID を得る。
 
 **宛先に `did:vh:<SCID>?src=<場所>` と書く**（did:web を公開していない相手。`resolveRecipient`）: `src` は仕様の DID URL のパラメータで、ログの**場所**（`https://alice.did.md`、パス付きの `https://example.com/dids/issuer` も）を言うだけ。場所は仕様の Web Locations の規則で検証し（`protocol/vh/src.ts`。dito の `packages/vh/src/src.ts` を移植したもので、同じ事例で確かめる: https のみ、ドメイン名、IP アドレス不可、認証情報・クエリ・フラグメント不可、パスの各部分は復号後に検査）、`<場所>/.well-known/did.jsonl`（パスがあれば `<場所>/did.jsonl`）を取って、SCID・ハッシュ連鎖・署名で検証する。`src` 以外のパラメータ（版の指定など）・フラグメント・パスは拒否する。内部では常に裸の `did:vh:<SCID>`（連絡先・メッセージ・`identityKey`）で、場所は `StoredVhPlaces`（`identity/vh-places.ts`。DID ごとに最近の数個）に覚えて、リロードしても残す。
 
-**watcher との突き合わせ**（`protocol/vh/copies.ts`。didvh-spec の `checkWatchers`／`extraWatchers`）: ログは SCID・ハッシュ連鎖・署名で検証できるが、それが**最新か、ほかの続きがないか**は分からない（古い写しも、相手ごとに別の続きを見せる fork も、どちらも検証を通る）。リゾルバーは、**クライアントが頼んだときだけ**、ほかの写しを取りに行く（`resolveDidDocument(did, { checkWatchers: true })`）。biset が頼むのは、送信の宛先の鍵を決めるとき・署名や `from_prior` の鍵を確かめるときだけで、名前の表示などでは頼まない。聞く先は、ログの `parameters.watchers`（所有者の指定）と設定の `vhWatchers`（https のみ。写しの取得元は除く）。各 watcher の写しを検証して versionId で比べ、**より長い写し**があればそれを採用し、**続きが分かれている写し**があれば `LogForkedError` で拒否する（どちらの続きも信じない）。聞けない・見つからない・ログでない watcher は無視する。結果は 5 分間使い回す。watcher のサーバーは dito の `watcher/`（`https://watcher.did.md`）。
+**watcher との突き合わせ**（`protocol/vh/copies.ts`。didvh-spec の `checkWatchers`／`extraWatchers`）: ログは SCID・ハッシュ連鎖・署名で検証できるが、それが**最新か、ほかの続きがないか**は分からない（古い写しも、相手ごとに別の続きを見せる fork も、どちらも検証を通る）。リゾルバーは、**クライアントが頼んだときだけ**、ほかの写しを取りに行く（`resolveDidDocument(did, { checkWatchers: true })`）。comail が頼むのは、送信の宛先の鍵を決めるとき・署名や `from_prior` の鍵を確かめるときだけで、名前の表示などでは頼まない。聞く先は、ログの `parameters.watchers`（所有者の指定）と設定の `vhWatchers`（https のみ。写しの取得元は除く）。各 watcher の写しを検証して versionId で比べ、**より長い写し**があればそれを採用し、**続きが分かれている写し**があれば `LogForkedError` で拒否する（どちらの続きも信じない）。聞けない・見つからない・ログでない watcher は無視する。結果は 5 分間使い回す。watcher のサーバーは dito の `watcher/`（`https://watcher.did.md`）。
 **did:web は did:vh への最初の梯子にすぎない**（`resolveTrustedDid`、`protocol/did-resolve.ts`）: did:web の文書が `alsoKnownAs` で did:vh を指すなら、そのログを取って検証し、ログがその did:web を名乗り、did:web の文書がログからの導出と完全に一致することを確かめる。通れば以後は did:vh だけを信じ（宛先も `to` も鍵も did:vh）、対応を `identity/did-links.ts` に記憶して、did:web には二度と聞かない。確かめられなければ did:web の文書に戻らず拒否する。いったん結んだ後は、did:vh が `alsoKnownAs` から did:web を外しても関係は続く。何も指さない did:web（メールブリッジ、mediator）は文書をそのまま信じる。**版の記憶**は `identity/version-memory.ts`（localStorage。古いログと分岐したログを拒否する。**意図した巻き戻し**も拒否するので、必要なら `forget`）。
-  - **`device` ラベルは任意**（biset の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（Y）に端末を区別する。
+  - **`device` ラベルは任意**（comail の拡張）。無い要求（標準の client）は、送信鍵の kid から決めた受信箱を使う。ラベルは、1 つの鍵を複数の端末が共有する場合（Y）に端末を区別する。
   - **1 DID あたり最大 3 端末**。4 台目は problem-report `e.m.req.max-devices` で拒否し、client は登録済み端末の最終利用日つきのエラーを利用者に見せる（`MediatorDeviceLimitError`）。
 - **誰が登録できるか**: 既定は、DID の鍵を持つ者なら誰でも（開放型）。次で絞れる。
   - `MEDIATOR_NEW_INBOXES_PER_ADDRESS_PER_HOUR`（既定 60）: **1 つのクライアントアドレスが 1 時間に新しく作れる受信箱の数**。更新（既にある受信箱の再登録）は数えない。超えると problem-report `e.m.req.rate-limited`。アドレスは `X-Forwarded-For`（Caddy）で、Tor 経由はローカルの 1 アドレスに見えるので、その枠は 10 倍。relay-poller の内部呼び出しには掛からない。
@@ -665,7 +665,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 
 ### 11.3 biset-mimi（🔧）
 IETF `draft-ietf-mimi-protocol` に沿った MLS delivery service（`normal`／`anon`／`self`）。サーバーとしては動き、テストも通るが、**現行クライアントからの呼び出し経路は無い**。
-biset は将来 MIMI クライアントにもなる予定で、そのために MLS／MIMI のコードを残している。設計の正本は `PLAN_biset-mimi-server.md`。
+comail は将来 MIMI クライアントにもなる予定で、そのために MLS／MIMI のコードを残している。設計の正本は `PLAN_biset-mimi-server.md`。
 
 ### 11.4 環境変数（要点）
 - Mediator: `MEDIATOR_PUBLIC_URL`（必須）、`MEDIATOR_DATABASE_PATH`（または `MEDIATOR_DATA_DIR`）、`PORT`（既定 8791）、`MEDIATOR_HOST`（既定 127.0.0.1）、
@@ -697,7 +697,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 - Vault Sync の PUSH は到達保証を持たず、取りこぼしは PUSH 適用後の `state-request` と、mediator の `missed` による `state-request` で回収される。送信は 6 回・指数バックオフ。
 - 一件の不正な record が batch 全体を落とさない（record 単位の skip）。materialize できない email は `pending` になる。
 - 承認直後に古い DID ログが返ることがある（did.md の公開読み取りは CDN が `s-maxage=30` で保持し、更新時に purge しない）。
-  biset は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、generation seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
+  comail は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、generation seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
   他人の DID の解決（送信先・送信者の鍵）は CDN を通すので、相手が端末を足したり外したりした直後の最大 30 秒は古い版で扱う（§14.2-6）。
 - 連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
 - **`main.ts` の boot wiring は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
@@ -760,7 +760,7 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 本番の `config.json` には、他に `anchorBaseUrl`、`anchorOidcClientId`（Anchor 削除後の**残骸**）がある。
 
 ### 15.2 本番の構成（v2、Debian 12、x86_64）
-- Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**biset の `deploy.sh` は Caddyfile を触らない**）:
+- Caddy（`/etc/caddy/Caddyfile`、did.md の deploy と共有。**comail の `deploy.sh` は Caddyfile を触らない**）:
   `mediator.biset.md` → `127.0.0.1:8791`（WebSocket の upgrade も Caddy の `reverse_proxy` がそのまま通す）、
   `t.biset.md` → `/opt/biset/app`（`/wallet/callback` は `index.html` に書き換え）、`biset.md` → `/opt/biset/home`。
 - systemd: `biset-didcomm-mediator.service`（`DynamicUser`、`/opt/biset/didcomm-mediator/`）、`didmail.service`（`/opt/didmail/current`、設定 `/etc/didmail/didmail.env`、DB `/var/lib/didmail/relay.sqlite`。配備は didmail の `deploy.sh`）。メール UI は `did.md`（`./deploy.sh mail`）。旧 `did-md-mail-relay.service` は停止・無効化済み（ファイルは残す）。
@@ -771,10 +771,10 @@ biset は将来 MIMI クライアントにもなる予定で、そのために M
 `./deploy.sh [app|landing|didcomm-mediator|smtp|ap|relay|tor-backup|all]`。
 - `app`: build → `v2:/opt/biset/app/` へ `index.html` と `sw.js` → sha256 と公開 URL で検証。
 - `tor-backup`: v2 の `/var/lib/tor`（キャッシュを除く）と torrc を、ローカルの `~/.biset-backups/tor/` に 0600 で退避する（暗号化は無い）。
-- メール（didmail）は biset の `deploy.sh` の対象外（別リポジトリ）。
+- メール（didmail）は comail の `deploy.sh` の対象外（別リポジトリ）。
 - **`all`（引数なしも同じ）は mediator を入れ替えない**（app・landing・smtp・ap だけ）。mediator は `./deploy.sh didcomm-mediator` を別に実行する。
 - `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、git 追跡外）を流す。
-- `smtp`／`ap` は biset repo の外の relay（Rust／Go）を配る。
+- `smtp`／`ap` は comail repo の外の relay（Rust／Go）を配る。
 
 ### 15.4 2026-10-08 のデプロイ（`PLAN-refactor.md` P0〜P5）
 **app は 2026-10-08 に配備済み**（`5f4d286` のビルド。配信物の sha256 が手元の `dist/index.html` と一致）。
@@ -829,17 +829,17 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 7. **dedupe の `alreadyProcessed()` が常に false**（`main.ts`）。
 8. **結線の無い UI と config の残骸**: `config-page.ts` の「New Relay」フォームと「Notifications」のトグル（`src.bak` の HTML を改変せずに移植する方針の結果で、意図した「空の UI」）。
    `mimiSelfBaseUrl` と config の `anchor*` も残骸。
-9. **失敗した承認の残骸**: DID Document に、mediator に登録されていない端末鍵が残ると、その鍵にも暗号化される（受け取る受信箱が無いだけで害は無い）。biset 側で自動的に除く処理は無い。
+9. **失敗した承認の残骸**: DID Document に、mediator に登録されていない端末鍵が残ると、その鍵にも暗号化される（受け取る受信箱が無いだけで害は無い）。comail 側で自動的に除く処理は無い。
 10. **旧データの救出コード**: `legacy-crdt-migration.ts` と `store.ts` の旧 outbox の移行。後方互換を持たない方針なので、消してよい。
 11. **`manifest.ts`**: テストだけが使う（🔧）。
 12. **`PLAN-tor.md` と本書の差**: Tor の V-3（Tor Browser）、WebSocket の onion 経由の長時間維持、onion の rate limit の実測は未実施。
-13. **did.md Wallet（dito）側の不具合（biset の外）**: 承認のたびに `Identity.fromDid`（`~/did.md/packages/wallet/src/identity.ts`）で DID ログを読み直すが、
+13. **did.md Wallet（dito）側の不具合（comail の外）**: 承認のたびに `Identity.fromDid`（`~/did.md/packages/wallet/src/identity.ts`）で DID ログを読み直すが、
     `cache: "no-store"` だけで CDN を避けるクエリを付けていない。直前の承認から 30 秒以内に次の承認をすると、古い版を土台にエントリを作り、
     サーバーに `version 'N' in log doesn't match expected 'N+1'` で拒否される（2026-10-03 に実機で起きた）。30 秒待てば通る。
     同じリポジトリの `host.ts` の `fetchOk` は CDN を避けている。手元の `~/did.md` には承認画面の DID 編集の処理が見当たらず、本番の Wallet のソースの所在は未確認。
 14. **移動済みの相手の連絡先の削除**（§14.2-8）: 案は (a) `biset.md:didcomm` のある Card の削除と `onlineServices` の DIDComm の項目の書き換えを `forbidden` にする、
    (b) 削除しても DIDComm の状態だけは別に残す（JMAP からは見えない）、(c) 消えたら次の受信で相手に移り直しを求める。未決。
-16. **Rust 側の relay（`jmapsmtp`、`jmapap`）の `routingKeys` の読み方は未確認**。TypeScript 側（biset のクライアント、didmail）は直した。
+16. **Rust 側の relay（`jmapsmtp`、`jmapap`）の `routingKeys` の読み方は未確認**。TypeScript 側（comail のクライアント、didmail）は直した。
     Rust 側が `routingKeys` を did:peer の鍵としてだけ読むなら、`did:web` の鍵を載せた文書に宛てた配送（メールの受信など）が失敗する。文書を DID 形へ移せば影響はないが、移るまでは確かめる必要がある。
 15. **seed の権威の読み直しが頻繁**: 経路を選ぶたび（送信 1 件ごと、受信 1 件ごと）に、seed の record を Vault から復号して読み直す（ログは 60 秒キャッシュ）。量が増えたら端末内のキャッシュが要る。
 
@@ -877,7 +877,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 3. **メールの PGP の残り**（§10.4）: 内側の `Autocrypt:`／gossip の取り込み、署名の表示、招待される側の Secure-Join。
 4. **Autocrypt v2**: 保留（§10.5）。Delta Chat の対応待ち。
 5. **did:peer:4**（§10-4）と、住所録の画面。
-6. **DIDComm の残り（§9.9）**: SHOULD の未対応（`lang`、利用者への `to` の警告、相手への problem-report）。biset 自身の P-256／P-384 の鍵。DIDComm のハイブリッド PQ は別件で保留。
+6. **DIDComm の残り（§9.9）**: SHOULD の未対応（`lang`、利用者への `to` の警告、相手への problem-report）。comail 自身の P-256／P-384 の鍵。DIDComm のハイブリッド PQ は別件で保留。
 7. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
 8. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
 9. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、HTML 本文と添付の保存。
@@ -936,7 +936,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 - `mimi/`: `index.ts`、`deployment.ts`、`http.ts`、`store.ts`、`mls-appsync.ts` ほか（§11.3）。
 
 ### 20.7 リポジトリ直下の補足
-`dist/`（ビルド生成物。追跡されている）、`home/`（`biset.md` のランディング）、`src.bak/`（旧実装。参照用）、`pds/`（Bluesky PDS の配布物。biset のコードではない）、
+`dist/`（ビルド生成物。追跡されている）、`home/`（`biset.md` のランディング）、`src.bak/`（旧実装。参照用）、`pds/`（Bluesky PDS の配布物。comail のコードではない）、
 `biset-*`（コンパイル済みバイナリ。`.gitignore` 対象）、`test/`（104 ファイル）。
 
 ## ランタイム: Node 26 + pnpm（2026-10-14 に Bun から移行）

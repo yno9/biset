@@ -71,7 +71,7 @@ const REPORT_ABUSE_PREFIX = '/reportAbuse/'
 const DELIVERY_PULL_PATH = '/v1/mimi/deliveries/pull'
 const DELIVERY_WATCH_PATH = '/v1/mimi/deliveries/watch'
 const DELIVERY_STREAM_PATH = '/v1/mimi/deliveries/stream'
-/** Biset's own extension (§5.1, PLAN_biset-mimi-server.md) -- the MIMI draft
+/** Comail's own extension (§5.1, PLAN_biset-mimi-server.md) -- the MIMI draft
  * leaves how a provider originally acquires a user's KeyPackages
  * unspecified, so without this route `keyMaterial` has nothing to ever
  * return and no client can be added to a room. */
@@ -115,7 +115,7 @@ export interface MimiFederationOptions {
 class MimiProviderAuthenticationError extends Error {}
 
 /**
- * MIMI draft §5.2 / §5.3 provider-facing routes.  Biset's calls arrive from
+ * MIMI draft §5.2 / §5.3 provider-facing routes.  Comail's calls arrive from
  * local clients, so every body additionally uses the provider-internal
  * credential signature defined in authorizer.ts.
  */

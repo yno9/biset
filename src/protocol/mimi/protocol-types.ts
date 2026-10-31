@@ -4,7 +4,7 @@
  * their binary fields into JSON/base64url.
  *
  * The MIMI draft's TLS presentation syntax is intentionally not reproduced
- * here.  The draft explicitly leaves endpoint encoding open, while biset
+ * here.  The draft explicitly leaves endpoint encoding open, while comail
  * uses JSON over HTTP internally (PLAN_biset-mimi-server.md §3).
  */
 
@@ -164,7 +164,7 @@ export interface PublishedKeyPackage {
  * add it to a room (`keyMaterial` only ever reads from this store, it never
  * writes to it). The MIMI draft leaves how a provider originally acquires a
  * user's KeyPackages unspecified ("client-server publication is outside the
- * MIMI draft") -- biset fills that gap with its own client-facing route
+ * MIMI draft") -- comail fills that gap with its own client-facing route
  * (`/v1/mimi/keypackage/publish`, http.ts), the same way it does for
  * `deliveries/pull`/`watch` (§5.1, PLAN_biset-mimi-server.md). Without this
  * route no client can ever be added to a room: `keyMaterial` would have
@@ -182,7 +182,7 @@ export interface KeyPackagePublishResponse {
   published: number
 }
 
-/** draft §5.2 KeyMaterialRequest, plus biset's client-to-hub signature. */
+/** draft §5.2 KeyMaterialRequest, plus comail's client-to-hub signature. */
 export interface KeyMaterialRequest {
   version: 1
   protocol: MimiProtocolVersion
@@ -319,7 +319,7 @@ export interface RoomStateUpdate {
 }
 
 /**
- * Biset's authenticated client-to-hub representation of draft §5.3's
+ * Comail's authenticated client-to-hub representation of draft §5.3's
  * UpdateRequest.  The draft does not specify provider-internal client
  * authentication, hence sender and signature are explicit here.
  */

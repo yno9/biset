@@ -1,5 +1,5 @@
 // Mail address -> DID, by WebFinger (RFC 7033; didmail PROTOCOL.md §9).
-// Biset never sends mail: an address is only another name for a DID, and
+// Comail never sends mail: an address is only another name for a DID, and
 // whoever answers for the address says which. Asked in order:
 //
 //   1. the address's own domain -- a domain that gives its users DIDs answers

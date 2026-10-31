@@ -6,7 +6,7 @@
 // Phase 3/4's server.ts + mediator-coordinate.ts + mediator-pickup.ts before
 // this file existed).
 // Coordinate Mediation 3.0. Recipients are DIDs; `device` on
-// recipient-update and on each `recipient` entry is a biset extension that
+// recipient-update and on each `recipient` entry is a comail extension that
 // names which of the DID's devices an inbox belongs to.
 export const COORDINATE_MEDIATION = 'https://didcomm.org/coordinate-mediation/3.0'
 export const MEDIATE_REQUEST = `${COORDINATE_MEDIATION}/mediate-request`

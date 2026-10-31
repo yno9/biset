@@ -15,7 +15,7 @@ export function ditoEmbedOrigin(): string | undefined {
   return undefined
 }
 
-// Dev only: dito's local server and biset's run on different ports.
+// Dev only: dito's local server and comail's run on different ports.
 function ditoDevPort(own: string): string {
   const configured = new URLSearchParams(location.search).get('dito_port')
   return `:${configured && /^\d{2,5}$/.test(configured) ? configured : own}`

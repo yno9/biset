@@ -1,4 +1,4 @@
-// biset's MLS group operations — the whole RFC 9420 surface the rest of the
+// comail's MLS group operations — the whole RFC 9420 surface the rest of the
 // app is allowed to see.
 //
 // Everything here is **platform-free** (no DOM, no IndexedDB, no fetch) for the
@@ -104,7 +104,7 @@ export type IncomingResult =
 /** Generate this device's KeyPackage with its fixed leaf signing key and
  * generation-bound device credential.
  *
- * biset's DIDComm transport keys (X25519/ML-KEM, carried in the leaf as a
+ * comail's DIDComm transport keys (X25519/ML-KEM, carried in the leaf as a
  * private-use extension in the pre-rewrite implementation) are not part of
  * this boundary — they belong to the DIDComm adapter (PLAN.md §6.1,
  * unimplemented), which the roster/vault path this module serves does not
@@ -170,7 +170,7 @@ export function decodeKeyPackage(bytes: Uint8Array): KeyPackage {
  * half a given Welcome needs, without trial decryption. `makeKeyPackageRef`
  * is not re-exported from ts-mls's index, hence the subpath import; it is a
  * plain hash of the encoded key package, and pairing it with
- * `welcomeRecipientRefs` below is the only thing biset uses it for. */
+ * `welcomeRecipientRefs` below is the only thing comail uses it for. */
 export async function keyPackageRefOf(kp: KeyPackage): Promise<string> {
   const suite = await mlsSuite()
   return toHex(await makeKeyPackageRef(kp, suite.hash))
@@ -189,7 +189,7 @@ function toHex(bytes: Uint8Array): string {
 }
 
 /** Create a group with only us in it. `groupId` is the application's own id
- * for the conversation (biset uses a random 32-byte value, see store.ts). */
+ * for the conversation (comail uses a random 32-byte value, see store.ts). */
 export async function createMlsGroup(groupId: Uint8Array, own: OwnKeyPackage): Promise<ClientState> {
   return createMlsGroupWithAuthenticationService(groupId, own, authService)
 }
@@ -280,7 +280,7 @@ async function removeLeavesByIndex(state: ClientState, leafIndices: number[]): P
  * state of affairs and the caller must not pretend otherwise: a device that
  * has proposed its own removal and then deleted its keys is gone for practical
  * purposes, but its leaf is in the tree until a sibling acts. See
- * mls/self-group.ts's leaveSelfGroup for what biset does about the case where
+ * mls/self-group.ts's leaveSelfGroup for what comail does about the case where
  * there is no sibling left to act. */
 async function proposeSelfRemoval(state: ClientState): Promise<{ state: ClientState; proposal: Uint8Array }> {
   const suite = await mlsSuite()
@@ -298,7 +298,7 @@ export async function rekey(state: ClientState): Promise<CommitResult> {
 }
 
 // Room metadata (a Conversation Group's display name -- PLAN-mimi.md's own
-// "biset conforms to MLS/JMAP/DIDComm/MIMI" scope). MIMI's actual mechanism
+// "comail conforms to MLS/JMAP/DIDComm/MIMI" scope). MIMI's actual mechanism
 // (draft-ietf-mimi-protocol §5.3/§7.6) is an "AppSync" proposal with
 // applicationId `mimiRoomPolicy`, defined by a SEPARATE, still-unstable
 // companion draft (draft-barnes-mls-appsync) whose own IANA section reads
@@ -381,7 +381,7 @@ function encodeWelcome(welcome: Welcome): Uint8Array {
 }
 
 /** Join from a Welcome. `ratchetTree` is the group's tree: MLS lets it ride in
- * the Welcome as an extension or be fetched out of band, and biset takes the
+ * the Welcome as an extension or be fetched out of band, and comail takes the
  * out-of-band route — the DS holds the tree (PLANMLS.md §4 Phase 1), which
  * keeps Welcomes small and, more importantly, keeps the tree out of a message
  * that has to be individually encrypted to every joiner. */
@@ -608,10 +608,10 @@ function groupInfoMemberKids(groupInfoBytes: Uint8Array): string[] | undefined {
  * offline has state that still says "active" with its own leaf in its own copy
  * of the tree — it never saw the commit. Asking the Delivery Service for the
  * current GroupInfo, which carries the ratchet tree, is what tells it
- * otherwise, and it is why biset's commits include that tree.
+ * otherwise, and it is why comail's commits include that tree.
  *
  * Undefined when the GroupInfo carries no tree (another implementation's, or
- * one made before biset attached it) — "cannot tell", which the caller must
+ * one made before comail attached it) — "cannot tell", which the caller must
  * not read as either answer. */
 function groupInfoContainsKid(groupInfoBytes: Uint8Array, kid: string): boolean | undefined {
   const groupInfo = decodeGroupInfo(groupInfoBytes, 0)?.[0]

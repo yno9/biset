@@ -22,7 +22,7 @@ function App() {
   const page = useStore(uiPage)
   // CSS scopes the left pane, header and toggle under #app.lp-enabled.
   const classes = ['lp-enabled', singleCol ? 'single-col' : '', paneCompact ? 'lp-compact' : '', showLeft ? 'show-left' : ''].filter(Boolean).join(' ')
-  useEffect(() => { document.title = 'biset' }, [])
+  useEffect(() => { document.title = 'comail' }, [])
   return (
     <>
       <SysMsg />

@@ -93,7 +93,7 @@ export function readBisetConfig(): BisetConfig {
     identityDomain: cfg.identityDomain ?? '',
     helperAddress: cfg.helperAddress ?? '',
     vhWatchers: cfg.vhWatchers ?? [],
-    walletDeviceName: cfg.walletDeviceName ?? 'Biset',
+    walletDeviceName: cfg.walletDeviceName ?? 'Comail',
     didDocumentServices: cfg.didDocumentServices ?? defaultDidDocumentServices,
   }
 }

@@ -86,7 +86,7 @@ const specialGroup = (address: string, name: string, ts: number): ThreadGroup =>
   subject: name,
   messages: [{
     bodyText: '',
-    msg: { from: address, from_name: name, body: '', subject: name, ts, message_id: `<${address}@biset>`, jmap_id: '', in_reply_to: '', thread_id: address, seen: true },
+    msg: { from: address, from_name: name, body: '', subject: name, ts, message_id: `<${address}@comail>`, jmap_id: '', in_reply_to: '', thread_id: address, seen: true },
   }],
 })
 const SPECIAL_GROUPS = [specialGroup(SELF_INBOX_KEY, 'Me', END_OF_TIME), specialGroup(NEW_INBOX_KEY, 'New message', END_OF_TIME - 1)]

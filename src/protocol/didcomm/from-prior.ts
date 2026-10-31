@@ -1,6 +1,6 @@
 // DID Rotation's `from_prior` header (DIDComm Messaging v2.1, "DID Rotation"):
 // a compact JWS, `iss` the DID being rotated away from, `sub` the new DID,
-// signed by a key the prior DID's document authorizes. biset reads
+// signed by a key the prior DID's document authorizes. comail reads
 // "authorizes" as DIDComm's convention for signing keys: referenced from
 // `authentication` (PLAN-refactor.md §7-7).
 //
@@ -178,7 +178,7 @@ export function assertKeyNotStale(entries: readonly LogEntry[], kid: string): vo
   if (deviceRemovedSince(entries, published.since)) throw new FromPriorError(`${kid} was published before a device was removed`)
 }
 
-/** The key resolver for every DID method biset reads as a prior DID:
+/** The key resolver for every DID method comail reads as a prior DID:
  * did:vh from its whole verified log (with the §7-2 check), did:web from
  * its document, did:peer:2 from the DID itself. `fetchImpl` should bypass a
  * host's CDN: a stale document would accept a key already replaced. */

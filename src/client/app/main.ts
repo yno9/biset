@@ -43,7 +43,7 @@ import { labelForDid } from './ui/did-display.ts'
 import { configureCompose, type ReplySendInput } from './ui/reply-box.tsx'
 import { configureAccountPage, configureComposePage, configureMarkdownVaultToggle, setOnWalletConnected, showAccountPage, showComposePage, updateVaultCardStatus, type VaultCardStatus } from './ui/pages/index.ts'
 import { savedPage } from './ui/state.ts'
-import { startRouting } from './ui/route.ts'
+import { namesRoute, startRouting } from './ui/route.ts'
 import { clearPlainStorage } from './local-data.ts'
 import { sendComposedWhenReady, sendProblem, takePendingSend } from './ui/pages/compose-page.tsx'
 import { setReplyDraft } from './ui/reply-box.tsx'
@@ -661,7 +661,7 @@ async function configureWalletAccountIfPresent(
         const configuredMediator = [...mediatorUrls, ...onionMediatorUrls].some(url => {
           try { return new URL(url).toString() === authorizedMediator } catch { return false }
         })
-        if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Biset deployment')
+        if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Comail deployment')
         currentVaultDeviceKid = didCommDevice.xKid
         await timed('refreshVaultDevices', refreshVaultDevices())
         if (!currentVaultDeviceKids.includes(didCommDevice.xKid)) {
@@ -1266,11 +1266,14 @@ async function bootClient(callbackSession?: Awaited<ReturnType<typeof completeDi
   // can all reach this branch. Destructive cleanup is therefore reserved
   // for the explicit Disconnect action above.
   configureAccountPage({ did: null })
+  // With no account the address bar can still name a message to write (/alice@gmail.com): that page is opened before the app is shown, so the
+  // sign-up is not seen on the way to it. Otherwise the sign-up is the page.
+  const named = namesRoute()
+  if (named) startRouting()
   showApp()
-  showAccountPage()
+  if (!named) showAccountPage()
   // The wallet's frames are loaded now, out of sight, so that whatever the person turns to (a new message, the log-in) has them ready.
   preloadSignup()
-  // With no account the address bar can still name a message to write (/new, /alice@gmail.com).
   startRouting()
 }
 

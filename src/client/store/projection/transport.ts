@@ -1,5 +1,5 @@
 /**
- * JMAP is the client/backend contract. A Biset identity routes calls locally;
+ * JMAP is the client/backend contract. A Comail identity routes calls locally;
  * a conventional account routes them to its remote JMAP service.
  */
 export interface JmapMethodCall {

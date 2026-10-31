@@ -29,7 +29,7 @@ export interface AccountPageConfig {
     deviceJkt: string
     capabilityExpiresAt: string
     /** Set only after Wallet has returned a typed Root+Sign MLS credential
-     * for this browser's Biset device leaf. */
+     * for this browser's Comail device leaf. */
     deviceKid?: string
     /** A Biset-owned X25519 DIDComm endpoint authorized and published by
      * Wallet. It has no access to a Wallet controller key. */
@@ -38,7 +38,7 @@ export interface AccountPageConfig {
      * the card is only an entry point to the Wallet-backed login saga. */
     didComm?: { xKid?: string; mediatorUrl: string; loggedOut?: boolean; /** Registering with the mediator is still under way. */ connecting?: boolean; error?: string; /** The deployment's configured Tor entrance for this mediator -- only the prompt's pre-filled value for "Enable Tor". */ onionUrl?: string }
     /** Starts an explicit, same-tab Wallet approval to add a DIDComm endpoint
-     * to an already-connected Biset browser. */
+     * to an already-connected Comail browser. */
     onEnableMessaging?(): Promise<void>
     /** Re-authorizes the same DIDComm leaf with a DIFFERENT mediator (the
      * Mediator card's "Edit server", user-requested 2026-09-09) -- same
