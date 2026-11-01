@@ -662,7 +662,7 @@ async function configureWalletAccountIfPresent(
         const configuredMediator = [...mediatorUrls, ...onionMediatorUrls].some(url => {
           try { return new URL(url).toString() === authorizedMediator } catch { return false }
         })
-        if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Comail deployment')
+        if (!configuredMediator) throw new Error('Wallet-authorized mediator is not configured by this Oui deployment')
         currentVaultDeviceKid = didCommDevice.xKid
         await timed('refreshVaultDevices', refreshVaultDevices())
         if (!currentVaultDeviceKids.includes(didCommDevice.xKid)) {

@@ -1,12 +1,12 @@
-# comail
+# oui
 
-Comail is a communication client that keeps mail and DIDComm data encrypted on the user's own
+Oui is a communication client that keeps mail and DIDComm data encrypted on the user's own
 devices, so no server holds a permanent mailbox or message history.
 
 ## How it is put together
 
 - **Identity lives elsewhere.** did:vh identities are issued and hosted by an external
-  provider (did.md). Comail resolves public documents and never writes them.
+  provider (did.md). Oui resolves public documents and never writes them.
 - **The log is the source of truth.** Each device keeps an encrypted Vault in IndexedDB:
   signed immutable events, content-addressed ciphertext objects, and segment key wraps.
 - **The projection is derived.** The JMAP read model the UI renders is recomputed from that

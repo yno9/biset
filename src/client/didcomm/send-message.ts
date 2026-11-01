@@ -28,7 +28,7 @@ export interface ChatMessageOptions extends SendDidCommMessageOptions {
   introduction?: boolean
   /** The reply token the contact's bridge gave (didmail PROTOCOL.md §7.1): the proof that this identity may write to its address. */
   replyToken?: string
-  /** This identity's display name, told to the recipient (a comail extension; the receiver keeps it on the sender's contact card). */
+  /** This identity's display name, told to the recipient (a oui extension; the receiver keeps it on the sender's contact card). */
   fromName?: string
 }
 

@@ -8,7 +8,7 @@ import { useStore } from '../react/store.ts'
 import { accountConfig } from './account/state.ts'
 import { useOwnProfile } from './account/use-own-profile.ts'
 import { partColors, usePartColors } from './color-settings.ts'
-import { avatarSeed } from './did-display.ts'
+import { addressOfHost, avatarSeed } from './did-display.ts'
 import { readBisetConfig } from './config.ts'
 import { heldIdentity, provisionalAlias } from './signup-preload.ts'
 
@@ -68,14 +68,15 @@ export function Favicon() {
       const timer = setTimeout(() => { link.type = 'image/svg+xml'; link.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedAvatarSvg(standIn))}` }, 0)
       return () => clearTimeout(timer)
     }
-    // The address the identity is published at (a did:vh DID names none).
-    const label = config?.wallet?.handle ?? ''
+    // The face the avatar shows everywhere (the account page, the panes): drawn from the address (not the display name, which may change), else from the DID.
+    const handle = config?.wallet?.handle
+    const seed = avatarSeed(handle ? addressOfHost(handle) : did)
     let current = true
     const show = (href: string, type: string) => { if (current) { link.type = type; link.href = href } }
     let timer: ReturnType<typeof setTimeout> | undefined
     if (own.avatar) void roundPicture(own.avatar).then(href => show(href, href.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'))
-    else timer = setTimeout(() => show(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedAvatarSvg(own.name?.trim() || label))}`, 'image/svg+xml'), 0)
+    else timer = setTimeout(() => show(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(generatedAvatarSvg(seed))}`, 'image/svg+xml'), 0)
     return () => { current = false; clearTimeout(timer) }
-  }, [did, own.name, own.avatar, colors, standIn])
+  }, [did, config?.wallet?.handle, own.avatar, colors, standIn])
   return null
 }
