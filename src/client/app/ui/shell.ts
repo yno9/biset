@@ -1,6 +1,7 @@
 // What the rest of the app calls to drive the mail UI: show it, and refresh what it lists.
 import type { LocalJmapEmail, LocalJmapReadModel, LocalJmapSnapshot } from '../../store/projection/gateway.ts'
-import { contactAvatar, contactDisplayName, publicDidOf } from '../../store/projection/contacts.ts'
+import { contactAvatar, contactDisplayName, publicDidOf, rotationReader } from '../../store/projection/contacts.ts'
+import { readRotated } from './rotation-view.ts'
 import { setContactAvatars, setContactDids, setContactNames, setVerifiedAddresses } from './did-display.ts'
 import { rememberVhLocation } from '../../../protocol/did-resolve.ts'
 import { hostOfAddress } from '../../didcomm/address-resolver.ts'
@@ -79,6 +80,7 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
     }
     setContactAvatars(avatars)
     const views: ProcessedMessage[] = []
+    const reader = rotationReader(snapshot.contactCards)
     const signedNames = new Map<string, { ts: number; name: string }>()
     const signedAvatars = new Map<string, { ts: number; avatar: string | null }>()
     for (const email of snapshot.emails) {
@@ -89,7 +91,10 @@ export function refreshInbox(readModel: LocalJmapReadModel): Promise<void> {
       // An encrypted mail this identity cannot open (a Secure-Join step that came after its join, mail for a key we do not hold) is not
       // shown: its stand-in subject `[...]` and the armor say nothing to read.
       if (openEncrypted && !opened && armorOfStoredBody(body)) { console.warn(`[encrypted mail] not shown, cannot be opened with this identity's keys: ${email.id}`); continue }
-      const msg = emailToMessageView(email, opened?.raw ?? raw)
+      // Stored under the DID that authenticated it; shown as the person it stands for (PLAN-refactor.md §14.4), and not at all
+      // from a DID that person has since left (§14.5: it may be a device that was removed).
+      const msg = readRotated(emailToMessageView(email, opened?.raw ?? raw), reader)
+      if (!msg) { console.warn(`[didcomm] not shown, from a DID its counterparty has left: ${email.from?.[0]?.email ?? '?'}`); continue }
       // A name in the contact list is the one to show (the mail's own From: name is only where there is none).
       const known = names.get(msg.from)
       if (known) msg.from_name = known

@@ -26,6 +26,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { sha1 } from '@noble/hashes/legacy.js'
 import { bytesToBase64url, type CanonicalValue } from '../../../protocol/canonical.ts'
 import type { VaultMutationIntent } from './mutations.ts'
+import type { LocalJmapEmail } from './gateway.ts'
 import { REPLY_TOKEN_PATTERN } from '../../../protocol/didcomm/reply-token.ts'
 
 export const JMAP_CONTACTS_CAPABILITY = 'urn:ietf:params:jmap:contacts'
@@ -351,6 +352,41 @@ export function counterpartyOfRotatedDid(cards: readonly LocalJmapContactCard[],
     return { publicDid, card, current: currentRotation(card)?.did === did }
   }
   return undefined
+}
+
+/** How a rotated DID reads (PLAN-refactor.md §14). A received message records its sender as the DID that authenticated it; who
+ * that is for the person is decided here, when it is shown, from the contact cards' `rotations`, so a card that arrives later
+ * (or on another device first) changes only what is displayed, never what was stored. */
+export interface RotationReader {
+  /** The public DID a counterparty's rotated DID stands for; anything else (a public DID, a did:peer no card names) as it is. */
+  party(did: string): string
+  /** True for a rotated DID its counterparty has since left: what it sends now is not shown (it may be a device that was removed). */
+  superseded(did: string): boolean
+  /** A 1:1 thread id (`didCommThreadId`: the two identity keys, sorted) with each rotated DID's key replaced by its counterparty's. */
+  thread(threadId: string): string
+}
+
+export function rotationReader(cards: readonly LocalJmapContactCard[]): RotationReader {
+  const party = (did: string): string => counterpartyOfRotatedDid(cards, did)?.publicDid ?? did
+  return {
+    party,
+    superseded: did => counterpartyOfRotatedDid(cards, did)?.current === false,
+    thread: threadId => (threadId.includes('|') ? threadId.split('|').map(key => identityKey(party(key))).sort().join('|') : threadId),
+  }
+}
+
+/** `email` with each DID of it read as its counterparty's public DID (`rotationReader`), or `null` for one from a DID its
+ * counterparty has left (PLAN-refactor.md §14.5): for the readers of the raw projection that are not the screen (the Markdown mirror). */
+export function rotatedEmail(email: LocalJmapEmail, reader: RotationReader): LocalJmapEmail | null {
+  const sender = email.from?.[0]?.email
+  if (sender && reader.superseded(sender)) return null
+  const read = (address: { email?: string; name?: string }) => (address.email ? { ...address, email: reader.party(address.email) } : address)
+  return {
+    ...email,
+    threadId: reader.thread(email.threadId),
+    ...(email.from ? { from: email.from.map(read) } : {}),
+    ...(email.to ? { to: email.to.map(read) } : {}),
+  }
 }
 
 /** The public DID of a card: its `didcomm` online service (what oui writes),

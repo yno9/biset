@@ -14,7 +14,7 @@ import type { VaultEventRecord, VaultObjectRecord } from '../store/vault/store.t
 import { parseJwe, protectedHeaderOf, unpackAuthcrypt, unpackAnoncrypt, type ResolveSenderKey } from '../../protocol/didcomm/crypto.ts'
 import { isPing, isPingResponse, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
 import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation } from '../../protocol/didcomm/from-prior.ts'
-import { aliasPatch, autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, currentRotation, didCommStateOf, didContactPatch, ownRotationPatch, replyTokenOf, replyTokenPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { aliasPatch, autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, didCommStateOf, didContactPatch, ownRotationPatch, replyTokenOf, replyTokenPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
@@ -65,18 +65,6 @@ export interface DidCommIngressProjectorOptions {
   /** The address a did:vh sender goes by, once verified (did-resolve.ts verifiedVhAddress); kept on its contact card as an alias. */
   resolveAddress?: (did: string) => Promise<string | undefined>
   now?: () => Date
-}
-
-/** A message from a did:peer that no contact card names yet: the card that
- * would (a sibling's record of the rotation, by Vault Sync) has not arrived.
- * Not permanent -- the message stays queued and is tried again -- and never
- * projected with a guess, which would leave two devices disagreeing on who
- * sent it (PLAN-refactor.md §9.1). */
-export class RotationPendingError extends Error {
-  constructor(did: string) {
-    super(`no contact names ${did} yet; waiting for this identity's other devices`)
-    this.name = 'RotationPendingError'
-  }
 }
 
 /**
@@ -322,8 +310,8 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
     } else {
       // Basic Message 2.0: a chat message, filed exactly like mail's own
       // message.add (buildMailMessageAdd) -- same reducer, same read model,
-      // same thread.ts UI. The sender is the counterparty's public DID,
-      // whichever of its DIDs sent it (resolveCounterparty). A message addressed to more than one party is a group
+      // same thread.ts UI. The sender is the DID that authenticated it (resolveCounterparty): who that
+      // is for the person is decided when it is shown (rotationReader). A message addressed to more than one party is a group
       // conversation, threaded by `thid` (group-chat.ts); any other is the
       // 1:1 conversation with its sender (didCommThreadId). Every field below
       // comes from the message alone, never from this device's own state, so
@@ -331,7 +319,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // §9.1: a mismatch stops the Vault's projection rebuild).
       // (senderKid is always defined here: anoncrypt is gated to External
       // Feed Post above, and that type is handled by the branch just above.)
-      const senderDid = counterparty!.publicDid
+      const { senderDid, partyDid } = counterparty!
       const group = isGroupAudience(msg.to)
       // This identity is in `to` by its public DID, or -- when the sender
       // writes to the DID this identity moved to -- by the DID of the key the
@@ -347,22 +335,22 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       if (!body) throw new TypeError('DIDComm basicmessage has no readable content')
       const sentAt = body.sentAt ?? (msg.created_time ? new Date(msg.created_time * 1000).toISOString() : createdAt)
       // The name on the mail's From: -- the sender's own choice, so only from a mail the bridge saw pass DMARC.
-      if (body.fromName && body.auth?.dmarc === 'pass') {
-        const card = contactCardForDid(snapshot.contactCards, senderDid)
-        const write = contactNamePatch(card?.id ?? didContactPatch(senderDid).cardId, card, body.fromName, 'mail')
+      if (partyDid && body.fromName && body.auth?.dmarc === 'pass') {
+        const card = contactCardForDid(snapshot.contactCards, partyDid)
+        const write = contactNamePatch(card?.id ?? didContactPatch(partyDid).cardId, card, body.fromName, 'mail')
         if (write) keyWrites.push(write)
       }
       // A DID's own message (no bridge in between) carries the name its owner chose: kept on its card as signed by it
       // (the message is authenticated by the sender's key), below a name a person wrote by hand.
-      if (body.fromName && !body.auth) {
-        const card = contactCardForDid(snapshot.contactCards, senderDid)
-        const write = contactNamePatch(card?.id ?? didContactPatch(senderDid).cardId, card, body.fromName, 'signed')
+      if (partyDid && body.fromName && !body.auth) {
+        const card = contactCardForDid(snapshot.contactCards, partyDid)
+        const write = contactNamePatch(card?.id ?? didContactPatch(partyDid).cardId, card, body.fromName, 'signed')
         if (write) keyWrites.push(write)
       }
       // The sender's OpenPGP key from the mail's Autocrypt header (didmail PROTOCOL.md §5.5), written to its
       // card -- only when the bridge saw the mail pass DMARC and the key is for the address the DID stands for.
-      if (body.autocrypt && body.auth?.dmarc === 'pass' && body.autocrypt.addr.toLowerCase() === mailAddressOfBridgeDid(senderDid)?.toLowerCase()) {
-        const cardId = contactCardForDid(snapshot.contactCards, senderDid)?.id ?? didContactPatch(senderDid).cardId
+      if (partyDid && body.autocrypt && body.auth?.dmarc === 'pass' && body.autocrypt.addr.toLowerCase() === mailAddressOfBridgeDid(partyDid)?.toLowerCase()) {
+        const cardId = contactCardForDid(snapshot.contactCards, partyDid)?.id ?? didContactPatch(partyDid).cardId
         keyWrites.push(autocryptKeyPatch(cardId, { keydata: body.autocrypt.keydata, seenAt: sentAt, ...(body.autocrypt.preferEncrypt ? { preferEncrypt: body.autocrypt.preferEncrypt } : {}) }))
       }
       // The bridge's reply tokens (didmail PROTOCOL.md §7.1), each kept on the card of the address it is for: the sender's, and the
@@ -438,16 +426,30 @@ function problemOf(msg: DidCommPlaintext): { problemCode?: string; problemText?:
   }
 }
 
-/** The counterparty behind an authenticated sender, by its public DID, and
- * the contact writes the message justifies. */
+/** The authenticated sender, and the contact writes the message justifies
+ * (PLAN-refactor.md §14).
+ *
+ * `senderDid` is the DID of the key that authenticated the message, whatever
+ * its method: it is what the message is recorded under (`from`, the 1:1
+ * thread), so it comes from the message alone and every device of this
+ * identity records the same. Who that is for the person -- the public DID of a
+ * counterparty that rotated to it -- is decided when it is shown
+ * (`rotationReader`), from the contact cards, however late they arrive.
+ *
+ * `partyDid` is the public DID whose card this message may write to: the
+ * sender itself when it is public, the counterparty a verified `from_prior` or
+ * a card names when it is a rotated did:peer, and none for a did:peer nobody
+ * names. A card is never made for such a did:peer: a device that has not yet
+ * received a sibling's record of a rotation would make one for a counterparty
+ * that has a card, and Vault Sync would keep it everywhere. */
 async function resolveCounterparty(
   msg: DidCommPlaintext, senderKid: string, recipientKid: string, cards: readonly LocalJmapContactCard[], at: string,
   verify: (jwt: string, from: string) => Promise<DidRotation>,
   addressOf?: (did: string) => Promise<string | undefined>,
-): Promise<{ publicDid: string; writes: ContactSetPayload[] }> {
+): Promise<{ senderDid: string; partyDid: string | undefined; writes: ContactSetPayload[] }> {
   const senderDid = didOfKid(senderKid)
   const writes: ContactSetPayload[] = []
-  let publicDid: string
+  let partyDid: string | undefined
   if (typeof msg.from_prior === 'string') {
     // A DID Rotation: `from` now speaks for `iss` (DIDComm v2.1). Refused
     // outright when it does not verify -- retrying gives the same answer.
@@ -456,29 +458,25 @@ async function resolveCounterparty(
       if (error instanceof FromPriorError) throw new PermanentDeliveryError(error.message)
       throw error
     }
-    const prior = rotation.prior.startsWith('did:peer:') ? counterpartyOfRotatedDid(cards, rotation.prior)?.publicDid : rotation.prior
-    if (!prior) throw new RotationPendingError(rotation.prior)
-    publicDid = prior
-    const card = contactCardForDid(cards, publicDid)
-    const latest = card ? currentRotation(card) : undefined
-    // A rotation older than the one already processed: its DID was left.
-    if (latest && latest.did !== senderDid && latest.iat > rotation.iat) throw new PermanentDeliveryError(`${senderDid} is not ${publicDid}'s current DID`)
-    if (!card) writes.push(didContactPatch(publicDid))
-    const cardId = card?.id ?? didContactPatch(publicDid).cardId
-    if (!card || !didCommStateOf(card).rotations?.[senderDid]) writes.push(rotationPatch(cardId, { did: senderDid, prior: rotation.prior, iat: rotation.iat }))
+    // A rotation from one did:peer to another is recorded on the card that names the first. A device that does not know
+    // the first records nothing here (and shows this one as it is) until a sibling's record of that card reaches it.
+    partyDid = rotation.prior.startsWith('did:peer:') ? counterpartyOfRotatedDid(cards, rotation.prior)?.publicDid : rotation.prior
+    if (partyDid) {
+      const card = contactCardForDid(cards, partyDid)
+      if (!card) writes.push(didContactPatch(partyDid))
+      const cardId = card?.id ?? didContactPatch(partyDid).cardId
+      if (!card || !didCommStateOf(card).rotations?.[senderDid]) writes.push(rotationPatch(cardId, { did: senderDid, prior: rotation.prior, iat: rotation.iat }))
+    }
   } else if (senderDid.startsWith('did:peer:')) {
-    // Only a counterparty's rotated DID: no standalone did:peer parties (§10-5).
-    const known = counterpartyOfRotatedDid(cards, senderDid)
-    if (!known) throw new RotationPendingError(senderDid)
-    // Once a newer rotation was processed, the old DID is ignored (DIDComm v2.1).
-    if (!known.current) throw new PermanentDeliveryError(`${senderDid} is not ${known.publicDid}'s current DID`)
-    publicDid = known.publicDid
+    // A counterparty's rotated DID, or a party of its own that has no public DID (PLAN-refactor.md §14): either way it is
+    // recorded as it is. The card, when there is one, is only where what it says about itself is kept.
+    partyDid = counterpartyOfRotatedDid(cards, senderDid)?.publicDid
   } else {
-    publicDid = senderDid
-    const known = contactCardForDid(cards, publicDid)
+    partyDid = senderDid
+    const known = contactCardForDid(cards, partyDid)
     // A did:vh names no host: the address it goes by is learned from its verified did:web shadow, when it has one.
-    const address = publicDid.startsWith('did:vh:') && addressOf ? await addressOf(publicDid) : undefined
-    if (!known) writes.push(didContactPatch(publicDid, address))
+    const address = partyDid.startsWith('did:vh:') && addressOf ? await addressOf(partyDid) : undefined
+    if (!known) writes.push(didContactPatch(partyDid, address))
     else {
       // The same contact under another address: kept among its aliases.
       const alias = aliasPatch(known, address)
@@ -488,10 +486,10 @@ async function resolveCounterparty(
   // Written to one of this identity's own rotation DIDs, by the counterparty
   // it is for: that rotation is confirmed, and `from_prior` stops (§4.3).
   const ownDid = recipientKid ? didOfKid(recipientKid) : undefined
-  const card = contactCardForDid(cards, publicDid)
+  const card = partyDid ? contactCardForDid(cards, partyDid) : undefined
   const own = card && ownDid ? didCommStateOf(card).own?.[ownDid] : undefined
   if (card && ownDid && own?.startedAt && !own.confirmedAt) writes.push(ownRotationPatch(card.id, ownDid, 'confirmedAt', at))
-  return { publicDid, writes }
+  return { senderDid, partyDid, writes }
 }
 
 /** Thrown when this exact (senderKid, message id) pair was already

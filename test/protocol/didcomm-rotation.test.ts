@@ -19,7 +19,7 @@ import { audienceOfCopy, chooseRoute, ownRotationIdentity } from '../../src/clie
 import { createRotationManager, RETIRED_Y_WATCH_MS } from '../../src/client/didcomm/rotation-manager.ts'
 import { rotationSigningKey, ROTATION_KEY_FRAGMENT } from '../../src/client/didcomm/rotation-key.ts'
 import {
-  applyContactSet, didContactPatch, ownRotationPatch, rotationPatch, DIDCOMM_CONTACT_PROPERTY, type ContactSetPayload, type LocalJmapContactCard,
+  applyContactSet, didContactPatch, ownRotationPatch, rotationPatch, rotationReader, DIDCOMM_CONTACT_PROPERTY, type ContactSetPayload, type LocalJmapContactCard,
 } from '../../src/client/store/projection/contacts.ts'
 import { createSegmentKey, decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
@@ -151,8 +151,12 @@ describe('ingress of a moved counterparty', () => {
   test('a message from Bob\'s did:peer with a verified from_prior is Bob\'s, and Alice\'s card for Bob learns the move', async () => {
     const message = buildPlaintext(BASIC_MESSAGE, { content: 'hi from my private DID' }, bobY.did, alice.did, { fromPrior: signedRotation() })
     const result = await projector([]).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
-    expect(result.projection.emails).toMatchObject([{ from: [{ email: bob.did }], threadId: didCommThreadId(alice.did, bob.did) }])
+    // Recorded under the DID that authenticated it; it is Bob's when it is shown (PLAN-refactor.md §14).
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: bobY.did }], threadId: didCommThreadId(alice.did, bobY.did) }])
     expect(result.projection.contactCards[0]![DIDCOMM_CONTACT_PROPERTY]).toEqual({ rotations: { [bobY.did]: { prior: bob.did, iat: 100 } } })
+    const reader = rotationReader(result.projection.contactCards)
+    expect(reader.party(bobY.did)).toBe(bob.did)
+    expect(reader.thread(didCommThreadId(alice.did, bobY.did))).toBe(didCommThreadId(alice.did, bob.did))
   })
 
   test('a from_prior that does not verify is refused for good', async () => {
@@ -161,13 +165,20 @@ describe('ingress of a moved counterparty', () => {
     await expect(projector([]).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))).rejects.toBeInstanceOf(PermanentDeliveryError)
   })
 
-  test('without from_prior, the card names the sender -- two devices holding it record the same message identically', async () => {
+  test('without from_prior, a device that has the card and one that has not record the same message (PLAN-refactor.md §14.2)', async () => {
     const known = cards(bobCard, rotationPatch(bobCard.cardId, { did: bobY.did, prior: bob.did, iat: 100 }))
     const message = buildPlaintext(BASIC_MESSAGE, { content: 'second message' }, bobY.did, alice.did)
-    const one = await projector(known).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
-    const two = await projector(known).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
-    expect(one.projection.emails).toMatchObject([{ from: [{ email: bob.did }] }])
-    expect(two.projection.emails.map(email => [email.id, email.threadId, email.from])).toEqual(one.projection.emails.map(email => [email.id, email.threadId, email.from]))
+    const withCard = await projector(known).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
+    const withoutCard = await projector([]).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
+    expect(withCard.projection.emails).toMatchObject([{ from: [{ email: bobY.did }] }])
+    // The stored message does not depend on what the device knew of Bob: the same id, thread, sender and recipient.
+    expect(withoutCard.projection.emails.map(email => [email.id, email.threadId, email.from, email.to]))
+      .toEqual(withCard.projection.emails.map(email => [email.id, email.threadId, email.from, email.to]))
+    // And a device that knows nothing of Bob's move makes no card for the did:peer it came from.
+    expect(withoutCard.projection.contactCards).toEqual([])
+    // Once the card is there, both read it as Bob's.
+    expect(rotationReader(known).party(bobY.did)).toBe(bob.did)
+    expect(rotationReader([]).party(bobY.did)).toBe(bobY.did)
   })
 
   test('a group copy naming Alice by her Y is hers, recorded with her public DID -- the same on every device', async () => {
@@ -184,10 +195,14 @@ describe('ingress of a moved counterparty', () => {
     await expect(projector(known).verifyAndProject(envelope(notMine, { kid: bob.kid, key: bob.x.secretKey }, toAliceY))).rejects.toThrow('does not name this identity')
   })
 
-  test('a DID Bob has since moved away from is refused for good', async () => {
+  test('a DID Bob has since moved away from is recorded, and read as left (not shown): it may be a device that was removed (§14.5)', async () => {
     const moved = cards(bobCard, rotationPatch(bobCard.cardId, { did: bobY.did, prior: bob.did, iat: 100 }), rotationPatch(bobCard.cardId, { did: 'did:peer:2.newer', prior: bob.did, iat: 200 }))
     const message = buildPlaintext(BASIC_MESSAGE, { content: 'from the old DID' }, bobY.did, alice.did)
-    await expect(projector(moved).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))).rejects.toBeInstanceOf(PermanentDeliveryError)
+    const result = await projector(moved).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: bobY.did }] }])
+    const reader = rotationReader(moved)
+    expect(reader.superseded(bobY.did)).toBe(true)
+    expect(reader.superseded('did:peer:2.newer')).toBe(false)
   })
 
   test('Bob writing to Alice\'s Y confirms Alice\'s move (and a ping-response is enough)', async () => {

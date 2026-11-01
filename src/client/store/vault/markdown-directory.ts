@@ -2,6 +2,7 @@ const DATABASE = 'biset-markdown-mirror'
 const STORE = 'directory_handles'
 
 import type { LocalJmapReadModel, LocalJmapSnapshot } from '../projection/gateway.ts'
+import { rotatedEmail, rotationReader } from '../projection/contacts.ts'
 import { MarkdownSelfWriteGuard, markdownThreadFilename, parseMarkdownThread, renderMarkdownThread, type ParsedMarkdown } from './markdown-mirror.ts'
 
 export class MarkdownDirectoryConnection {
@@ -77,7 +78,20 @@ export function observeMarkdownDirectory(root: FileSystemDirectoryHandle, change
 }
 function done(tx: IDBTransaction): Promise<void> { return new Promise((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onabort = tx.onerror = () => reject(tx.error) }) }
 function result<T>(request: IDBRequest<T>): Promise<T> { return new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error) }) }
-function groupThreads(snapshot: LocalJmapSnapshot): Map<string, LocalJmapSnapshot['emails']> { const result = new Map<string, LocalJmapSnapshot['emails']>(); for (const email of snapshot.emails) { const list = result.get(email.threadId) ?? []; list.push(email); result.set(email.threadId, list) } return result }
+// Each email as the person it is with sees it (PLAN-refactor.md §14.4): a rotated DID read as its counterparty's, and nothing
+// from one the counterparty has left; so a conversation is one file whether or not the card that says so has arrived yet.
+function groupThreads(snapshot: LocalJmapSnapshot): Map<string, LocalJmapSnapshot['emails']> {
+  const reader = rotationReader(snapshot.contactCards)
+  const result = new Map<string, LocalJmapSnapshot['emails']>()
+  for (const stored of snapshot.emails) {
+    const email = rotatedEmail(stored, reader)
+    if (!email) continue
+    const list = result.get(email.threadId) ?? []
+    list.push(email)
+    result.set(email.threadId, list)
+  }
+  return result
+}
 function safeDirectoryName(value: string): string { return value.replace(/[/\\:*?"<>|]/g, '_') || 'Archive' }
 async function readOptional(root: FileSystemDirectoryHandle, directoryName: string, filename: string): Promise<string | undefined> { try { const directory = await root.getDirectoryHandle(directoryName); const file = await directory.getFileHandle(filename); return (await file.getFile()).text() } catch (error) { if (error instanceof DOMException && error.name === 'NotFoundError') return; throw error } }
 async function findThreadFile(root: FileSystemDirectoryHandle, directoryName: string, threadId: string): Promise<{ filename: string; content: string } | undefined> { try { const directory = await root.getDirectoryHandle(directoryName) as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }; for await (const [filename, entry] of directory.entries()) { if (entry.kind !== 'file' || !filename.endsWith('.md')) continue; const content = await (await (entry as FileSystemFileHandle).getFile()).text(); try { if (parseMarkdownThread(content).frontmatter.id === threadId) return { filename, content } } catch { /* unrelated file */ } } return } catch (error) { if (error instanceof DOMException && error.name === 'NotFoundError') return; throw error } }

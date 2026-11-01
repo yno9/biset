@@ -93,7 +93,7 @@ mediator の登録の形（受信箱が DID × 端末になった）、Vault の
 | 領域 | 2026-10-03 版 | 現行コード |
 |---|---|---|
 | 会話の確立 | relationship の INIT/ACCEPT（独自の型）で相手ごとの did:peer を作る | **撤去**。front door で始め、Discover Features で `from_prior` に対応する相手とは DID Rotation で Y へ（§9.2） |
-| did:peer の送り主 | relationship の相手、または独立した相手 | **相手の移動先としてだけ**（連絡先が名指すか、`from_prior` が付く）。単体の did:peer とはやりとりしない |
+| did:peer の送り主 | relationship の相手、または独立した相手 | **受信は、送り主の DID のまま記録する**（PLAN-refactor.md §14）。移動先の did:peer は、連絡先の `rotations` で、表示のときに相手の公開 DID と読む。単体の did:peer（公開 DID を持たない相手）も受け入れる（受信専用。返信先が無ければ返信欄を出さない） |
 | 相手の記録 | `contact-key.set`（ContactKeyV1、秘密鍵を含む） | **連絡先**（`contact.set`、JMAP for Contacts の ContactCard。秘密鍵は持たない）（§7.3） |
 | seed の権威 | DID ログの「最初の端末」の判定 | **DID Document の `#biset-generation`（`authentication`）が公開する鍵の seed**（2026-10-21 までは `#didcomm-rotation`。旧名は読まないので、旧名の文書は「鍵が無い」扱いになり、renew で取り替える）（§6） |
 | group chat | 独自の招待と型、端末ごとのメンバー一覧 | **`to` が複数の Basic Message**。`thid` が会話、参加者ごとの経路で送る（§9.4） |
@@ -437,8 +437,8 @@ INIT/ACCEPT の握手は無い（P0 で撤去）。
 - **端末の削除**（`PLAN-refactor.md` §4.5）: seed の取り替え（§6）の後、今の seed が導かない Y で移っていた相手には、新しい Y から移り直す。相手が新しい移動を処理すると、古い Y からのものは拒否される。
   **残る窓**: 相手が処理するまで、外された端末は古い Y で読み書きできる（P0 以前の relationship と同じ）。
 - **受信**: 送り主は公開 DID で記録する。`from_prior` は全部を検査する（`protocol/didcomm/from-prior.ts`、§4.4・§7-2）。通らなければ恒久的に拒否。
-  `from_prior` の無い did:peer は、連絡先がその DID を相手の移動先として持つときだけ受け入れる。持たない端末は**保留**する（ACK しない。兄弟の記録が届いてから処理する。§9.1 の規則）。
-  相手が既に新しい DID へ移った後の古い DID からは拒否する。単体の did:peer（公開 DID を持たない相手）とはやりとりしない。did:key・did:peer:4 には対応しない（did:peer:4 は後で、§10-4）。
+  **（2026-11-01、PLAN-refactor.md §14 で改めた）** 受信するメッセージの `from` と 1:1 の `threadId` は、メッセージを認証した鍵の DID のまま記録する（端末の状態に依存しない）。`from_prior` の無い did:peer も保留しない。公開 DID への読み替えは、連絡先の `rotations` から、表示のときに行う（`rotationReader`）。
+  相手が既に新しい DID へ移った後の古い DID からのものは、記録するが表示しない（外された端末かもしれない。§14.5）。did:peer の送り主には連絡先を作らない。did:key・did:peer:4 には対応しない（did:peer:4 は後で、§10-4）。
 - 公開 DID の相手から初めて届いたら、その相手の連絡先を作る（同じ受信の commit で）。
 - 送信は送信キュー（`didcomm-outbox.ts`）から。メッセージの `id` と時刻は再送でも変わらない。経路は試すたびに選び直す。失敗はメッセージ・宛先・理由ごとに 1 回だけ画面に出す。
 - 受信側は、JWE の宛先の中から自分の鍵（front door か Y）を探して開く（宛先の順序に依存しない）。
@@ -730,7 +730,7 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
 6. **端末を外した直後の窓（中、原理的）**。相手が did.md の CDN の古い DID 文書を読む最大 30 秒は、外された端末を正規の端末とみなしうる。
    DID Rotation で移っていた相手については、相手が新しい移動を処理するまで、外された端末は古い Y で読み書きできる（§9.2）。
 8. **移動済みの相手の連絡先を消すと、その相手の did:peer が分からなくなる（中）**。JMAP の `ContactCard/destroy`（や `onlineServices` の書き換え）で `biset.md:didcomm` も消える。
-   相手は `from_prior` を付けずに did:peer から送り続けるので、そのメッセージは保留されたまま mediator の保持期間（30 日）で消える。相手が次に移るか、こちらが移り直すまで戻らない。対処は未決（§17-14）。
+   相手は `from_prior` を付けずに did:peer から送り続けるが、そのメッセージは送り主の DID のまま記録される（保留しない。§14）。相手の行にはまとまらず、その did:peer 自身の行に出る。相手が次に移るか、こちらが移り直すまで戻らない。対処は未決（§17-14）。
 7. **onion の rate limit 共有（中、Tor 実運用まで）**（§9.8）。
 8. **メール**: HTML 本文と添付は保存しない（§10.2）。DID Rotation で移った相手からの problem-report は、送った email の宛先（公開 DID）と一致しないので反映されない（didmail は移らない）。
 9. **No background／push（運用）**。ページが閉じている間は同期しない。

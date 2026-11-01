@@ -18,7 +18,7 @@ import { patchShell, shell, isNarrow, threadMotion } from './stores.ts'
 import { markSeen } from './seen.ts'
 import { attachPullReveal } from './pull-reveal.ts'
 import type { PullReveal } from './pull-reveal.ts'
-import { counterpartLabel, displayParticipantsOf, latestOf, participantsOf } from './thread-model.ts'
+import { counterpartLabel, displayParticipantsOf, isReceiveOnlyThread, latestOf, participantsOf } from './thread-model.ts'
 import { showComposePage } from './pages/index.ts'
 import { composeDraft, sendProblem, signingUp } from './pages/compose-page.tsx'
 import { heldIdentity } from './signup-preload.ts'
@@ -152,6 +152,11 @@ function MetaInfo({ group, open }: { group: ThreadGroup | undefined; open: boole
 }
 
 /** With no account, the line under the island says what sending does: the account is made first, and the message goes out right after. */
+/** What stands where the reply box would: the thread's other side can only send (PLAN-refactor.md §14.6). */
+function ReceiveOnlyNote() {
+  return <div id="conv-meta-expanded">This sender can only send: it has no address to reply to.</div>
+}
+
 function SendAsNotice() {
   const asking = useStore(signingUp)
   const problem = useStore(sendProblem)
@@ -285,6 +290,7 @@ const TITLES = { account: 'account', compose: 'compose' } as const
 export function RightCol() {
   const page = useStore(uiPage)
   const { focused, others, rows } = useThreads()
+  const self = useSelf()
   // What the reply box keeps per inbox: the open thread's inbox, the new message, the account.
   const draftKey = page === 'compose' ? 'new' : page === 'account' ? 'me' : focused ? rows.find(row => row.groups.some(group => group.key === focused.key))?.key ?? focused.key : ''
   // The inbox's threads in time order, the open one among them.
@@ -463,7 +469,7 @@ export function RightCol() {
           <div id="scroll-spacer" />
         </div>
       </div>
-      <div id="reply-dock">{onThread && focused ? <ReplyBox key={draftKey} draftKey={draftKey} group={focused} /> : page === 'compose' ? (asking ? null : <ReplyBox key={draftKey} draftKey={draftKey} />) : accountReady && page === 'account' ? <ReplyBox key={draftKey} draftKey={draftKey} mode="me" command={<AccountFoot />} /> : null}</div>
+      <div id="reply-dock">{onThread && focused ? (isReceiveOnlyThread(focused.messages.map(p => p.msg), self) ? <ReceiveOnlyNote /> : <ReplyBox key={draftKey} draftKey={draftKey} group={focused} />) : page === 'compose' ? (asking ? null : <ReplyBox key={draftKey} draftKey={draftKey} />) : accountReady && page === 'account' ? <ReplyBox key={draftKey} draftKey={draftKey} mode="me" command={<AccountFoot />} /> : null}</div>
     </div>
   )
 }

@@ -73,7 +73,7 @@ import { GenerationSeedReader, GenerationSeedSink, generationSeedRecord } from '
 import { createGenerationSeedAuthority, type GenerationSeedAuthority } from '../didcomm/generation-seed-bootstrap.ts'
 import { publishedRotationKey, rotationSigningKey } from '../didcomm/rotation-key.ts'
 import { createRotationManager, type RotationManager } from '../didcomm/rotation-manager.ts'
-import { autocryptKeyPatch, contactAvatar, contactCryptoKey, ownCryptoKeyPatch, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch, replyTokenOf, replyTokenPatch } from '../store/projection/contacts.ts'
+import { rotationReader, autocryptKeyPatch, contactAvatar, contactCryptoKey, ownCryptoKeyPatch, contactAvatarPatch, contactDisplayName, ownAvatarPatch, ownNamePatch, type ContactSetPayload, type LocalJmapContactCard, contactCardForDid, contactNamePatch, contactSetIntent, currentAutocryptKey, didContactPatch, replyTokenOf, replyTokenPatch } from '../store/projection/contacts.ts'
 import { fromPriorKeyResolver, verifyFromPrior } from '../../protocol/didcomm/from-prior.ts'
 import { signingKeyResolver } from '../../protocol/didcomm/jws.ts'
 import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
@@ -495,7 +495,7 @@ async function configureWalletAccountIfPresent(
     })
     // A group conversation is whatever its messages say (group-chat.ts):
     // its participants are those of its latest message.
-    const walletGroupConversation = async (thid: string) => groupConversation(thid, (await readModel.snapshot()).emails)
+    const walletGroupConversation = async (thid: string) => { const snapshot = await readModel.snapshot(); return groupConversation(thid, snapshot.emails, rotationReader(snapshot.contactCards)) }
     // The generation seed: Vault records, read and written like every
     // other private credential, and carried to siblings by Vault Sync.
     const walletSeedReader = new GenerationSeedReader({ identityId: identityId, objects: vaultStore, events: vaultStore, segmentKeys: boundary.resolver })

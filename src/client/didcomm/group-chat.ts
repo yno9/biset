@@ -6,6 +6,7 @@
 // no roster store, and no administrator -- the participants of a group are
 // whoever its latest message was addressed to (plus its sender), and adding
 // or dropping someone is sending the next message to a different `to`.
+import type { RotationReader } from '../store/projection/contacts.ts'
 import type { LocalJmapEmail } from '../store/projection/gateway.ts'
 
 const GROUP_ADDRESS_PREFIX = 'didcomm-group:'
@@ -38,6 +39,8 @@ export function isGroupAudience(to: readonly string[] | undefined): boolean {
 export function groupConversation(
   thid: string,
   emails: readonly LocalJmapEmail[],
+  /** Reads a participant's rotated DID as its public DID (PLAN-refactor.md §14.4); without it, as stored. */
+  reader?: RotationReader,
 ): { participants: string[]; name?: string } | null {
   const threadId = didcommGroupAddress(thid)
   const messages = emails.filter(email => email.threadId === threadId)
@@ -46,7 +49,7 @@ export function groupConversation(
   if (!latest) return null
   const participants = new Set<string>()
   for (const address of [...(latest.from ?? []), ...(latest.to ?? [])]) {
-    if (address.email?.startsWith('did:')) participants.add(address.email)
+    if (address.email?.startsWith('did:')) participants.add(reader ? reader.party(address.email) : address.email)
   }
   const name = [...messages].reverse().find(message => message.subject)?.subject
   return { participants: [...participants].sort(), ...(name ? { name } : {}) }

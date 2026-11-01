@@ -3,6 +3,7 @@
 import { groupMessages, inboxKeyForThread, latestGroup } from './message/message-view.ts'
 import type { MailMessageView, ProcessedMessage, ThreadGroup } from './message/message-view.ts'
 import { displayName, labelForDid, protocolFor } from './did-display.ts'
+import { decodePeerDid2 } from '../../../protocol/didcomm/peer.ts'
 import type { Proto } from './did-display.ts'
 
 /** This identity's own address(es), lower-cased: its mail address and, once DIDComm is on, its DID. */
@@ -33,6 +34,20 @@ export function displayParticipantsOf(msgs: readonly MailMessageView[], self: Se
 export function threadProtocol(msgs: readonly MailMessageView[], self: SelfAddresses): Proto {
   const first = participantsOf(msgs, self).split(', ')[0]
   return first ? protocolFor(first) : 'mail'
+}
+
+/** A did:peer:2 that names no service: it has been heard from, and has nowhere to be written to (a sender that can only send, like a
+ * device forwarding its SMS). Decided from the DID's own text, with no resolution. Anything else, or a DID that does not decode,
+ * is not receive-only: a reply to it is tried (PLAN-refactor.md §14.6). */
+export function isReceiveOnlyDid(did: string): boolean {
+  if (!did.startsWith('did:peer:2.')) return false
+  try { return decodePeerDid2(did).service.length === 0 } catch { return false }
+}
+
+/** A thread whose every other participant is receive-only: there is nobody to answer, so no reply box is offered. */
+export function isReceiveOnlyThread(msgs: readonly MailMessageView[], self: SelfAddresses): boolean {
+  const others = participantsOf(msgs, self).split(', ').filter(Boolean)
+  return others.length > 0 && others.every(isReceiveOnlyDid)
 }
 
 /** The members of a group chat other than this identity, as the short names a list row shows: what

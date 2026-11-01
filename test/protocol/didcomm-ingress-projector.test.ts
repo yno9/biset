@@ -10,7 +10,7 @@ import { PROBLEM_REPORT } from '../../src/protocol/didcomm/problems.ts'
 import type { LocalJmapEmail } from '../../src/client/store/projection/gateway.ts'
 import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
-import { DidCommIngressProjector, DidCommReplayError, RotationPendingError } from '../../src/client/didcomm/ingress-projector.ts'
+import { DidCommIngressProjector, DidCommReplayError } from '../../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { didcommGroupAddress } from '../../src/client/didcomm/group-chat.ts'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
@@ -275,7 +275,7 @@ describe('DIDComm ingress projector', () => {
     await expect(projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(unsigned)), 'ingress-2'))).rejects.toThrow('unauthenticated')
   })
 
-  test('a basicmessage from a did:peer no contact names is held back, not projected (§10-5)', async () => {
+  test('a basicmessage from a did:peer nobody names is recorded under that DID, and no contact card is made for it (PLAN-refactor.md §14.3)', async () => {
     const agent = generatePeerIdentity({ uri: 'https://agent-mediator.test.example' })
     const plaintext = buildPlaintext(BASIC_MESSAGE, { content: 'hello from an agent' }, agent.did, identityId)
     const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(plaintext)), { kid: agent.xKid, privateKey: agent.xPriv }, [{ kid: recipientKid, publicKey: recipientXPub }])
@@ -290,7 +290,9 @@ describe('DIDComm ingress projector', () => {
       async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
       signer,
     })
-    await expect(projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))).rejects.toBeInstanceOf(RotationPendingError)
+    const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: agent.did }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, agent.did) }])
+    expect(result.projection.contactCards).toEqual([])
   })
 
   test('a basicmessage addressed to several parties lands in the group thread its thid names, with every recipient in `to`', async () => {
