@@ -1514,7 +1514,7 @@ a.lp-avatar:hover {
   /* Flush to the top, no inset padding here. The notch inset (PWA only) is
      reserved OUTSIDE this scroll container, on #right-col — see section 27.
      Anything reserved inside it would scroll away with the content. */
-  padding: 4px 4px 4px 4px;
+  padding:0;
 }
 #outer:-webkit-scrollbar {
   display: none;
