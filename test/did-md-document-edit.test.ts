@@ -1,4 +1,4 @@
-// How a Comail device's DIDComm endpoint is written into its DID document: the
+// How a Oui device's DIDComm endpoint is written into its DID document: the
 // endpoint names the mediator by DID (DIDComm Messaging v2.1, "Using a DID as
 // an endpoint"), and a move between mediators retires the old endpoints.
 import { describe, expect, test } from 'vitest'
@@ -96,7 +96,7 @@ describe('the rotation key in a document edit', () => {
   })
 })
 
-describe('every edit Comail can ask for passes the capability schema', () => {
+describe('every edit Oui can ask for passes the capability schema', () => {
   // did.md signs `authorizationDetails` without reading it and hands it back; the
   // schema (additionalProperties: false) then decides whether a sign-in is
   // accepted. A field the schema misses fails the approval AFTER did.md has

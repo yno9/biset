@@ -1,11 +1,11 @@
-// What an MLS leaf claims to be, and how that claim maps onto a comail identity.
+// What an MLS leaf claims to be, and how that claim maps onto a oui identity.
 //
 // MLS gives every leaf a Credential. RFC 9420 leaves its contents to the
-// application. Comail uses a generation-bound device credential containing the
+// application. Oui uses a generation-bound device credential containing the
 // stable identity id, a derived device id, and that leaf's Ed25519 public key.
 // The device key is deliberately not published in the DID document:
 //
-//   - **One leaf per device**, not per identity. Every comail device already has
+//   - **One leaf per device**, not per identity. Every oui device already has
 //     its own leaf. A group whose leaves were per-identity would have to
 //     share MLS private state between devices — exactly the thing MLS's
 //     forward secrecy is designed to make impossible.
@@ -16,7 +16,7 @@
 //     mutation is neither required nor authoritative.
 //
 // `credentialType: 'basic'` is the right container: MLS transports the
-// canonical credential bytes while comail's Authentication Service interprets
+// canonical credential bytes while oui's Authentication Service interprets
 // and validates them.
 import type { Credential } from '../../protocol/mls/credential.ts'
 import { credentialForMlsDevice, mlsDeviceCredentialOf, type MlsDeviceCredentialV2 } from './device-credential.ts'
@@ -30,8 +30,8 @@ export function credentialFor(value: MlsDeviceCredentialV2): Credential {
 }
 
 /** Reads a leaf's credential back. Throws on anything that isn't ours —
- * an X.509 credential, or a BasicCredential not encoded by comail, is not a
- * comail member and must not be silently treated as one. */
+ * an X.509 credential, or a BasicCredential not encoded by oui, is not a
+ * oui member and must not be silently treated as one. */
 export function memberIdOf(credential: Credential): MlsMemberId {
   const value = mlsDeviceCredentialOf(credential)
   return { did: value.identityId, kid: value.deviceKid }

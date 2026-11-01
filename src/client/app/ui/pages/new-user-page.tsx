@@ -1,4 +1,4 @@
-// New-user onboarding: since N1 (2026-09-05) one job only, the did.md Wallet login. comail never
+// New-user onboarding: since N1 (2026-09-05) one job only, the did.md Wallet login. oui never
 // mints, restores, or holds a controller key of its own; did.md is the identity issuer.
 //
 // Same-site with dito (did.md) the sign-in and creation fields are dito's, in a frame
@@ -284,7 +284,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
     <div id="new-user-page" style={{ '--nu-ink': ink } as React.CSSProperties}>
       <header id="nu-header">
         <div id="nu-brand">
-          <span id="nu-wordmark">comail</span>
+          <span id="nu-wordmark">oui mail</span>
           <AvatarPalette />
         </div>
       </header>
@@ -349,7 +349,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
         </div>
         <div id="nu-wallet-result" aria-live="polite" hidden={!result} data-error={result?.error ? '' : undefined}>{result?.message}</div>
       </div>
-      <button type="button" id="nu-help" aria-label="About comail" onClick={() => setAbout(true)}>
+      <button type="button" id="nu-help" aria-label="About oui" onClick={() => setAbout(true)}>
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4.5" /><path d="M12 17.5h.01" /></svg>
       </button>
       {about ? <AboutOverlay onClose={() => setAbout(false)} /> : null}

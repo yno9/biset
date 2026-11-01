@@ -25,7 +25,7 @@
 </head>
 <body>
 <div class="controls">
-  <label>text <input id="text" type="text" value="comail"></label>
+  <label>text <input id="text" type="text" value="oui"></label>
   <label>weight <input id="weight" type="range" min="100" max="900" step="50" value="700"><output id="weightOut">700</output></label>
   <label>letter-spacing <input id="tracking" type="range" min="-0.15" max="0.1" step="0.005" value="-0.05"><output id="trackingOut">-0.05</output>em</label>
   <label>size <input id="size" type="range" min="2" max="9" step="0.25" value="5"><output id="sizeOut">5</output>rem</label>
@@ -56,7 +56,7 @@
   })
   const $ = id => document.getElementById(id)
   const draw = () => {
-    const text = $('text').value || 'comail'
+    const text = $('text').value || 'oui'
     document.body.classList.toggle('dark', $('dark').checked)
     document.body.style.setProperty('--weight', $('weight').value)
     document.body.style.setProperty('--tracking', `${$('tracking').value}em`)

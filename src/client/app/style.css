@@ -1,5 +1,5 @@
 /* =============================================================================
-   comail — application stylesheet
+   oui — application stylesheet
    =============================================================================
 
    ORGANISATION — three layers, in cascade order:
@@ -5269,7 +5269,7 @@ html.pwa-standalone #app {
   background: rgba(128, 128, 128, 0.14);
 }
 
-/* What comail is: slides over the page, changing by sliding up and down (ui/pages/about-overlay.tsx). */
+/* What oui is: slides over the page, changing by sliding up and down (ui/pages/about-overlay.tsx). */
 #about {
   position: fixed;
   inset: 0;

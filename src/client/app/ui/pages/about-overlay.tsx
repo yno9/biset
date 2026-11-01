@@ -1,13 +1,13 @@
-// What comail is, over the sign-up page: a few full-screen slides that change by sliding up and down (not by scrolling): the wheel, a swipe, the arrow
+// What oui is, over the sign-up page: a few full-screen slides that change by sliding up and down (not by scrolling): the wheel, a swipe, the arrow
 // keys and the dots on the side take one step at a time. The link to the source is at the bottom left. Esc and the cross close it.
 import { useEffect, useRef, useState } from 'react'
 import { GitHubIcon } from '../account/github-icon.tsx'
 
 const SLIDES: readonly { title: string; text: string }[] = [
-  { title: 'comail', text: 'Email, reimagined for privacy and identity.' },
+  { title: 'oui', text: 'Email, reimagined for privacy and identity.' },
   { title: 'Your mail stays with you', text: 'Everything is kept encrypted on your own devices. No server holds a permanent mailbox, or a history of your messages.' },
-  { title: 'An identity of your own', text: 'Your address stands on an identity that you control, from a wallet that you choose. comail reads public documents and never writes them.' },
-  { title: 'Mail and DIDComm, bridged', text: 'Write to anyone who has an email address. Between comail users, messages travel over DIDComm; a bridge carries them to and from ordinary mail.' },
+  { title: 'An identity of your own', text: 'Your address stands on an identity that you control, from a wallet that you choose. oui reads public documents and never writes them.' },
+  { title: 'Mail and DIDComm, bridged', text: 'Write to anyone who has an email address. Between oui users, messages travel over DIDComm; a bridge carries them to and from ordinary mail.' },
   { title: 'Your devices, in step', text: 'Your devices keep each other up to date over the same channel, with no sync server. Your history leaves and comes back as plain files, and threads can live on disk as Markdown.' },
   { title: 'Open source', text: 'Read the code, or run your own.' },
 ]
@@ -52,7 +52,7 @@ export function AboutOverlay({ onClose }: { onClose: () => void }) {
   })
 
   return (
-    <div id="about" ref={root} role="dialog" aria-modal="true" aria-label="About comail" tabIndex={-1}
+    <div id="about" ref={root} role="dialog" aria-modal="true" aria-label="About oui" tabIndex={-1}
       onWheel={event => { if (Math.abs(event.deltaY) > 12) go(at + Math.sign(event.deltaY)) }}
       onTouchStart={event => { touchFrom.current = event.touches[0]?.clientY }}
       onTouchEnd={event => {
@@ -75,7 +75,7 @@ export function AboutOverlay({ onClose }: { onClose: () => void }) {
       <nav id="about-dots" aria-label="Slides">
         {SLIDES.map((slide, index) => <button key={slide.title} type="button" aria-label={`${index + 1}: ${slide.title}`} aria-current={index === at ? 'true' : undefined} onClick={() => go(index)} />)}
       </nav>
-      <a id="about-github" href={SOURCE_URL} target="_blank" rel="noreferrer" aria-label="comail on GitHub"><GitHubIcon size={24} /></a>
+      <a id="about-github" href={SOURCE_URL} target="_blank" rel="noreferrer" aria-label="oui on GitHub"><GitHubIcon size={24} /></a>
     </div>
   )
 }
