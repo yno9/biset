@@ -20,6 +20,7 @@ import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.t
 import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
 import { storedEncryptedBody } from '../pgp/stored.ts'
 import { mailAddressOfBridgeDid } from '../pgp/autocrypt.ts'
+import { trustedReplyTokens } from './reply-tokens.ts'
 import { isExternalFeedPost, externalFeedPostBodyOf, externalFeedThreadId, EXTERNAL_FEED_POST } from './external-feed.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { DidCommSenderMismatchError, isExpired } from '../../protocol/didcomm/message.ts'
@@ -367,15 +368,12 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // The bridge's reply tokens (didmail PROTOCOL.md §7.1), each kept on the card of the address it is for: the sender's, and the
       // `Reply-To`'s. Only from a bridge's mail that passed DMARC, and only for those two DIDs: what a sender can touch is its own card
       // and the one it names as the place to answer.
-      if (body.replyTokens && body.auth?.dmarc === 'pass' && mailAddressOfBridgeDid(senderDid)) {
-        for (const [did, token] of Object.entries(body.replyTokens)) {
-          if (!sameIdentity(did, senderDid) && !(body.replyTo && sameIdentity(did, body.replyTo))) continue
-          const card = contactCardForDid(snapshot.contactCards, did)
-          if (replyTokenOf(card) === token) continue
-          const created = didContactPatch(did)
-          if (!card && !sameIdentity(did, senderDid)) keyWrites.push(created)
-          keyWrites.push(replyTokenPatch(card?.id ?? created.cardId, token))
-        }
+      for (const [did, token] of Object.entries(trustedReplyTokens(body, senderDid))) {
+        const card = contactCardForDid(snapshot.contactCards, did)
+        if (replyTokenOf(card) === token) continue
+        const created = didContactPatch(did)
+        if (!card && !sameIdentity(did, senderDid)) keyWrites.push(created)
+        keyWrites.push(replyTokenPatch(card?.id ?? created.cardId, token))
       }
       const record = await buildMailMessageAdd({
         email: {

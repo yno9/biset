@@ -184,3 +184,17 @@ describe('sending with a token', () => {
     expect(await withFetch(garbled.fetchImpl, () => sendDidCommMessage(garbled.did, '', options(garbled.fetchImpl)))).toEqual({ ok: true })
   })
 })
+
+describe('which tokens may be kept', () => {
+  test('the sender\'s and its Reply-To\'s, from a bridge\'s mail that passed DMARC; nothing else', async () => {
+    const { trustedReplyTokens } = await import('../../src/client/didcomm/reply-tokens.ts')
+    const victim = 'did:web:did.md:example.com:victim'
+    const body = { replyTokens: { [aliceDid]: TOKEN, [supportDid]: OTHER_TOKEN, [victim]: TOKEN }, replyTo: supportDid, auth: { dmarc: 'pass' } }
+    expect(trustedReplyTokens(body, aliceDid)).toEqual({ [aliceDid]: TOKEN, [supportDid]: OTHER_TOKEN })
+    expect(trustedReplyTokens({ ...body, replyTo: undefined }, aliceDid)).toEqual({ [aliceDid]: TOKEN })
+    expect(trustedReplyTokens({ ...body, auth: { dmarc: 'fail' } }, aliceDid)).toEqual({})
+    expect(trustedReplyTokens({ ...body, auth: undefined }, aliceDid)).toEqual({})
+    expect(trustedReplyTokens({ ...body, replyTokens: undefined }, aliceDid)).toEqual({})
+    expect(trustedReplyTokens(body, 'did:vh:QmNWGCeHpyMMTjFsYmoYaQa6fqGnyYGy45vo9JW9ai5RWF')).toEqual({}) // not a bridge's DID
+  })
+})

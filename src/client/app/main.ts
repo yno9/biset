@@ -80,7 +80,8 @@ import { expandEndpoint } from '../../protocol/didcomm/mediator-endpoint.ts'
 import { didCommRouteFromDocument } from '../../protocol/didcomm/doc-route.ts'
 import { resolveDidDocument } from '../../protocol/did-resolve.ts'
 import { sendFrontDoorMessage } from '../didcomm/front-door-send.ts'
-import { isBasicMessage, pgpArmorOf } from '../didcomm/basicmessage.ts'
+import { basicMessageBodyOf, isBasicMessage, pgpArmorOf } from '../didcomm/basicmessage.ts'
+import { trustedReplyTokens } from '../didcomm/reply-tokens.ts'
 import { isPing } from '../../protocol/didcomm/trust-ping.ts'
 import { fetchCurrentLog, freshFetch } from '../identity/log-io.ts'
 import { entryVersionNumber } from '../../protocol/vh/log.ts'
@@ -901,6 +902,11 @@ async function configureWalletAccountIfPresent(
           const armored = pgpArmorOf(message)
           const fromDid = typeof message.from === 'string' ? message.from : undefined
           const fromAddress = fromDid ? mailAddressOfBridgeDid(fromDid) : undefined
+          // A step is answered here and never reaches the projector that keeps a mail's reply tokens, and the answer is refused by the bridge
+          // without the token of the address it goes to: keep it first.
+          const arrived = armored && fromDid ? basicMessageBodyOf(message) : null
+          const tokens = arrived && fromDid ? trustedReplyTokens(arrived, fromDid) : {}
+          if (Object.keys(tokens).length > 0) await keepReplyTokens(tokens).catch(error => console.warn('[did.md Wallet Secure-Join] reply token not kept:', error instanceof Error ? error.message : error))
           const seed = await generationSeeds?.current()
           const key = await pgp?.current()
           if (!armored || !fromDid || !fromAddress || !seed || !key || !ownMailAddress) return false
