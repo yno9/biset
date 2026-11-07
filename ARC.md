@@ -4,7 +4,8 @@
 > 調査対象: `~/dev/v2/biset` の `main`（HEAD `60baf4a`）。DIDComm Messaging v2.1 への適合は 2026-10-09 に評価した（§9.9）。メール UI は `did.md`（`./deploy.sh mail`）に、2026-10-21 のビルドを配備済み。
 >
 > 2026-10-08 版から、Delta Chat との相互運用（Autocrypt v1、Secure-Join、PGP 鍵の導出。§10）と、名前の整理（relationship seed → generation seed、`#didcomm-rotation` → `#biset-generation`）を反映して書き直した。
-> 変わった点は §1.4〜§1.6。方針は「現行コードを正とする」。将来案・保留は、現行の事実と混ぜずに明示する（§10.5 に Autocrypt v2 の保留）。
+> 変わった点は §1.4〜§1.6。
+> 2026-11-07 にコードを整理した（`main.ts` を `client/app/session/` に分割、base64 などの重複を統合、`style.css` の死んだ規則を削除）。ファイルとディレクトリの構成は §20 を正とする。方針は「現行コードを正とする」。将来案・保留は、現行の事実と混ぜずに明示する（§10.5 に Autocrypt v2 の保留）。
 
 ## 0. 要約
 
@@ -48,7 +49,7 @@
 | [`docs/protocols/biset-messenger-capability.md`](docs/protocols/biset-messenger-capability.md) | capability 文書型 `biset.md/MessengerCapability` |
 | `src/protocol/mls/VENDOR.md` | vendored MLS fork の差分 |
 
-> `PLAN*`・`docs/`・`tasks/`・`ops/`・`scripts/`・`deploy.sh`・`home/`・`config.json` は **`.gitignore` で git の追跡外**である（§17-6）。
+> `PLAN*`・`docs/`・`tasks/`・`ops/`・`deploy.sh`・`home/`・`config.json` は **`.gitignore` で git の追跡外**である（§17-6）。リポジトリの構成は §20。
 
 ### 1.3 本番との関係
 
@@ -683,7 +684,8 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
 
 ## 12. クライアントの起動
 
-`bootClient`（`main.ts`）。**wallet セッションが唯一のアカウント経路**である（`session/wallet-session.ts`）。
+`bootClient`（`main.ts`）。**wallet セッションが唯一のアカウント経路**である（`session/wallet-session.ts` の `startWalletSession`）。
+手順 3〜4 は `session/account-vault.ts`・`message-archive.ts`・`markdown-vault.ts`・`inbox-handlers.ts`、5〜9 は `session/didcomm-connect.ts`（受信の振り分けは `session/incoming.ts`）が受け持つ。
 
 0. 前回のセッションの mediator watch を**無条件に**止める。
 1. wallet の callback を先に消費する（DID の編集で古い capability の snapshot が古くなるため、通常の refresh より先）。失敗はコンソールの警告にとどめ、画面は壊さない。
@@ -707,7 +709,7 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
   oui は次の読み取りで CDN を避ける（`freshFetch`、`fetchLogContaining`）: 承認した内容の確認、自分の端末一覧、端末を外すときの対象、Vault Sync の宛先、generation seed の権威（60 秒キャッシュ）、`from_prior` の検証、Y の mediator の DID。
   他人の DID の解決（送信先・送信者の鍵）は CDN を通すので、相手が端末を足したり外したりした直後の最大 30 秒は古い版で扱う（§14.2-6）。
 - 連絡先が名指さない did:peer からの保留は、mediator の保持期間（30 日）が上限。
-- **`main.ts` の boot wiring は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
+- **起動の配線（`main.ts` と `client/app/session/`）は、ブラウザ E2E で覆われていない。** 部品のテスト成功と、製品経路への接続を機械的に区別できない。
 
 ## 14. セキュリティ性質と未解消リスク
 
@@ -780,7 +782,7 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
 - `tor-backup`: v2 の `/var/lib/tor`（キャッシュを除く）と torrc を、ローカルの `~/.biset-backups/tor/` に 0600 で退避する（暗号化は無い）。
 - メール（didmail）は oui の `deploy.sh` の対象外（別リポジトリ）。
 - **`all`（引数なしも同じ）は mediator を入れ替えない**（app・landing・smtp・ap だけ）。mediator は `./deploy.sh didcomm-mediator` を別に実行する。
-- `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、git 追跡外）を流す。
+- `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、`pnpm smoke:didcomm-mediator`）を流す。
 - `smtp`／`ap` は oui repo の外の relay（Rust／Go）を配る。
 
 ### 15.4 2026-10-08 のデプロイ（`PLAN-refactor.md` P0〜P5）
@@ -815,7 +817,8 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
 | 実機（Delta Chat） | ✅ classic（n@4r.ma）と chatmail（mailchat.pl）の両方で Secure-Join の握手、双方向の暗号化メッセージ |
 | 実機（本番の didmail） | ✅ DKIM／SPF／MX 設定済みで、chatmail の中継が受理 |
 
-`typecheck`・`knip`・`reachability` は 2026-10-08 の実測（全成功、到達しない 0）から再測定していない。`main.ts` の boot wiring がブラウザ E2E で覆われていない点は変わらない（§13）。
+2026-11-07 の整理の後に再測定した: `typecheck`・`knip` は成功（`../lft` がある前提）。`reachability` は本番の入口から 205／306 ファイル、テストからだけ 20（🔧 の `client/mls/`・`client/mimi/` など）、どこからも 2（開発専用の `mock.ts` と、副作用 import を数えない `storage-guard.ts`）。
+`pnpm test` は 891 件成功、31 件失敗。失敗はすべて `test/ui/` で、整理の前から同じテストが落ちる（画面の変更にテストが追いついていない）。起動の配線（`main.ts` と `session/`）がブラウザ E2E で覆われていない点は変わらない（§13）。
 
 テストは、canonical protocol、Vault の store、Vault Sync、VaultProjector、JMAP export／import、Markdown ミラー、
 DIDComm の crypto（DIF のテストベクタを含む）／multi-device 配送／mediator（HTTP と WebSocket）／seed と rotation key／`from_prior`／DID Rotation／連絡先（JMAP for Contacts）／group、
@@ -832,7 +835,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
    DIDComm のメッセージにはヘッダが無いので、`sourceUrl` を別の場所に移せば、ヘッダの読み取りは消せる。名前の変更（`rawRfc5322`→本文）は機械的だが差分が大きい。
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
 5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は配備するオリジン（`did.md`）に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
-6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`pnpm build` が使う `scripts/inline.mjs` が、clone から再現できない。**
+6. **git の追跡**: `.gitignore` が `ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。`scripts/` は追跡に戻した（ビルドが使う `build-sw.mjs` を含む）。client は追跡外の兄弟チェックアウト `../lft` を要する。
 7. **dedupe の `alreadyProcessed()` が常に false**（`session/didcomm-connect.ts`）。
 8. **結線の無い UI と config の残骸**: `config-page.ts` の「New Relay」フォームと「Notifications」のトグル（`src.bak` の HTML を改変せずに移植する方針の結果で、意図した「空の UI」）。
    `mimiSelfBaseUrl` と config の `anchor*` も残骸。
@@ -886,70 +889,186 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 5. **did:peer:4**（§10-4）と、住所録の画面。
 6. **DIDComm の残り（§9.9）**: SHOULD の未対応（`lang`、利用者への `to` の警告、相手への problem-report）。oui 自身の P-256／P-384 の鍵。DIDComm のハイブリッド PQ は別件で保留。
 7. **セッション復元の失敗の分類**（§17-4）。transient な失敗でセッションを破棄しない。
-8. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config、`client/`→`server/` の import（§17-3、8、10）。
+8. **残骸の整理**: 旧データの救出コード、空の UI、`anchor*` の config（§17-8、10）。`client/`→`server/` の import は 2026-11-07 時点で 0 件。
 9. **メールの完成**: 送信状態を `SEND_RESULT` で確定させる、outbox の永続 retry、HTML 本文と添付の保存。
-10. **repo の追跡の整理**（§17-6）。`scripts/` と `ops/` を追跡に戻す。
-11. **`main.ts` の boot wiring への統合テスト**（DID Rotation の配線を含む）。
+10. **repo の追跡の整理**（§17-6）。`ops/` を追跡に戻す。`../lft` の取り込み方を決める。
+11. **起動の配線（`main.ts` と `session/`）への統合テスト**（DID Rotation の配線を含む）。`session/` は依存を引数で受け取るので、モジュール単位で組み立てて試せる。
+12. **古くなった UI テスト 31 件の更新**（§16）。
 
-## 20. `src/` の構成
+## 20. リポジトリと `src/` の構成
 
-トップレベルは **client／server／protocol** の三つ。**依存は一方向**で、`protocol/` と `server/` は `client/` を参照しない（機械的に検証できる。現状は成立）:
+2026-11-07 の整理（`main.ts` の分割、重複した補助関数の統合、`style.css` の死んだ規則の削除）の後の、git で追跡しているファイルの全体である。
+数字はファイル数。🔧 は本番の経路から呼ばれない部品（§1.1）。
 
-```bash
-grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*client/" src/protocol src/server --include='*.ts'
-grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include='*.ts'
+### 20.1 リポジトリ直下
+
+```
+.
+├── ARC.md  README.md  LICENSE
+├── package.json  pnpm-lock.yaml  pnpm-workspace.yaml  .nvmrc   Node 26 + pnpm（末尾の「ランタイム」）
+├── tsconfig.json            client と共有部分の型検査
+├── tsconfig.mediator.json   mediator（src/server/mediator + 共有部分）
+├── tsconfig.mimi.json       biset-mimi（src/server/mimi + 共有部分）
+├── tsconfig.vite.json       vite.config.ts
+├── vite.config.ts           client のビルド（単一の dist/index.html、フォント、ライセンス表記、dev サーバー）
+├── vitest.config.ts         テスト（maxWorkers: 2）
+├── knip.json                未使用の export・依存の検査
+├── config.example.json      実行時設定の雛形（本物の config.json は追跡外）
+├── dist/                    ビルド生成物（index.html、sw.js、fonts/）。追跡している
+├── scripts/                 build-sw.mjs（Service Worker の bundle）、reachability.mjs（到達性の検査）、didcomm-mediator-smoke.ts
+├── src/                     §20.2 以降
+└── test/                    vitest（153 ファイル。§20.9）
 ```
 
-ただし `client/` → `server/` の import が 2 件ある（§17-3）。
+- **追跡外**（`.gitignore`）: `PLAN*`、`docs/`、`tasks/`、`ops/`、`deploy.sh`、`home/`（ランディング）、`config.json`、`*.bak`（旧実装 `src.bak/` など）、`dist-server/`、`dist-mail/`。
+- client は兄弟のチェックアウト **`../lft`**（local first toolkit。ネットワーク表示）に依存する（`package.json` の `link:../lft`）。無いと型検査と UI テストの一部が通らない。
 
-### 20.1 `protocol/` — client と server が共有する wire 定義
+### 20.2 `src/` の層と依存の向き
+
+```
+src/
+├── protocol/   client と server が共有する wire 定義・暗号・DID 解決（DOM を使わない）
+├── client/     ブラウザのアプリ
+│   ├── app/        入口、セッションの配線（session/）、画面（ui/）
+│   ├── store/      Vault（ログ層）と projection（read model）
+│   ├── didcomm/    DIDComm の送受信、mediator、Vault Sync、DID Rotation
+│   ├── pgp/        OpenPGP（Autocrypt、Delta Chat の Secure-Join）
+│   ├── identity/   did.md Wallet、DID ログの読み取りと記憶
+│   └── mls/ mimi/  🔧 将来の MIMI クライアント用
+└── server/     Node で動くサーバー
+    ├── mediator/   DIDComm mediator（本番）
+    ├── mimi/       biset-mimi（🔧 クライアントからは呼ばれない）
+    └── runtime/    node:http / node:sqlite のラッパー
+```
+
+**依存は一方向**: `client/` → `protocol/`、`server/` → `protocol/`。`protocol/` と `server/` は `client/` を、`client/` と `protocol/` は `server/` を参照しない。
+機械的に確かめられる（2026-11-07 に、どちらも 0 件）:
+
+```bash
+grep -rnE "from '[^']*\.\./(\.\./)*client/" src/protocol src/server --include='*.ts'
+grep -rnE "from '[^']*\.\./(\.\./)*server/" src/client src/protocol --include='*.ts' --include='*.tsx'
+```
+
+`client/` の中は、おおむね `app/` → `didcomm/`・`pgp/`・`identity/` → `store/` の向き。`app/session/` だけが全部を組み合わせる。
+
+### 20.3 `protocol/`（共有）
 
 | パス | 責務 |
 |---|---|
-| `canonical.ts`、`ids.ts`、`signing.ts`、`vault.ts`、`ingress.ts`、`mail-submission.ts`、`net-fetch.ts` | 正準 JSON、ID 型、署名対象、Vault の event 種別、外部 payload、`fetch` の束縛 |
-| `didcomm/` | `crypto.ts`（JWE、multi-recipient、`didCommPost`、`didCommAccepted`）、`key-agreement.ts`（X25519・P-256・P-384 の鍵）、`jws.ts`（署名つきメッセージ、EdDSA・ES256・ES256K）、`open.ts`（復号後の平文・署名の層を開く共通処理）、`message.ts`（`return_route` を含む）、`peer.ts`（did:peer:2、Y の決定論的導出）、`from-prior.ts`、`devicekid.ts`、`multikey.ts`、`problems.ts`、`forward-wrap.ts`、`trust-ping.ts`、`mediator-{protocol,coordinate,pickup,transport,device}.ts`、`discover-features.ts`、`doc-route.ts`・`did-web.ts`（route と受信者の選択）、`sender-key.ts`（sender 鍵の解決）、**`service-endpoint.ts`（endpoint 選択の唯一の所有者）**、`vault-sync-protocol.ts` |
-| `vh/` | `resolver.ts`、`log.ts`、`proof.ts`、`document.ts`、`identifier.ts`、`scid.ts`、`hash.ts`、`multihash.ts`、`multikey.ts`、`jcs.ts` |
-| `mimi/` | MIMI の型・wire・authorizer・app-data（MIMI サーバーが使う） |
-| `mls/` | RFC 9420 の vendored fork。**中身は変更しない**。現在の利用者は biset-mimi のサーバーだけ |
+| `base64.ts` | base64／base64url の**唯一の**実装（`@scure/base`）。厳密な `base64urlToBytes`（署名・ハッシュに入る値）と、寛容な `base64ToBytes`（他の実装から届くもの） |
+| `canonical.ts` | 正準 JSON、`canonicalHash`／`domainHash`、`equalBytes`、`bytesToHex` |
+| `error-message.ts` | `errorMessage(error)`（catch した値をログ・通知の文字列に） |
+| `did-resolve.ts` | DID 文書の解決（did:vh、did:web の shadow、did:peer）。`configureDidResolution`、`verifiedVhAddress` |
+| `freshness.ts` | 検証済みのログの最新版の記憶（古い版・分岐した版を拒む） |
+| `ids.ts`、`vault.ts`、`ingress.ts`、`signing.ts` | ID 型、Vault の event／object の型、外部 payload の封筒、署名対象のバイト列 |
+| `net-fetch.ts` | `fetch` の束縛 |
+| `test-vectors.ts` | 正準 JSON の相互運用ベクタ（🔧 テストだけが使う） |
+| `didcomm/`（25） | **暗号と形式**: `crypto.ts`（JWE、authcrypt／anoncrypt）、`key-agreement.ts`（X25519・P-256・P-384）、`jws.ts`（署名つきメッセージ）、`open.ts`（受信した層を開く）、`message.ts`、`problems.ts`、`multikey.ts`、`devicekid.ts`。**DID**: `peer.ts`（did:peer:2、Y の導出）、`from-prior.ts`（DID Rotation）、`did-web.ts`、`doc-route.ts`・`service-endpoint.ts`（経路の選択。endpoint 選択の唯一の所有者）、`sender-key.ts`。**mediator**: `mediator-{protocol,coordinate,pickup,transport,device,endpoint}.ts`、`forward-wrap.ts`、`discover-features.ts`。**その他**: `trust-ping.ts`、`reply-token.ts`（mail bridge の reply token）、`vault-sync-protocol.ts`（Vault Sync のメッセージ型） |
+| `vh/`（15） | did:vh: `resolver.ts`、`log.ts`、`proof.ts`、`scid.ts`、`hash.ts`、`multihash.ts`、`multikey.ts`、`jcs.ts`、`document.ts`、`identifier.ts`、`errors.ts`、`fetch.ts`・`src.ts`（ログの置き場所）、`copies.ts`（複数の写しの比較）、`didweb.ts`（did:web の shadow） |
+| `mimi/`（4） | MIMI の型・wire・authorizer・app-data（biset-mimi が使う） |
+| `mls/`（71） | RFC 9420 の vendored fork（`VENDOR.md`）。**中身は変更しない**。利用者は biset-mimi と 🔧 `client/mls/` |
 
-### 20.2 `client/app/` — 起動、配線、UI
-`main.ts`（唯一の入口、起動）、`session/`（wallet セッションの配線: `account-vault`・`own-identity`・`seeds`・`didcomm-connect`・`incoming`・`outgoing`・`secure-join`・`markdown-vault`・`message-archive`・`inbox-handlers`）、`sw.ts`、`ui/`（`shell`、`left-pane`、`thread`、`compose-page`、`account-page`、`account-create`、`account/{state,menu,config-page}`、`config`、`format`、`did-display`、`message/{message-view,body-text,rfc5322-headers}`）。
-`ui/message/` は、DIDComm もメール形の read model に projection されるため、その**表示**に使う。
+### 20.4 `client/app/`（入口・セッション・画面）
 
-### 20.3 `client/store/` — Vault と projection
-**`store/vault/`（ログ層）**: `store.ts`（IndexedDB）、`objects.ts`、`events.ts`、`active-segment.ts`、`segment-key-resolver.ts`、
-`commit.ts`（共有 Vault 状態を書く全経路が通る組み立て地点）、`mutations.ts`／`mutation-records.ts`、`mail-message.ts`、`credential-store.ts`、`generation-seed.ts`、
-`delivery-pack.ts`、`ingress-ingest.ts`、`projector.ts`、`jmap-export.ts`、`markdown-{mirror,directory}.ts`、`legacy-crdt-migration.ts`、`projection-rebuild.ts`、`blob-reader.ts`、
-🔧 `manifest.ts`。詳細は `store/vault/README.md`。
-**`store/projection/`（read model）**: `gateway.ts`（`LocalJmapGateway`）、`contacts.ts`（JMAP for Contacts の Card と `contact.set`）、`reducer.ts`、`indexeddb.ts`、`mutations.ts`、`vault-mutation-sink.ts`、`transport.ts`（型のみ）。
+```
+client/app/
+├── main.ts            唯一の入口: 起動（bootClient）、画面の振り分け、Disconnect
+├── local-data.ts      端末に残すもの（IndexedDB のデータベース、plain storage）とその消去
+├── sw.ts              Service Worker（オフライン起動、更新）
+├── index.html  style.css  embed-card.css   ページと見た目（embed-card.css は dito から同期）
+├── react/             store.ts（ロジック → 画面のストア）、island.tsx（既存の DOM 節点に React を載せる）
+├── session/           wallet セッションの配線（下の表）
+├── ui/                画面（下の表）
+└── mock.html mock.ts avatars.* copy.html logo-fonts.html robotflex.html   開発専用（ビルドに入らない）
+```
 
-### 20.4 `client/didcomm/`
-`send-message.ts`（chat の送信、`answerTrustPing`）、`front-door-send.ts`、`did-rotation.ts`（経路、Discover Features）、`rotation-manager.ts`（移動の開始・確定・受信箱）、`rotation-key.ts`（`#biset-generation`）、`generation-seed-bootstrap.ts`、`basicmessage.ts`、`ingress-projector.ts`、
-`group-chat{,-store}.ts`、`external-feed.ts`、**`vault-sync.ts`**、`mediator-sync.ts`（登録）、**`mediator-live.ts`**（WebSocket の live 受信）、
-**`mediator-endpoints.ts`**（入口の別名、`sameMediatorUrl`、Tor 環境の判定）。
+**`session/`** — `main.ts` が `startWalletSession` を呼び、ここが Vault・DIDComm・画面を結ぶ（§12）。各モジュールは依存を引数で受け取り、閉包に状態を隠さない。
 
-### 20.4b `client/pgp/`
-`derive.ts`（seed から PGP 鍵）、`own.ts`（自分の鍵と世代ごとの鍵）、`keyring.ts`（相手の鍵の表示、`Autocrypt:` 用の keydata）、`message-crypto.ts`（暗号化・復号）、`mime.ts`（内側の MIME）、`compose.ts`（暗号化メールの組み立て）、`stored.ts`／`open.ts`（保管と開封）、`autocrypt.ts`（ブリッジ DID とアドレス、`shouldEncrypt`）、`securejoin.ts`、`symmetric.ts`／`ocb.ts`（SKESK v6／OCB の手組み）。
+| ファイル | 責務 |
+|---|---|
+| `wallet-session.ts` | セッションの組み立て（`startWalletSession`）。アカウント画面・作成画面への公開（`configureAccountPage`／`configureCompose`）、Wallet への DID 編集、セッションの再取得 |
+| `account-vault.ts` | identity の Vault 一式（store、read model、mutation sink、projector、採番と署名 = `authoring`）を 1 つの `AccountVault` に。`writeContact`、`keepReplyTokens`、兄弟端末への push |
+| `own-identity.ts` | 自分の Card（名前、アイコン、PGP 鍵）、handle から決まるメールアドレス、seed から導く PGP 鍵、アイコンを送った相手の記録 |
+| `seeds.ts` | generation seed の reader／sink と権威（DID 文書）。Wallet 承認で公開された seed の保存 |
+| `didcomm-connect.ts` | ネットワーク側: mediator への登録（Tor なら onion を優先）、Vault Sync、DID Rotation、outbox、live 受信の開始、再試行タイマー |
+| `incoming.ts` | 届いたものの振り分け: Vault Sync → Discover Features → Secure-Join → `DidCommIngressProjector`。投影できない型は意図して捨てる（ACK して列を進める） |
+| `outgoing.ts` | 送信（1:1、group、返信）と Notepad。先にローカルの outbox へ書き、それから送る |
+| `secure-join.ts` | Delta Chat の Secure-Join（招待する側・される側）の配線 |
+| `markdown-vault.ts` | Markdown ミラー（§8.3）: フォルダの選択、状態の書き戻し、下書きの送信 |
+| `message-archive.ts` | JMAP export／import（§8.2） |
+| `inbox-handlers.ts` | 既読（`$seen`）、署名された名前の取り込み、暗号化メールの開封 |
+| `boot-timing.ts` | 起動の計時（`[boot] ...` のログ） |
 
-### 20.5 `client/identity/`・`client/mail/`・本番から外れた部分
-- `identity/bootstrap.ts`（Vault 側の identity 境界）、`idkey.ts`。
-- `identity/wallet/`: `did-md-oauth.ts`（wallet の承認、capability、DID 編集、端末の削除）、`did-md-store.ts`（セッションの封印）、
-  `didcomm-outbox.ts`、`wallet-directory.ts`、`json-schema.ts`＋`schemas/biset-messenger-capability.schema.json`、`did-document-edit-check.ts`。
-- `identity/`（`log-io.ts` は現役。`freshFetch`／`fetchCurrentLog`）。
-- `mls/*`、`mimi/*` は 🔧（将来の MIMI クライアント用）。
+**`ui/`** — 画面は React（19）。状態はストアに置き、ロジックが書いて画面が購読する（§15.1）。
 
-### 20.6 `server/`
-- `mediator/`: `index.ts`、`deployment.ts`（HTTP と WebSocket）、`server.ts`、`sqlite-store.ts`、`relay-poller.ts`、`rate-limit.ts`、`validate.ts`。
-- `mimi/`: `index.ts`、`deployment.ts`、`http.ts`、`store.ts`、`mls-appsync.ts` ほか（§11.3）。
+| 区分 | ファイル |
+|---|---|
+| 骨組み | `app.tsx`（全体）、`shell.ts`（ロジックから画面を動かす入口: `showApp`／`refreshInbox`）、`stores.ts`・`state.ts`（ストア）、`route.ts`（アドレスバー）、`page-host.tsx`（右カラムのページ） |
+| 一覧とスレッド | `left-pane.tsx`、`right-col.tsx`、`island.tsx`、`thread-page.tsx`、`thread-model.ts`（表示用の純関数）、`use-threads.ts`、`rotation-view.ts`（移動後の DID を公開 DID として読む）、`seen.ts`、`scroll.ts`・`scroll-buttons.tsx`・`pull-reveal.ts` |
+| 入力 | `reply-box.tsx`（返信欄と `configureCompose`）、`helper.ts`（`/` コマンド）、`approve-dialog.tsx`（ページ内の承認） |
+| 表示の補助 | `did-display.ts`（DID の見せ方）、`format.ts`、`generated-avatar.tsx`、`favicon.tsx`、`color-settings.ts`、`sys-msg.tsx`、`hamburger-menu.tsx` |
+| 設定・起動 | `config.ts`（`window.__BISET_CONFIG__` を読む唯一の場所）、`network-declaration.ts`（通信先の宣言）、`update.ts`、`storage-guard.ts`（IndexedDB が無ければ止める）、`signup-preload.ts` |
+| `pages/` | `index.ts`（ページへの入口）、`account-page.tsx`、`compose-page.tsx`、`config-page.tsx`、`colors-card.tsx`、`new-user-page.tsx`・`signup-frame.ts`・`create-words.ts`（サインアップ）、`about-overlay.tsx` |
+| `account/` | `state.ts`（アカウント画面の状態）、`account-list.tsx`（mediator、鍵の通知）、`pgp-card.tsx`、`profile.ts`・`use-own-profile.ts`・`display-name-dialog.tsx`・`text-card-dialog.tsx`・`default-name.ts`・`avatar-crop.tsx`、`tooltip.tsx`、アイコン 3 つ |
+| `message/` | `message-view.ts`（JMAP の Email → 表示）、`body-text.ts`、`rfc5322-headers.ts`（§17-2） |
 
-### 20.7 リポジトリ直下の補足
-`dist/`（ビルド生成物。追跡されている）、`home/`（`biset.md` のランディング）、`src.bak/`（旧実装。参照用）、`pds/`（Bluesky PDS の配布物。oui のコードではない）、
-`biset-*`（コンパイル済みバイナリ。`.gitignore` 対象）、`test/`（104 ファイル）。
+### 20.5 `client/store/`（Vault と projection）
+
+**`store/vault/`（ログ層、22）** — 詳細は `store/vault/README.md`。
+
+| ファイル | 責務 |
+|---|---|
+| `store.ts` | IndexedDB（v15）。event、object、SegmentKey、projection、outbox、actorSeq |
+| `commit.ts` | 共有 Vault 状態を書く全経路が通る組み立て |
+| `events.ts`、`objects.ts`、`mutations.ts`、`mutation-records.ts`、`mail-message.ts` | event と暗号文 object の組み立て・検証・復号 |
+| `active-segment.ts`、`segment-key-resolver.ts`、`blob-reader.ts`、`delivery-pack.ts` | SegmentKey と、それで閉じた blob |
+| `credential-store.ts`、`generation-seed.ts` | 私的な資格情報（generation seed）の読み書き |
+| `projector.ts`、`projection-rebuild.ts` | projection の再計算（per-entity LWW）と全再構築 |
+| `ingress-ingest.ts` | 外部から届いたものを Vault の record へ |
+| `jmap-export.ts`、`markdown-directory.ts`、`markdown-mirror.ts` | 持ち出し（§8.2、§8.3） |
+| `legacy-crdt-migration.ts` | 旧 schema の救出（§17-10） |
+| `manifest.ts` | 🔧 テストだけが使う（§17-11） |
+
+**`store/projection/`（read model、7）**: `gateway.ts`（`LocalJmapGateway` と型）、`indexeddb.ts`（read model の読み取り）、`reducer.ts`、`mutations.ts`（UI の意図 → Vault の変更）、`vault-mutation-sink.ts`（その書き込み口）、
+`contacts.ts`（JMAP for Contacts の Card と `contact.set`。`contactWritesFor`＝「Card が無ければ作ってから書く」、`replyTokenWrites`）、`transport.ts`（型のみ）。
+
+### 20.6 `client/didcomm/`、`client/pgp/`
+
+| パス | 責務 |
+|---|---|
+| `didcomm/send-message.ts`、`front-door-send.ts` | chat の送信（Basic Message）、`answerTrustPing`、Vault に依らない送信の半分 |
+| `didcomm/basicmessage.ts`、`group-chat.ts`、`external-feed.ts`、`reply-tokens.ts` | メッセージ型、group chat、External Feed、受け取ってよい reply token |
+| `didcomm/ingress-projector.ts` | 受信 → Vault の record（投影できる型の allow-list `isProjectableDidCommIngress`） |
+| `didcomm/did-rotation.ts`、`rotation-manager.ts`、`rotation-key.ts`、`generation-seed-bootstrap.ts` | DID Rotation（経路、移動の開始と確定、受信箱）、`#biset-generation`、seed の権威 |
+| `didcomm/vault-sync.ts` | Vault Sync（§8.1） |
+| `didcomm/mediator-sync.ts`、`mediator-live.ts`、`mediator-endpoints.ts` | 登録、WebSocket の live 受信、入口（clearnet／onion）の選択 |
+| `didcomm/address-resolver.ts` | メールアドレス → DID（WebFinger） |
+| `pgp/`（13） | `derive.ts`（seed から鍵）、`own.ts`（自分の鍵の世代）、`keyring.ts`、`message-crypto.ts`、`mime.ts`、`compose.ts`、`stored.ts`・`open.ts`、`autocrypt.ts`、`securejoin.ts`（招待する側）・`securejoin-join.ts`（招待される側）、`symmetric.ts`・`ocb.ts` |
+
+### 20.7 `client/identity/`、`client/mls/`、`client/mimi/`
+
+- `identity/`: `bootstrap.ts`（Vault 側の identity 境界: 暗号境界、read model、actorSeq）、`log-io.ts`（CDN を避けた DID ログの読み取り）、`did-links.ts`・`vh-places.ts`・`version-memory.ts`（解決の記憶、localStorage）、`idkey.ts`。
+- `identity/wallet/`: `did-md-oauth.ts`（Wallet の承認、capability、DID 編集、端末の削除）、`did-md-store.ts`（セッションの封印）、`dito-embed.ts`（埋め込み wallet）、
+  `didcomm-outbox.ts`（送信の永続 outbox）、`did-document-edit-check.ts`、`wallet-directory.ts`、`json-schema.ts`＋`schemas/biset-messenger-capability.schema.json`。
+- 🔧 `mls/`（6）、`mimi/`（2）: 将来の MIMI クライアント。現行のクライアントからは呼ばれず、biset-mimi のテストが利用者として使う。
+
+### 20.8 `server/`
+
+- `mediator/`（13）: `index.ts`（入口）、`deployment.ts`（HTTP と WebSocket の組み立て）、`server.ts`（Coordinate Mediation 3.0、Routing 2.0、Pickup 3.0）、`sqlite-store.ts`、`identity.ts`（mediator の DID）、`log-state.ts`（did:vh の鍵の状態）、
+  `relay-poller.ts`、`rate-limit.ts`、`validate.ts`（不透明 ID の検査）、`admin-api.ts`・`settings.ts`・`admin.manifest.json`（v2 admin）、`v2-admin-settings.ts`（v2 admin から生成。**手で編集しない**）。
+- `mimi/`（17＋`anon/` 2）: biset-mimi（§11.3）。`index.ts`、`deployment.ts`、`http.ts`、`store.ts`、`federation.ts`、`fanout.ts`、`mls-appsync.ts` ほか。
+- `runtime/`: `serve.ts`（`Bun.serve` 形の HTTP／WebSocket）、`sqlite.ts`（`bun:sqlite` 形の `node:sqlite` ラッパー）。
+
+### 20.9 `test/`
+
+`test/*.test.ts`（直下 59 と `setup.ts`）、`test/protocol/`（46。`support/` にログと端末の fixture）、`test/ui/`（17。Testing Library）、`test/mimi/`（14）、`test/identity/`、`test/mls/`、`test/mediator/`、
+`test/fixtures/`・`test/vectors/`（did:vh と DIDComm の公開ベクタ、RFC 9420）、`test/support/`（mediator と PGP の補助）、`test/setup.ts`。
+`test/ui/` のうち 2 ファイルは `../lft` が無いと読み込めない。
 
 ## ランタイム: Node 26 + pnpm（2026-10-14 に Bun から移行）
 
 - パッケージ管理は pnpm（`packageManager`、`pnpm-workspace.yaml` の `allowBuilds` は esbuild のみ）。lockfile は `pnpm-lock.yaml` だけ。
-- client の bundle は esbuild（`pnpm build` / `pnpm dev`）。server（mediator・MIMI）は esbuild で依存込みの単一 `.mjs` にして Node 26 で動かす。
+- client は Vite（`pnpm build` / `pnpm dev`、§15.1）。Service Worker と server（mediator・MIMI）は esbuild で bundle し、server は依存込みの単一 `.mjs` にして Node 26 で動かす。
   **Node 26 には `--experimental-transform-types` が無く**、`constructor(private readonly …)` のようなパラメータプロパティを含む `.ts` は
   `node file.ts` では動かない。server・smoke は bundle 経由で起動する。
 - `src/server/runtime/sqlite.ts` は `bun:sqlite` と同じ形（`query().get/all/run`、`transaction`）の `node:sqlite` ラッパー。`get()` は行が無ければ `null`。
