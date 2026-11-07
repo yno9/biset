@@ -7,6 +7,7 @@
 // out of scope here (this rewrite's DIDComm adapter is external-ingress/
 // OOB/bootstrap/control plus, now, 1:1 chat -- not the old system's full
 // messaging subsystem, confirmed with the user).
+import { base64ToText } from '../../protocol/base64.ts'
 import type { MailAuthResults } from '../store/projection/gateway.ts'
 import { identityKey } from '../../protocol/vh/identifier.ts'
 import { replyTokensOf } from '../../protocol/didcomm/reply-token.ts'
@@ -118,8 +119,7 @@ export function pgpArmorOf(msg: { attachments?: Array<{ id?: string; data?: { ba
   const encoded = msg.attachments?.find(attachment => attachment.id === 'pgp')?.data?.base64
   if (typeof encoded !== 'string' || encoded.length > 40 * 1024 * 1024) return undefined
   try {
-    const bytes = Uint8Array.from(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0))
-    const text = new TextDecoder().decode(bytes)
+    const text = base64ToText(encoded)
     return text.includes('-----BEGIN PGP MESSAGE-----') ? text : undefined
   } catch { return undefined }
 }

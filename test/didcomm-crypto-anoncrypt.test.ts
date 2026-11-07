@@ -8,9 +8,8 @@
 import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
-import {
-  packAnoncrypt, unpackAnoncrypt, b64urlToBytes, b64url, __internal, type DidCommJWE,
-} from '../src/protocol/didcomm/crypto.ts'
+import { packAnoncrypt, unpackAnoncrypt, __internal, type DidCommJWE } from '../src/protocol/didcomm/crypto.ts'
+import { base64ToBytes, bytesToBase64url } from '../src/protocol/base64.ts'
 
 const recipientPriv = x25519.utils.randomSecretKey()
 const recipientPub = x25519.getPublicKey(recipientPriv)
@@ -20,7 +19,7 @@ const plaintext = new TextEncoder().encode(JSON.stringify({ type: 'https://didco
 describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
   test('round-trips plaintext with no sender to authenticate', async () => {
     const jwe = packAnoncrypt(plaintext, [{ kid: routingKid, publicKey: recipientPub }])
-    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
+    const header = JSON.parse(new TextDecoder().decode(base64ToBytes(jwe.protected)))
     expect(header.alg).toBe('ECDH-ES+A256KW')
     expect(header.skid).toBeUndefined()
     expect(header.apu).toBeUndefined()
@@ -31,14 +30,14 @@ describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
 
   test('rejects a tampered ciphertext rather than silently decrypting garbage', async () => {
     const jwe = packAnoncrypt(plaintext, [{ kid: routingKid, publicKey: recipientPub }])
-    const tampered: DidCommJWE = { ...jwe, ciphertext: b64url(crypto.getRandomValues(new Uint8Array(b64urlToBytes(jwe.ciphertext).length))) }
+    const tampered: DidCommJWE = { ...jwe, ciphertext: bytesToBase64url(crypto.getRandomValues(new Uint8Array(base64ToBytes(jwe.ciphertext).length))) }
     await expect(unpackAnoncrypt(tampered, { kid: routingKid, privateKey: recipientPriv })).rejects.toThrow()
   })
 
   test('rejects an unexpected alg', async () => {
     const jwe = packAnoncrypt(plaintext, [{ kid: routingKid, publicKey: recipientPub }])
-    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
-    const tampered: DidCommJWE = { ...jwe, protected: b64url(new TextEncoder().encode(JSON.stringify({ ...header, alg: 'ECDH-1PU+A256KW' }))) }
+    const header = JSON.parse(new TextDecoder().decode(base64ToBytes(jwe.protected)))
+    const tampered: DidCommJWE = { ...jwe, protected: bytesToBase64url(new TextEncoder().encode(JSON.stringify({ ...header, alg: 'ECDH-1PU+A256KW' }))) }
     await expect(unpackAnoncrypt(tampered, { kid: routingKid, privateKey: recipientPriv })).rejects.toThrow('unexpected alg')
   })
 
@@ -52,8 +51,8 @@ describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
     const ephemPriv = x25519.utils.randomSecretKey()
     const ephemPub = x25519.getPublicKey(ephemPriv)
     const apv = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(routingKid)))
-    const header = { typ: 'application/didcomm-encrypted+json', alg, enc: 'XC20P', apv: b64url(apv), epk: { kty: 'OKP', crv: 'X25519', x: b64url(ephemPub) } }
-    const protectedB64 = b64url(new TextEncoder().encode(JSON.stringify(header)))
+    const header = { typ: 'application/didcomm-encrypted+json', alg, enc: 'XC20P', apv: bytesToBase64url(apv), epk: { kty: 'OKP', crv: 'X25519', x: bytesToBase64url(ephemPub) } }
+    const protectedB64 = bytesToBase64url(new TextEncoder().encode(JSON.stringify(header)))
 
     const cek = crypto.getRandomValues(new Uint8Array(32))
     const iv = crypto.getRandomValues(new Uint8Array(24))
@@ -69,10 +68,10 @@ describe('DIDComm anoncrypt (ECDH-ES+A256KW)', () => {
 
     const jwe: DidCommJWE = {
       protected: protectedB64,
-      recipients: [{ header: { kid: routingKid }, encrypted_key: b64url(encryptedKey) }],
-      iv: b64url(iv),
-      ciphertext: b64url(ciphertext),
-      tag: b64url(tag),
+      recipients: [{ header: { kid: routingKid }, encrypted_key: bytesToBase64url(encryptedKey) }],
+      iv: bytesToBase64url(iv),
+      ciphertext: bytesToBase64url(ciphertext),
+      tag: bytesToBase64url(tag),
     }
 
     const out = await unpackAnoncrypt(jwe, { kid: routingKid, privateKey: recipientPriv })

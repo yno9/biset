@@ -7,9 +7,7 @@ import { p256, p384 } from '@noble/curves/nist.js'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { gcm, aeskw } from '@noble/ciphers/aes.js'
 import { base58 } from '@scure/base'
-import {
-  __internal, b64url, didCommAccepted, packAnoncrypt, packAuthcrypt, recipientsForSender, sameCurveRecipients, unpackAnoncrypt, unpackAuthcrypt, type DidCommJWE,
-} from '../../src/protocol/didcomm/crypto.ts'
+import { __internal, didCommAccepted, packAnoncrypt, packAuthcrypt, recipientsForSender, sameCurveRecipients, unpackAnoncrypt, unpackAuthcrypt, type DidCommJWE } from '../../src/protocol/didcomm/crypto.ts'
 import { decodeKeyAgreementMultikey, encodeKeyAgreementMultikey, keyAgreementKeyFromJwk, jwkOfKeyAgreementKey } from '../../src/protocol/didcomm/key-agreement.ts'
 import { keyAgreementRecipients } from '../../src/protocol/didcomm/doc-route.ts'
 import { decodePeerDid2, generatePeerIdentity, peerKeyAgreementRecipients } from '../../src/protocol/didcomm/peer.ts'
@@ -19,7 +17,7 @@ import { openDidCommPayload } from '../../src/protocol/didcomm/open.ts'
 import { buildPlaintext, DidCommSenderMismatchError } from '../../src/protocol/didcomm/message.ts'
 import { unpackQueuedMessage } from '../../src/protocol/didcomm/mediator-pickup.ts'
 import { verifyFromPrior } from '../../src/protocol/didcomm/from-prior.ts'
-import { bytesToBase64url } from '../../src/protocol/canonical.ts'
+import { bytesToBase64url } from '../../src/protocol/base64.ts'
 
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
@@ -42,15 +40,15 @@ describe('A256GCM (anoncrypt)', () => {
     const kid = 'did:peer:2.x#key-1'
     const ephemPriv = x25519.utils.randomSecretKey()
     const apv = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(kid)))
-    const header = { typ: 'application/didcomm-encrypted+json', alg: 'ECDH-ES+A256KW', enc: 'A256GCM', apv: b64url(apv), epk: { kty: 'OKP', crv: 'X25519', x: b64url(x25519.getPublicKey(ephemPriv)) } }
-    const protectedB64 = b64url(utf8(JSON.stringify(header)))
+    const header = { typ: 'application/didcomm-encrypted+json', alg: 'ECDH-ES+A256KW', enc: 'A256GCM', apv: bytesToBase64url(apv), epk: { kty: 'OKP', crv: 'X25519', x: bytesToBase64url(x25519.getPublicKey(ephemPriv)) } }
+    const protectedB64 = bytesToBase64url(utf8(JSON.stringify(header)))
     const cek = crypto.getRandomValues(new Uint8Array(32))
     const iv = crypto.getRandomValues(new Uint8Array(12))
     const sealed = gcm(cek, iv, utf8(protectedB64)).encrypt(utf8('{"hello":"gcm"}'))
     const kek = __internal.deriveEcdhEs(__internal.ecdh('X25519', ephemPriv, x25519.getPublicKey(recipientPriv)), 'ECDH-ES+A256KW', new Uint8Array(0), apv, 256)
     const jwe: DidCommJWE = {
-      protected: protectedB64, recipients: [{ header: { kid }, encrypted_key: b64url(aeskw(kek).encrypt(cek)) }],
-      iv: b64url(iv), ciphertext: b64url(sealed.slice(0, -16)), tag: b64url(sealed.slice(-16)),
+      protected: protectedB64, recipients: [{ header: { kid }, encrypted_key: bytesToBase64url(aeskw(kek).encrypt(cek)) }],
+      iv: bytesToBase64url(iv), ciphertext: bytesToBase64url(sealed.slice(0, -16)), tag: bytesToBase64url(sealed.slice(-16)),
     }
     expect(text(await unpackAnoncrypt(jwe, { kid, privateKey: recipientPriv }))).toBe('{"hello":"gcm"}')
   })
@@ -83,7 +81,7 @@ describe('P-256 and P-384 key agreement', () => {
 
   test('a NIST public key not on the curve is refused', () => {
     const bad = new Uint8Array(65); bad[0] = 0x04; bad[1] = 1
-    expect(() => keyAgreementKeyFromJwk({ kty: 'EC', crv: 'P-256', x: b64url(bad.slice(1, 33)), y: b64url(bad.slice(33)) })).toThrow()
+    expect(() => keyAgreementKeyFromJwk({ kty: 'EC', crv: 'P-256', x: bytesToBase64url(bad.slice(1, 33)), y: bytesToBase64url(bad.slice(33)) })).toThrow()
   })
 
   test('the recipients an authcrypt can reach, and the one curve a Forward is wrapped on', () => {
@@ -165,7 +163,7 @@ describe('signed messages (JWS)', () => {
       verificationMethod: [
         { id: '#p', publicKeyMultibase: 'z' + base58.encode(new Uint8Array([0x80, 0x24, ...pPub])) },
         { id: '#k', publicKeyMultibase: 'z' + base58.encode(new Uint8Array([0xe7, 0x01, ...kPub])) },
-        { id: '#e', publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: b64url(new Uint8Array(32)) } },
+        { id: '#e', publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: bytesToBase64url(new Uint8Array(32)) } },
         { id: '#not-referenced', publicKeyMultibase: 'z' + base58.encode(new Uint8Array([0x80, 0x24, ...pPub])) },
       ],
     }

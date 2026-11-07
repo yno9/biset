@@ -9,8 +9,8 @@ import { PING_RESPONSE, isPing, responseOwedFor } from '../../protocol/didcomm/t
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { BASIC_MESSAGE } from './basicmessage.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
-import { bytesToBase64url } from '../../protocol/canonical.ts'
 import { sendFrontDoorMessage, type DidCommSendResult, type SendDidCommMessageOptions } from './front-door-send.ts'
+import { bytesToBase64url } from '../../protocol/base64.ts'
 
 export { type DidCommSendResult }
 

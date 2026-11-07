@@ -15,6 +15,7 @@
 //
 // The state between the steps (which invite we opened for which address, and the key they sent) is the pending join: it is
 // kept on this device only, for PENDING_HOURS.
+import { base64ToBytes } from '../../protocol/base64.ts'
 import * as openpgp from 'openpgp'
 import type { PgpKey } from './keyring.ts'
 import { autocryptKeydata } from './keyring.ts'
@@ -81,7 +82,6 @@ export interface JoinContext {
   learn(party: SecureJoinParty, keydata: string, name?: { text: string; source: 'signed' | 'invite' }): Promise<void>
 }
 
-const fromBase64 = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0))
 
 /** Step 1: asks the inviter for their key. */
 export async function beginJoin(invite: Invite, to: SecureJoinParty, context: JoinContext): Promise<void> {
@@ -110,23 +110,23 @@ export async function handleJoinStep(armored: string, from: SecureJoinParty, con
       if (mime.headers['secure-join'] !== 'vc-pubkey' || mime.headers['secure-join-auth'] !== join.auth) throw new Error('a password message that is not a valid vc-pubkey')
       const held = parseKeydataHeader(mime.headers.autocrypt)
       if (!held || held.addr.toLowerCase() !== from.address.toLowerCase()) throw new Error('vc-pubkey without the sender\'s key for the sender\'s address')
-      const theirs = await openpgp.readKey({ binaryKey: fromBase64(held.keydata) })
+      const theirs = await openpgp.readKey({ binaryKey: base64ToBytes(held.keydata) })
       if (theirs.getFingerprint().toUpperCase() !== join.fingerprint) throw new Error('the key sent is not the one the invite names')
-      const signed = await symmetricDecrypt(armored, [sharedSecret(join.fingerprint, join.auth)], [fromBase64(held.keydata)])
+      const signed = await symmetricDecrypt(armored, [sharedSecret(join.fingerprint, join.auth)], [base64ToBytes(held.keydata)])
       if (!signed || signed.signedBy.length === 0) throw new Error('vc-pubkey is not signed by the key the invite names')
 
       const reply = buildInnerMime({
         lines: [...(context.profile?.name ? [fromLine(context.address, context.profile.name)] : []), ...(context.profile?.avatarBase64 ? [avatarLine(context.profile.avatarBase64)] : []), keydataHeader('Autocrypt', context.address, await autocryptKeydata(context.key.privateKey, context.address), true), 'Chat-Version: 1.0', 'Secure-Join: vc-request-with-auth', `Secure-Join-Auth: ${join.auth}`, `Secure-Join-Fingerprint: ${context.key.fingerprint}`, keydataHeader('Autocrypt-Gossip', held.addr, held.keydata)],
         text: SECURE_JOIN_SUBJECT,
       })
-      await context.send(from, await encryptMessage({ plaintext: reply, recipients: [fromBase64(held.keydata)], signer: context.key.privateKey }), {})
+      await context.send(from, await encryptMessage({ plaintext: reply, recipients: [base64ToBytes(held.keydata)], signer: context.key.privateKey }), {})
       await context.pending.put({ ...join, stage: 'auth-sent', keydata: held.keydata })
       return 'vc-pubkey'
     }
 
     // 4. They confirm, in a message encrypted to us and signed by the key we have been given.
     let checked
-    try { checked = await decryptMessage({ armored, privateKey: context.key.privateKey, senderKeys: [fromBase64(join.keydata!)] }) } catch (error) {
+    try { checked = await decryptMessage({ armored, privateKey: context.key.privateKey, senderKeys: [base64ToBytes(join.keydata!)] }) } catch (error) {
       if (error instanceof NotEncryptedToUsError) continue
       throw error
     }

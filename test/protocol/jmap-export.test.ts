@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import { decryptVaultObject } from '../../src/client/store/vault/objects.ts'
 import { createJmapExport, decodeJmapExport, encodeJmapExport, eventStateRank, IMPORTED_KEYWORD, importJmapExport, JMAP_STATE_RANK, mergeJmapExports, type JmapExportV1 } from '../../src/client/store/vault/jmap-export.ts'
-import { bytesToBase64url, equalBytes } from '../../src/protocol/canonical.ts'
+import { equalBytes } from '../../src/protocol/canonical.ts'
 import type { VaultEventAuthor } from '../../src/client/store/vault/events.ts'
 import type { VaultEventV1 } from '../../src/protocol/vault.ts'
 import { contactCardId, DIDCOMM_CONTACT_PROPERTY, type LocalJmapContactCard } from '../../src/client/store/projection/contacts.ts'
+import { bytesToBase64url } from '../../src/protocol/base64.ts'
 
 const base = { id: 'e1', threadId: 't1', receivedAt: '2026-01-01T00:00:00.000Z', mailboxIds: { inbox: true as const }, keywords: {} }
 function file(at: string, rank: string, keywords: Record<string, true>): JmapExportV1 { return { version: 1, kind: 'biset.jmap-export', identityId: 'did:example:alice', exportedAt: at, mailboxes: [], blobs: {}, emails: [{ ...base, keywords, [JMAP_STATE_RANK]: { keywords: rank, mailboxIds: rank, content: rank } }] } }

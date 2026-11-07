@@ -25,7 +25,7 @@ export const composeConfigured = (): boolean => composeConfig.get() !== undefine
 
 /** The draft's recipient and subject, as typed in the island. `to` can be set before the page opens (a path in the address bar). */
 export const composeDraft = createStore<{ to: string; subject: string }>({ to: '', subject: '' })
-export const resetComposeDraft = (): void => composeDraft.set({ to: '', subject: '' })
+const resetComposeDraft = (): void => composeDraft.set({ to: '', subject: '' })
 
 // Someone with no account can still write. Sending then goes through the account's own sign-up (the wallet's create form, as it is),
 // and what was written is kept across that trip (the wallet leaves this page and comes back to it).
@@ -51,7 +51,7 @@ export const signingUp = createStore(false)
 export const sendProblem = createStore<string | undefined>(undefined)
 
 /** Messages can go out: the account is made and its DIDComm is connected (it takes a moment after sign-in). */
-export const composeReady = (): boolean => composeConfig.get()?.selfDid !== undefined
+const composeReady = (): boolean => composeConfig.get()?.selfDid !== undefined
 
 /** Sends the draft with `body` as its message, and goes on to the conversation it makes. Throws what the send throws. */
 export async function sendComposed(body: string): Promise<void> {

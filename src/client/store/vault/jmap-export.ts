@@ -1,4 +1,4 @@
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, canonicalJson, equalBytes, type CanonicalValue } from '../../../protocol/canonical.ts'
+import { canonicalBytes, canonicalJson, equalBytes, type CanonicalValue } from '../../../protocol/canonical.ts'
 import type { VaultEventV1 } from '../../../protocol/vault.ts'
 import type { DeviceId, IdentityId, VaultEventId } from '../../../protocol/ids.ts'
 import type { LocalJmapEmail, LocalJmapMailbox, LocalJmapSnapshot } from '../projection/gateway.ts'
@@ -9,6 +9,7 @@ import { buildVaultMutation } from './mutations.ts'
 import type { IncomingVaultRecordsResult } from './store.ts'
 import type { IncomingVaultRecords } from './store.ts'
 import { assertContactCard, contactSetIntent, contactTargetId, creatingPatch, DEFAULT_ADDRESS_BOOK, AUTOCRYPT_CONTACT_PROPERTY, DIDCOMM_CONTACT_PROPERTY, pointerToken, type ContactPatch, type LocalJmapAddressBook, type LocalJmapContactCard } from '../projection/contacts.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../../protocol/base64.ts'
 
 export const JMAP_STATE_RANK = 'https://biset.md/jmap/ns:stateRank' as const
 /** JMAP keyword on every message a JMAP export file added to the Vault. */

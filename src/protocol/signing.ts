@@ -1,5 +1,6 @@
-import { bytesToBase64url, canonicalBytes } from './canonical.ts'
+import { canonicalBytes } from './canonical.ts'
 import type { IngressAckV1 } from './ingress.ts'
+import { bytesToBase64url } from './base64.ts'
 
 /**
  * Canonical bytes for device-control signatures. These functions omit only

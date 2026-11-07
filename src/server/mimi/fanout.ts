@@ -2,11 +2,12 @@
  * boundary is JSON, but every item carries its timestamp, protocol selector,
  * complete MLSMessage, and message-type-specific fields without flattening
  * them into local delivery metadata. */
-import { base64urlToBytes, bytesToBase64url, bytesToHex } from '../../protocol/canonical.ts'
+import { bytesToHex } from '../../protocol/canonical.ts'
 import { decodeMlsMessage } from '../../protocol/mls/index.ts'
 import type { Frank, MimiDeliveryEntry, MimiDeliveryKind, MimiEpoch, MimiRoomId } from '../../protocol/mimi/protocol-types.ts'
 import { decodeFrankWire, encodeFrankWire, MimiWireError } from '../../protocol/mimi/wire.ts'
 import type { MimiProviderTransport } from './provider-transport.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../protocol/base64.ts'
 
 export interface MimiFanoutMessage {
   timestamp: string // uint64 milliseconds, retained exactly in JSON

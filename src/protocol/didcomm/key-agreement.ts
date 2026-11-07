@@ -10,7 +10,7 @@
 import { base58 } from '@scure/base'
 import { p256, p384 } from '@noble/curves/nist.js'
 import { x25519 } from '@noble/curves/ed25519.js'
-import { base64urlToBytes as b64urlToBytes, bytesToBase64url as b64url } from '../canonical.ts'
+import { base64urlToBytes, bytesToBase64url } from '../base64.ts'
 
 export type KeyAgreementCurve = 'X25519' | 'P-256' | 'P-384'
 
@@ -52,10 +52,10 @@ export function encodeKeyAgreementMultikey(key: KeyAgreementKey): string {
 
 /** A JWK (`OKP`/X25519 or `EC`/P-256, P-384) as a key-agreement key, or throws. */
 export function keyAgreementKeyFromJwk(jwk: { kty?: unknown; crv?: unknown; x?: unknown; y?: unknown }): KeyAgreementKey {
-  if (jwk.kty === 'OKP' && jwk.crv === 'X25519' && typeof jwk.x === 'string') return checked('X25519', b64urlToBytes(jwk.x))
+  if (jwk.kty === 'OKP' && jwk.crv === 'X25519' && typeof jwk.x === 'string') return checked('X25519', base64urlToBytes(jwk.x))
   if (jwk.kty === 'EC' && (jwk.crv === 'P-256' || jwk.crv === 'P-384') && typeof jwk.x === 'string' && typeof jwk.y === 'string') {
-    const x = b64urlToBytes(jwk.x)
-    const y = b64urlToBytes(jwk.y)
+    const x = base64urlToBytes(jwk.x)
+    const y = base64urlToBytes(jwk.y)
     if (x.length !== NIST[jwk.crv].size || y.length !== NIST[jwk.crv].size) throw new Error(`JWK: ${jwk.crv} coordinates have the wrong length`)
     return checked(jwk.crv, new Uint8Array([0x04, ...x, ...y]))
   }
@@ -64,10 +64,10 @@ export function keyAgreementKeyFromJwk(jwk: { kty?: unknown; crv?: unknown; x?: 
 
 /** `key` as a JWK. */
 export function jwkOfKeyAgreementKey(key: KeyAgreementKey): { kty: string; crv: string; x: string; y?: string } {
-  if (key.curve === 'X25519') return { kty: 'OKP', crv: 'X25519', x: b64url(key.publicKey) }
+  if (key.curve === 'X25519') return { kty: 'OKP', crv: 'X25519', x: bytesToBase64url(key.publicKey) }
   const { size } = NIST[key.curve]
   const point = NIST[key.curve].curve.Point.fromBytes(key.publicKey).toBytes(false)
-  return { kty: 'EC', crv: key.curve, x: b64url(point.slice(1, 1 + size)), y: b64url(point.slice(1 + size)) }
+  return { kty: 'EC', crv: key.curve, x: bytesToBase64url(point.slice(1, 1 + size)), y: bytesToBase64url(point.slice(1 + size)) }
 }
 
 /** The multicodec key type of a did:peer / Multikey prefix, X25519/P-256/P-384, or undefined. */

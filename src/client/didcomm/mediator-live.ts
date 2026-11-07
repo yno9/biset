@@ -21,6 +21,7 @@
 //
 // Live mode ends with the connection (Pickup 3.0), so a reconnect simply
 // repeats all of the above.
+import { errorMessage } from '../../protocol/error-message.ts'
 import { fetchMediatorInfo, packMediatorRequest, unpackMediatorMessage, type MediatorInboxClient, type MediatorInfo } from '../../protocol/didcomm/mediator-transport.ts'
 import { inboxStatusOf, mediatorLiveUrl, PermanentDeliveryError, queuedMessageOf, unpackQueuedMessage, type DeliveredMessage } from '../../protocol/didcomm/mediator-pickup.ts'
 import { DELIVERY, DELIVERY_REQUEST, LIVE_DELIVERY_CHANGE, MESSAGES_RECEIVED, STATUS } from '../../protocol/didcomm/mediator-protocol.ts'
@@ -293,7 +294,7 @@ async function deliver(pool: Pool, subscription: Subscription, attachments: NonN
         acked.push(ackId)
         remember(subscription, ackId)
       } else {
-        console.warn(`[didcomm] onMessage failed for ${ackId}, leaving it queued for retry:`, error instanceof Error ? error.message : error)
+        console.warn(`[didcomm] onMessage failed for ${ackId}, leaving it queued for retry:`, errorMessage(error))
       }
     } finally {
       subscription.handling.delete(ackId)

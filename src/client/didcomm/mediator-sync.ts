@@ -9,6 +9,7 @@
 // file's did:dht-era session/IndexedDB record bookkeeping -- the caller
 // hands over one ready MediatorInboxClient (protocol/didcomm/
 // mediator-device.ts), so this module only needs the mediator URL and that.
+import { errorMessage } from '../../protocol/error-message.ts'
 import { fetchMediatorInfo, queryRecipients, requestMediation, updateRecipient, type RecipientEntry, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
 import { MAX_DEVICES_PROBLEM } from '../../protocol/didcomm/mediator-protocol.ts'
 import { DidCommProblemError } from '../../protocol/didcomm/problems.ts'
@@ -105,13 +106,13 @@ export function startMediatorPolling(
           await onMessage(msg)
           ackIds.push(msg.ackId)
         } catch (e) {
-          console.warn(`[didcomm] onMessage failed for ${msg.ackId}, leaving it queued for retry:`, e instanceof Error ? e.message : e)
+          console.warn(`[didcomm] onMessage failed for ${msg.ackId}, leaving it queued for retry:`, errorMessage(e))
         }
       }
       if (ackIds.length) await acknowledgeMessages(mediator, inbox, ackIds, fetchImpl)
     } catch (e) {
       opts.onError?.(e)
-      console.warn(`[didcomm] poll of ${mediatorUrl} failed (will retry next tick):`, e instanceof Error ? e.message : e)
+      console.warn(`[didcomm] poll of ${mediatorUrl} failed (will retry next tick):`, errorMessage(e))
     } finally {
       inFlight = false
     }

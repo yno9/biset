@@ -13,7 +13,7 @@
 //
 // Which seed is in use is decided from the DID document alone
 // (generation-seed-bootstrap.ts): the one whose rotation key it publishes.
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes } from '../../../protocol/canonical.ts'
+import { canonicalBytes, equalBytes } from '../../../protocol/canonical.ts'
 import type { IdentityId, SegmentId } from '../../../protocol/ids.ts'
 import type { VaultEventV1, VaultObjectV1 } from '../../../protocol/vault.ts'
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -21,6 +21,7 @@ import { createVaultEvent, type VaultEventAuthor } from './events.ts'
 import { encryptVaultObject } from './objects.ts'
 import { VaultCredentialReader, VaultCredentialSink, type VaultCredentialKind, type VaultCredentialReaderOptions, type VaultCredentialSinkOptions, type VaultCredentialStoreResult } from './credential-store.ts'
 import type { VaultCredentialEventReader } from './store.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../../protocol/base64.ts'
 
 export interface GenerationSeedV1 {
   version: 1

@@ -3,6 +3,7 @@
  * Request and returning a Response (streamed bodies included, which MIMI's SSE needs), plus the
  * WebSocket upgrade the mediator's live mode uses. Resolves once it is listening.
  */
+import { errorMessage } from '../../protocol/error-message.ts'
 import { createServer, ServerResponse, type IncomingMessage, type Server as HttpServer } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { Readable } from 'node:stream'
@@ -64,7 +65,7 @@ export async function serve<Data = undefined>(options: ServeOptions<Data>): Prom
     } catch (error) {
       if (!outgoing.headersSent) outgoing.writeHead(500, { 'content-type': 'text/plain' }).end('internal error')
       else outgoing.destroy()
-      console.error('[serve]', error instanceof Error ? error.message : error)
+      console.error('[serve]', errorMessage(error))
     }
   }
 
@@ -115,7 +116,7 @@ export async function serve<Data = undefined>(options: ServeOptions<Data>): Prom
         let chain: Promise<void> = Promise.resolve()
         raw.on('message', (frame, isBinary) => {
           const payload = isBinary ? new Uint8Array(frame as Buffer) : (frame as Buffer).toString('utf8')
-          chain = chain.then(() => handlers.message(socket, payload)).catch(error => console.error('[serve:ws]', error instanceof Error ? error.message : error))
+          chain = chain.then(() => handlers.message(socket, payload)).catch(error => console.error('[serve:ws]', errorMessage(error)))
         })
         raw.on('close', (code, reason) => {
           clearInterval(timer)

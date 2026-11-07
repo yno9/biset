@@ -84,16 +84,8 @@ let contactAvatars: ReadonlyMap<string, string> = new Map()
 export function setContactAvatars(avatars: ReadonlyMap<string, string>): void { contactAvatars = avatars }
 export function avatarOf(did: string | undefined): string | undefined { return did ? contactAvatars.get(did) ?? contactAvatars.get(identityKey(did)) : undefined }
 
-// ── Transport protocol pill ─────────────────────────────────────────────────
-// Shared between pages/compose-page.tsx (a typed recipient) and right-col.tsx (a
-// conversation's actual participants) -- a "to"/participant is either a
-// did:vh string (DIDComm) or a plain mail address, decided entirely by
-// its shape. the thread header's own conv-via badge used to hardcode 'Mail'
-// unconditionally (written before DIDComm chat send existed, never revisited
-// once it did) -- this is the one place that decides, so both readers agree.
+// A "to"/participant is either a DID (DIDComm) or a plain mail address, decided by its shape alone.
 export type Proto = 'mail' | 'did'
-export const PROTO_COLOR: Record<Proto, string> = { mail: '#64748b', did: '#0ea5e9' }
-export const PROTO_TEXT: Record<Proto, string> = { mail: 'Mail', did: 'DID' }
 
 export function protocolFor(address: string): Proto {
   return address.startsWith('did:') ? 'did' : 'mail'

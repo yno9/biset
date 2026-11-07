@@ -6,7 +6,7 @@ import { composeEncryptedMail, HIDDEN_SUBJECT, messageIdOf } from '../src/client
 import { decodeEncodedWords, parseInnerMime } from '../src/client/pgp/mime.ts'
 import { decryptMessage } from '../src/client/pgp/message-crypto.ts'
 import { bridgeHostOf, mailAddressOfBridgeDid, shouldEncrypt } from '../src/client/pgp/autocrypt.ts'
-import { bytesToBase64url } from '../src/protocol/canonical.ts'
+import { bytesToBase64url } from '../src/protocol/base64.ts'
 
 const sent: Array<{ toDid: string; type: string; body: Record<string, unknown>; opts: Record<string, unknown> }> = []
 vi.mock('../src/client/didcomm/front-door-send.ts', () => ({

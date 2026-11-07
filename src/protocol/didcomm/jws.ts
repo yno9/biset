@@ -10,9 +10,9 @@ import { ed25519 } from '@noble/curves/ed25519.js'
 import { p256 } from '@noble/curves/nist.js'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { base58 } from '@scure/base'
-import { base64urlToBytes, bytesToBase64url } from '../canonical.ts'
 import { decodePeerDid2 } from './peer.ts'
 import { resolveDidDocument, resolveTrustedDid } from '../did-resolve.ts'
+import { base64urlToBytes, bytesToBase64url } from '../base64.ts'
 
 export const DIDCOMM_SIGNED_MEDIA_TYPE = 'application/didcomm-signed+json'
 

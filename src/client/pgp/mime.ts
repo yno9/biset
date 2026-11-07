@@ -1,6 +1,7 @@
 // The MIME entity inside an OpenPGP message (RFC 3156), the way Delta Chat reads and writes it: the real headers
 // ("protected headers": Subject, From, To, Date, Message-ID, In-Reply-To, References, Chat-*, Autocrypt,
 // Autocrypt-Gossip) followed by the body. Delta Chat trusts only these inner headers of an encrypted mail.
+import { base64ToBytes, bytesToBase64 } from '../../protocol/base64.ts'
 
 export interface InnerMime {
   /** The headers, names lowercased; when one repeats, the first wins (`autocrypt-gossip` is in `gossip`). */
@@ -24,9 +25,7 @@ export function encodeHeaderValue(value: string): string {
   while (start < bytes.length) {
     let end = Math.min(start + 45, bytes.length)
     while (end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--
-    let binary = ''
-    for (const byte of bytes.slice(start, end)) binary += String.fromCharCode(byte)
-    words.push(`=?UTF-8?B?${btoa(binary)}?=`)
+    words.push(`=?UTF-8?B?${bytesToBase64(bytes.slice(start, end))}?=`)
     start = end
   }
   return words.join('\r\n ')
@@ -59,7 +58,7 @@ export function decodeEncodedWords(value: string): string {
   return value.replace(/(=\?[^?]+\?[BbQq]\?[^?]*\?=)\s+(?==\?)/g, '$1').replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (word, charset: string, encoding: string, text: string) => {
     try {
       let bytes: Uint8Array
-      if (encoding.toUpperCase() === 'B') bytes = Uint8Array.from(atob(text), char => char.charCodeAt(0))
+      if (encoding.toUpperCase() === 'B') bytes = base64ToBytes(text)
       else {
         const out: number[] = []
         const source = text.replace(/_/g, ' ')
@@ -142,7 +141,7 @@ function parseEntity(out: InnerMime, text: string, depth: number): void {
 }
 
 function base64Bytes(value: string): Uint8Array {
-  try { return Uint8Array.from(atob(value.replace(/\s+/g, '')), char => char.charCodeAt(0)) } catch { return new Uint8Array() }
+  try { return base64ToBytes(value.replace(/\s+/g, '')) } catch { return new Uint8Array() }
 }
 
 function decodeBody(body: string, encoding: string, charset: string): string {
@@ -189,7 +188,7 @@ export function avatarOfHeader(value: string | undefined): string | null | undef
   if (text === '0') return null
   if (!text?.startsWith('base64:')) return undefined
   let bytes: Uint8Array
-  try { bytes = Uint8Array.from(atob(text.slice(7)), char => char.charCodeAt(0)) } catch { return undefined }
+  try { bytes = base64ToBytes(text.slice(7)) } catch { return undefined }
   if (bytes.length === 0 || bytes.length > AVATAR_MAX_BYTES) return undefined
   const type = IMAGE_MAGIC.find(([, magic]) => magic.every((byte, index) => bytes[index] === byte))?.[0]
   return type ? `data:${type};base64,${text.slice(7)}` : undefined

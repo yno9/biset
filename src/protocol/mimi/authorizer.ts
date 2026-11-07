@@ -6,8 +6,9 @@
  * the credential already recorded in the room, so a self-asserted request
  * credential cannot replace an existing member's signing key.
  */
+import { bytesToBase64url } from '../base64.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { bytesToBase64url, canonicalBytes, equalBytes } from '../canonical.ts'
+import { canonicalBytes, equalBytes } from '../canonical.ts'
 import type { CanonicalValue } from '../canonical.ts'
 import type {
   DeliveriesPullRequest,

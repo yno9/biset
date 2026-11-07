@@ -5,7 +5,7 @@
 // SQLite store (in memory).
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
-import { packAnoncrypt, packAuthcrypt, unpackAuthcrypt, b64urlToBytes, parseJwe } from '../src/protocol/didcomm/crypto.ts'
+import { packAnoncrypt, packAuthcrypt, unpackAuthcrypt, parseJwe } from '../src/protocol/didcomm/crypto.ts'
 import { signDidCommMessage } from '../src/protocol/didcomm/jws.ts'
 import { generatePeerIdentity } from '../src/protocol/didcomm/peer.ts'
 import { PING, PING_RESPONSE } from '../src/protocol/didcomm/trust-ping.ts'
@@ -18,6 +18,7 @@ import { serializeLog } from '../src/protocol/vh/log.ts'
 import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 import { pushDidLog } from '../src/protocol/didcomm/mediator-coordinate.ts'
 import { deviceLabel, freshMediator, peer, T, utf8 } from './support/mediator.ts'
+import { base64ToBytes } from '../src/protocol/base64.ts'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -56,7 +57,7 @@ describe('blind mediator', () => {
     const res = await forward(peer().xKid, { some: 'ciphertext' })
     expect(res.status).toBe(401)
     expect(res.headers.get('content-type')).toBe('application/didcomm-signed+json')
-    const report = JSON.parse(new TextDecoder().decode(b64urlToBytes((await res.json()).payload)))
+    const report = JSON.parse(new TextDecoder().decode(base64ToBytes((await res.json()).payload)))
     expect(report.body.code).toBe('e.m.req.not-enrolled')
   })
 
@@ -336,7 +337,7 @@ describe('a standard client of the mediator', () => {
     expect(typeof attachment.data.base64).toBe('string')
     expect(attachment.data.json).toBeUndefined()
     expect(attachment.media_type).toBe('application/didcomm-encrypted+json')
-    expect(JSON.parse(new TextDecoder().decode(b64urlToBytes(attachment.data.base64!)))).toEqual({ ciphertext: 'a' })
+    expect(JSON.parse(new TextDecoder().decode(base64ToBytes(attachment.data.base64!)))).toEqual({ ciphertext: 'a' })
     expect(plain.body).toEqual({})
     const named = await request(bob, T.DELIVERY_REQUEST, { limit: 10, recipient_did: bob.did })
     expect((named.body as any).recipient_did).toBe(bob.did)

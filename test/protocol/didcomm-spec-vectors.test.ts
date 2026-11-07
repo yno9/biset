@@ -5,19 +5,20 @@
 import { describe, expect, test } from 'vitest'
 import vectors from '../fixtures/didcomm-v2.1-x25519-vectors.json'
 import { x25519 } from '@noble/curves/ed25519.js'
-import { b64urlToBytes, packAnoncrypt, packAuthcrypt, protectedHeaderOf, unpackAnoncrypt, unpackAuthcrypt, type DidCommJWE } from '../../src/protocol/didcomm/crypto.ts'
+import { packAnoncrypt, packAuthcrypt, protectedHeaderOf, unpackAnoncrypt, unpackAuthcrypt, type DidCommJWE } from '../../src/protocol/didcomm/crypto.ts'
+import { base64ToBytes } from '../../src/protocol/base64.ts'
 
 const decode = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes))
-const alicePublic = b64urlToBytes(vectors.aliceX25519.x)
+const alicePublic = base64ToBytes(vectors.aliceX25519.x)
 
 describe('DIDComm v2.1 Appendix C.3 vectors', () => {
   for (const bob of vectors.bobX25519) {
     test(`anoncrypt (ECDH-ES+A256KW, XC20P) opens with ${bob.kid}`, async () => {
-      const plaintext = await unpackAnoncrypt(vectors.anoncryptX25519Xc20p as DidCommJWE, { kid: bob.kid, privateKey: b64urlToBytes(bob.d) })
+      const plaintext = await unpackAnoncrypt(vectors.anoncryptX25519Xc20p as DidCommJWE, { kid: bob.kid, privateKey: base64ToBytes(bob.d) })
       expect(decode(plaintext)).toEqual(vectors.plaintext)
     })
     test(`authcrypt (ECDH-1PU+A256KW, A256CBC-HS512) opens with ${bob.kid} and names Alice`, async () => {
-      const { plaintext, senderKid } = await unpackAuthcrypt(vectors.authcryptX25519A256cbcHs512 as DidCommJWE, { kid: bob.kid, privateKey: b64urlToBytes(bob.d) }, async kid => {
+      const { plaintext, senderKid } = await unpackAuthcrypt(vectors.authcryptX25519A256cbcHs512 as DidCommJWE, { kid: bob.kid, privateKey: base64ToBytes(bob.d) }, async kid => {
         expect(kid).toBe(vectors.aliceX25519.kid)
         return alicePublic
       })
@@ -28,8 +29,8 @@ describe('DIDComm v2.1 Appendix C.3 vectors', () => {
 })
 
 describe('multi-recipient pack', () => {
-  const bobs = vectors.bobX25519.map(b => ({ kid: b.kid, privateKey: b64urlToBytes(b.d), publicKey: b64urlToBytes(b.x) }))
-  const alice = { kid: vectors.aliceX25519.kid, privateKey: b64urlToBytes(vectors.aliceX25519.d) }
+  const bobs = vectors.bobX25519.map(b => ({ kid: b.kid, privateKey: base64ToBytes(b.d), publicKey: base64ToBytes(b.x) }))
+  const alice = { kid: vectors.aliceX25519.kid, privateKey: base64ToBytes(vectors.aliceX25519.d) }
   const bytes = new TextEncoder().encode(JSON.stringify(vectors.plaintext))
   // Recipient order must not matter to apv (the spec sorts the kids).
   const shuffled = [bobs[2]!, bobs[0]!, bobs[1]!]

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { base64urlToBytes, bytesToBase64url, canonicalHash, canonicalJson, domainHash, equalBytes } from '../../src/protocol/canonical.ts'
+import { canonicalHash, canonicalJson, domainHash, equalBytes } from '../../src/protocol/canonical.ts'
 import { assertIngressEnvelope, ProtocolValidationError } from '../../src/server/mediator/validate.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../src/protocol/base64.ts'
 
 describe('protocol canonical encoding', () => {
   test('sorts object keys without changing array order', () => {

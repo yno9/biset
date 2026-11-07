@@ -19,7 +19,7 @@
 //   5. (the message itself is authcrypted by `sub`'s key: the caller's check)
 //   6. `exp` and `nbf` are honoured when present.
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { b64url, b64urlToBytes } from './crypto.ts'
+import { base64ToBytes, bytesToBase64url } from '../base64.ts'
 import { authenticationMethodOf, authenticationSigningKey, JWS_ALGORITHMS, SignatureError, verifyJwsSignature, type JwsAlgorithm, type SigningKey } from './jws.ts'
 import type { LogEntry } from '../vh/log.ts'
 import { fetchDidLog, resolveTrustedDid } from '../did-resolve.ts'
@@ -45,7 +45,7 @@ export class FromPriorError extends Error {
   }
 }
 
-const encodeJson = (value: unknown) => b64url(new TextEncoder().encode(JSON.stringify(value)))
+const encodeJson = (value: unknown) => bytesToBase64url(new TextEncoder().encode(JSON.stringify(value)))
 
 /** Signs a rotation from `iss` to `sub` with the Ed25519 key `kid` of `iss`. */
 export function createFromPrior(claims: { iss: string; sub: string; iat?: number }, kid: string, privateKey: Uint8Array): string {
@@ -54,7 +54,7 @@ export function createFromPrior(claims: { iss: string; sub: string; iat?: number
   const header = encodeJson({ typ: 'JWT', alg: 'EdDSA', crv: 'Ed25519', kid })
   const payload = encodeJson({ iss: claims.iss, sub: claims.sub, iat: claims.iat ?? Math.floor(Date.now() / 1000) })
   const signature = ed25519.sign(new TextEncoder().encode(`${header}.${payload}`), privateKey)
-  return `${header}.${payload}.${b64url(signature)}`
+  return `${header}.${payload}.${bytesToBase64url(signature)}`
 }
 
 interface Parsed { kid: string; alg: JwsAlgorithm; claims: FromPriorClaims; signingInput: Uint8Array; signature: Uint8Array }
@@ -64,9 +64,9 @@ function parse(jwt: string): Parsed {
   if (parts.length !== 3) throw new FromPriorError('not a compact JWS')
   let header: Record<string, unknown>, payload: Record<string, unknown>, signature: Uint8Array
   try {
-    header = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[0]!)))
-    payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[1]!)))
-    signature = b64urlToBytes(parts[2]!)
+    header = JSON.parse(new TextDecoder().decode(base64ToBytes(parts[0]!)))
+    payload = JSON.parse(new TextDecoder().decode(base64ToBytes(parts[1]!)))
+    signature = base64ToBytes(parts[2]!)
   } catch { throw new FromPriorError('not a compact JWS') }
   if (header?.typ !== 'JWT' || !JWS_ALGORITHMS.includes(header.alg as JwsAlgorithm)) throw new FromPriorError('typ must be JWT and alg EdDSA, ES256 or ES256K')
   if (header.alg === 'EdDSA' && header.crv !== undefined && header.crv !== 'Ed25519') throw new FromPriorError('EdDSA is supported on Ed25519 only')

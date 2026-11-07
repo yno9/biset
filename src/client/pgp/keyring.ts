@@ -1,5 +1,6 @@
 // A OpenPGP secret key as the app keeps and shows it, and the cut-down public key an Autocrypt header carries. The key itself
 // is derived from the generation seed (derive.ts); this is the only other module that reads keys with openpgp.js.
+import { bytesToBase64 } from '../../protocol/base64.ts'
 import * as openpgp from 'openpgp'
 
 export interface PgpKey {
@@ -36,7 +37,5 @@ export async function autocryptKeydata(privateKey: Uint8Array, address: string):
   key.subkeys = encryption && encryption.getKeyID().toHex() !== key.getKeyID().toHex()
     ? key.subkeys.filter(subkey => subkey.getKeyID().toHex() === encryption.getKeyID().toHex())
     : []
-  let binary = ''
-  for (const byte of key.write()) binary += String.fromCharCode(byte)
-  return btoa(binary)
+  return bytesToBase64(key.write())
 }

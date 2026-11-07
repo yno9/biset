@@ -3,7 +3,9 @@
 // and unpacks each queued message. Ported from
 // src.bak/did/didcomm/pickup.ts, trimmed of the sign-then-encrypt unwrap
 // (signature.ts is out of scope for this phase -- ARC.md's design doc).
-import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, b64urlToBytes, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
+import { errorMessage } from '../error-message.ts'
+import { base64ToBytes } from '../base64.ts'
+import { unpackAuthcrypt, unpackAnoncrypt, protectedHeaderOf, parseJwe, type DidCommJWE, type ResolveSenderKey } from './crypto.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient, type MediatorInfo } from './mediator-transport.ts'
 import { defaultFetch } from '../net-fetch.ts'
 import { addressedTo } from './message.ts'
@@ -69,7 +71,7 @@ export class PermanentDeliveryError extends Error {
 export function queuedMessageOf(attachment: { data?: { base64?: unknown; json?: unknown } }): unknown {
   const data = attachment.data
   if (typeof data?.base64 === 'string') {
-    try { return JSON.parse(new TextDecoder().decode(b64urlToBytes(data.base64))) } catch { throw new Error('queued attachment is not base64url-encoded JSON') }
+    try { return JSON.parse(new TextDecoder().decode(base64ToBytes(data.base64))) } catch { throw new Error('queued attachment is not base64url-encoded JSON') }
   }
   return data?.json
 }
@@ -133,14 +135,14 @@ export async function unpackQueuedMessage(
       return await open(true)
     } catch (error) {
       if (resolverFailure !== undefined && !(resolverFailure instanceof SenderKeyNotPublishedError)) {
-        console.warn(`[didcomm] could not resolve the sender of ${ackId} yet; it stays queued:`, resolverFailure instanceof Error ? resolverFailure.message : resolverFailure)
+        console.warn(`[didcomm] could not resolve the sender of ${ackId} yet; it stays queued:`, errorMessage(resolverFailure))
         return undefined
       }
       if (error instanceof SenderKeyNotPublishedError || resolverFailure instanceof SenderKeyNotPublishedError) {
         const first = firstSeenUnlisted.get(ackId) ?? Date.now()
         firstSeenUnlisted.set(ackId, first)
         if (Date.now() - first < KEY_PUBLICATION_GRACE_MS) {
-          console.warn(`[didcomm] the sender's key of ${ackId} is not published yet; it stays queued for a while:`, error instanceof Error ? error.message : error)
+          console.warn(`[didcomm] the sender's key of ${ackId} is not published yet; it stays queued for a while:`, errorMessage(error))
           return undefined
         }
         firstSeenUnlisted.delete(ackId)
@@ -173,7 +175,7 @@ export async function pickupDeliver(
       const delivered = await unpackQueuedMessage(queuedMessageOf(att), att.id, inbox, resolveSenderKey)
       if (delivered) out.push(delivered)
     } catch (error) {
-      console.warn(`[didcomm] skipping an undeliverable queued message (${att.id}):`, error instanceof Error ? error.message : error)
+      console.warn(`[didcomm] skipping an undeliverable queued message (${att.id}):`, errorMessage(error))
     }
   }
   return out

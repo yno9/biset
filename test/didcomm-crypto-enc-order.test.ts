@@ -9,10 +9,8 @@
 // live, 2026-08-26).
 import { describe, expect, test } from 'vitest'
 import { x25519 } from '@noble/curves/ed25519.js'
-import {
-  packAuthcrypt, unpackAuthcrypt,
-  b64urlToBytes, b64url, type DidCommJWE,
-} from '../src/protocol/didcomm/crypto.ts'
+import { packAuthcrypt, unpackAuthcrypt, type DidCommJWE } from '../src/protocol/didcomm/crypto.ts'
+import { base64ToBytes, bytesToBase64url } from '../src/protocol/base64.ts'
 
 const senderX = x25519.utils.randomSecretKey()
 const senderKid = 'did:vh:alice#k1'
@@ -22,8 +20,8 @@ const recipientKid = 'did:vh:bob#k1'
 const plaintext = new TextEncoder().encode(JSON.stringify({ hello: 'world' }))
 
 function withTamperedEnc(jwe: DidCommJWE): DidCommJWE {
-  const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
-  return { ...jwe, protected: b64url(new TextEncoder().encode(JSON.stringify({ ...header, enc: 'XC20P' }))) }
+  const header = JSON.parse(new TextDecoder().decode(base64ToBytes(jwe.protected)))
+  return { ...jwe, protected: bytesToBase64url(new TextEncoder().encode(JSON.stringify({ ...header, enc: 'XC20P' }))) }
 }
 
 describe('unpack rejects an unsupported enc before resolving the sender key', () => {

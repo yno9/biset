@@ -1,8 +1,9 @@
 /** Client-side Minimal Metadata Room identity-link encryption (PLAN §7.2). */
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { base64urlToBytes, bytesToBase64url, canonicalBytes } from '../../../protocol/canonical.ts'
+import { canonicalBytes } from '../../../protocol/canonical.ts'
 import type { MimiRoomId, PseudonymousCredential } from '../../../protocol/mimi/protocol-types.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../../protocol/base64.ts'
 
 const IDENTITY_LINK_EXPORTER_LABEL = 'mimi mmr identity-link'
 const KEY_BYTES = 32

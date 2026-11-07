@@ -20,19 +20,8 @@ devices, so no server holds a permanent mailbox or message history.
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [ARC.md](ARC.md) | The architecture as implemented: trust boundaries, keys, storage, delivery, verification status, and what is still missing. Start here. |
-| [PLAN_vault-sync-redesign.md](PLAN_vault-sync-redesign.md) | The design decisions and implementation checklist behind the current two-layer sync (log layer / projection layer). |
-| [PLAN.md](PLAN.md) | did.md Wallet login design. |
-| [PLAN_biset-mimi-server.md](PLAN_biset-mimi-server.md) | The MIMI delivery service that ships in this repository. It runs, but the current client does not call it. |
-| `tasks/` | Per-task working notes. |
-
-> `REPORT.md`, `NOTE.md`, `WORKSHEET_vault-sync.md`, and `PLAN-simplify.md` predate the
-> 2026-09-15 sync redesign and describe removed designs. They are kept as records only and
-> contradict the current code.
-
-The previous implementation is retained locally in `src.bak/` and `jmapsmtp.bak/`.
+[ARC.md](ARC.md) describes the architecture as implemented: trust boundaries, keys, storage,
+delivery, verification status, and what is still missing. Start there.
 
 ## Building and checking
 
@@ -40,13 +29,13 @@ Node 26 and pnpm (`.nvmrc`, `packageManager`); there is no Bun.
 
 ```bash
 pnpm install
-pnpm build      # bundles the client with esbuild AND inlines it into dist/index.html
-pnpm dev        # esbuild --watch + a static server on :3000
+pnpm build      # vite: one self-contained dist/index.html, plus dist/sw.js and dist/fonts/
+pnpm dev        # vite dev server on :3000 (/mock.html renders the UI on made-up data)
 pnpm check      # typecheck + knip + reachability + tests (vitest)
 ```
 
-`esbuild` on its own is not enough — `pnpm build` is what produces `dist/index.html`.
-Verify the client by opening that file over `file://`.
+The client needs the sibling checkout `../lft` (linked in `package.json`).
+Verify the client by opening `dist/index.html` over `file://`.
 
 Servers are each bundled into one `.mjs` that runs on Node 26 (`dist-server/`):
 
@@ -55,7 +44,7 @@ pnpm build:didcomm-mediator   # the DIDComm mediator
 pnpm build:mimi               # MIMI delivery service
 ```
 
-Mail is not part of Biset: a mail address is reached as the DID a mail bridge
+Mail is not part of Oui: a mail address is reached as the DID a mail bridge
 ([didmail](https://github.com/yno9/didmail)) gives it, looked up by WebFinger
 (`mailGateways` in `config.json`).
 

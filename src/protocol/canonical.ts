@@ -1,4 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToBase64url } from './base64.ts'
 
 export type CanonicalValue =
   | null
@@ -9,7 +10,6 @@ export type CanonicalValue =
   | { [key: string]: CanonicalValue }
 
 const encoder = new TextEncoder()
-const base64url = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
 
 /**
  * Stable JSON for signed protocol envelopes. This is deliberately narrower
@@ -39,50 +39,6 @@ export function canonicalBytes(value: CanonicalValue): Uint8Array {
   return encoder.encode(canonicalJson(value))
 }
 
-export function bytesToBase64url(bytes: Uint8Array): string {
-  let result = ''
-  let index = 0
-  while (index + 2 < bytes.length) {
-    const word = (bytes[index++] << 16) | (bytes[index++] << 8) | bytes[index++]
-    result += base64url[(word >>> 18) & 63]
-    result += base64url[(word >>> 12) & 63]
-    result += base64url[(word >>> 6) & 63]
-    result += base64url[word & 63]
-  }
-  if (index < bytes.length) {
-    const first = bytes[index++]
-    result += base64url[first >>> 2]
-    if (index === bytes.length) return `${result}${base64url[(first & 3) << 4]}`
-    const second = bytes[index]
-    result += base64url[((first & 3) << 4) | (second >>> 4)]
-    result += base64url[(second & 15) << 2]
-  }
-  return result
-}
-
-export function base64urlToBytes(value: string): Uint8Array {
-  if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new TypeError('invalid base64url value')
-  const output: number[] = []
-  let buffer = 0
-  let bits = 0
-  for (const char of value) {
-    const index = base64url.indexOf(char)
-    if (index < 0) throw new TypeError('invalid base64url value')
-    buffer = (buffer << 6) | index
-    bits += 6
-    while (bits >= 8) {
-      bits -= 8
-      output.push((buffer >>> bits) & 0xff)
-    }
-    // Keep only the bits that have not yet become an output byte. Besides
-    // documenting the decoder invariant, this avoids relying on JavaScript's
-    // 32-bit bitwise truncation for long vault payloads.
-    buffer = bits === 0 ? 0 : buffer & ((1 << bits) - 1)
-  }
-  if (bits > 0 && (buffer & ((1 << bits) - 1)) !== 0) throw new TypeError('invalid base64url trailing bits')
-  return new Uint8Array(output)
-}
-
 export function sha256Bytes(bytes: Uint8Array): Uint8Array {
   return sha256(bytes)
 }
@@ -109,16 +65,6 @@ export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   let difference = 0
   for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index]
   return difference === 0
-}
-
-/** Moved from utils.ts (2026-08-31) so DOM-less deploy units (mls-ds/,
- * mediator/) can use it without pulling in utils.ts's DOM-dependent half
- * (its own account-page/left-pane helpers) -- utils.ts re-exports both for
- * existing callers. */
-function hexToBytes(hex: string): Uint8Array {
-  const out = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-  return out
 }
 
 export function bytesToHex(bytes: Uint8Array): string {

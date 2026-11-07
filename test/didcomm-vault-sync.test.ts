@@ -3,7 +3,6 @@
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { VaultSyncClient, walletVaultSyncTransport, type VaultSyncMessage } from '../src/client/didcomm/vault-sync.ts'
-import { bytesToBase64url } from '../src/protocol/canonical.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../src/protocol/didcomm/vault-sync-protocol.ts'
 import { encodeVaultDeliveryPack } from '../src/client/store/vault/delivery-pack.ts'
 import { createVaultEvent, type VaultEventAuthor } from '../src/client/store/vault/events.ts'
@@ -15,6 +14,7 @@ import { buildDidCommLog } from './protocol/support/did-log-fixture.ts'
 import { freshMediator, MEDIATOR_URL, testVhResolver } from './support/mediator.ts'
 import { SqliteMediatorStore } from '../src/server/mediator/sqlite-store.ts'
 import type { IncomingVaultRecords } from '../src/client/store/vault/store.ts'
+import { bytesToBase64url } from '../src/protocol/base64.ts'
 
 const DID = 'did:vh:scid'
 const signer: VaultEventAuthor = { deviceId: 'device-a' }

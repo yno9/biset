@@ -1,11 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
-    "vite.config.ts",
-    "src/client/app/main.ts",
     "src/client/app/mock.ts",
     "src/client/app/sw.ts",
-    "src/server/mimi/index.ts",
     "test/**/*.test.{ts,tsx}",
     "scripts/*.mjs",
     "src/client/app/avatars.tsx",
@@ -14,7 +11,14 @@
   "project": [
     "src/**/*.{ts,tsx}"
   ],
+  "ignore": [
+    "src/server/mediator/v2-admin-settings.ts"
+  ],
   "ignoreDependencies": [
-    "didcomm-node"
+    "didcomm-node",
+    "@fontsource-variable/noto-sans-jp",
+    "@fontsource-variable/outfit",
+    "@fontsource/zen-kaku-gothic-antique",
+    "eruda"
   ]
 }

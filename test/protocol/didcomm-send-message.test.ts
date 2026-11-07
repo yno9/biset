@@ -3,11 +3,12 @@ import { x25519, ed25519 } from '@noble/curves/ed25519.js'
 import { answerTrustPing, sendDidCommMessage } from '../../src/client/didcomm/send-message.ts'
 import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
-import { parseJwe, unpackAuthcrypt, unpackAnoncrypt, b64urlToBytes } from '../../src/protocol/didcomm/crypto.ts'
+import { parseJwe, unpackAuthcrypt, unpackAnoncrypt } from '../../src/protocol/didcomm/crypto.ts'
 import { BASIC_MESSAGE } from '../../src/client/didcomm/basicmessage.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { buildDidCommLog, type DidCommStateExtras } from '../protocol/support/did-log-fixture.ts'
 import type { LogEntry } from '../../src/protocol/vh/log.ts'
+import { base64ToBytes } from '../../src/protocol/base64.ts'
 
 const senderKid = 'did:vh:Qmsender#k_senderhash'
 const senderX = x25519.utils.randomSecretKey()

@@ -22,6 +22,7 @@
 //     adapter was "first-party infrastructure, not a blind third-party
 //     mediator" — since revisited: a genuinely decentralized mediator has to
 //     be blind, which needs Forward wrapping to exist.
+import { base64ToBytes, bytesToBase64url } from '../base64.ts'
 import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { hmac } from '@noble/hashes/hmac.js'
 import { cbc, aeskw, gcm } from '@noble/ciphers/aes.js'
@@ -51,19 +52,6 @@ function u64beBits(byteLen: number): Uint8Array {
 }
 
 function utf8(s: string): Uint8Array { return new TextEncoder().encode(s) }
-
-export function b64url(bytes: Uint8Array): string {
-  let s = ''
-  for (const b of bytes) s += String.fromCharCode(b)
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-export function b64urlToBytes(s: string): Uint8Array {
-  const pad = (4 - (s.length % 4)) % 4
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(pad)
-  const bin = atob(b64)
-  return Uint8Array.from(bin, c => c.charCodeAt(0))
-}
 
 // ── ConcatKDF (NIST SP 800-56A), single-pass SHA-256 ────────────────────────
 // Matches askar-crypto's ConcatKDFHash exactly: counter(1) || Z || len(alg)||alg
@@ -165,10 +153,10 @@ function a256gcmDecrypt(cek: Uint8Array, iv: Uint8Array, aad: Uint8Array, cipher
  * A256CBC-HS512, didcomm-rust sends XC20P). Unknown values are named and
  * refused rather than left to fail as an opaque tag mismatch. */
 function decryptContent(enc: string, cek: Uint8Array, jwe: DidCommJWE): Uint8Array {
-  const iv = b64urlToBytes(jwe.iv)
+  const iv = base64ToBytes(jwe.iv)
   const aad = utf8(jwe.protected)
-  const ciphertext = b64urlToBytes(jwe.ciphertext)
-  const tag = b64urlToBytes(jwe.tag)
+  const ciphertext = base64ToBytes(jwe.ciphertext)
+  const tag = base64ToBytes(jwe.tag)
   if (enc === 'A256CBC-HS512') return aesCbcHs512Decrypt(cek, iv, aad, ciphertext, tag)
   if (enc === 'XC20P') return xc20pDecrypt(cek, iv, aad, ciphertext, tag)
   if (enc === 'A256GCM') return a256gcmDecrypt(cek, iv, aad, ciphertext, tag)
@@ -221,7 +209,7 @@ export function parseJwe(value: unknown): DidCommJWE | null {
  * JSON object. */
 export function protectedHeaderOf(jwe: DidCommJWE): Record<string, unknown> | null {
   try {
-    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
+    const header = JSON.parse(new TextDecoder().decode(base64ToBytes(jwe.protected)))
     if (typeof header !== 'object' || header === null || Array.isArray(header)) return null
     return header as Record<string, unknown>
   } catch {
@@ -276,7 +264,7 @@ function assertRecipients(fn: string, recipients: readonly { kid: string; curve?
  * recipients the message was for. */
 function assertApvMatchesRecipients(fn: string, jwe: DidCommJWE, header: Record<string, unknown>): Uint8Array {
   if (typeof header.apv !== 'string') throw new Error(`${fn}: missing apv`)
-  const apv = b64urlToBytes(header.apv)
+  const apv = base64ToBytes(header.apv)
   const want = apvFor(jwe.recipients.map(r => r.header.kid))
   if (apv.length !== want.length || apv.some((b, i) => b !== want[i])) throw new Error(`${fn}: apv does not match the recipient kids`)
   return apv
@@ -312,8 +300,8 @@ function buildProtectedHeader(
     typ: DIDCOMM_ENCRYPTED_MEDIA_TYPE,
     alg,
     enc: 'A256CBC-HS512',
-    ...(sender ? { skid: sender.kid, apu: b64url(apu) } : {}),
-    apv: b64url(apvRaw),
+    ...(sender ? { skid: sender.kid, apu: bytesToBase64url(apu) } : {}),
+    apv: bytesToBase64url(apvRaw),
     epk,
   }
   return { headerStr: JSON.stringify(header), apu }
@@ -333,7 +321,7 @@ export function packAnoncrypt(plaintext: Uint8Array, recipients: readonly X25519
   const { privateKey: ephemPriv, publicKey: ephemPub } = generateKeyAgreementKeyPair(curve)
   const apv = apvFor(recipients.map(r => r.kid))
   const { headerStr, apu } = buildProtectedHeader(alg, null, apv, jwkOfKeyAgreementKey({ curve, publicKey: ephemPub }))
-  const protectedB64 = b64url(utf8(headerStr))
+  const protectedB64 = bytesToBase64url(utf8(headerStr))
 
   const cek = crypto.getRandomValues(new Uint8Array(64))
   const iv = crypto.getRandomValues(new Uint8Array(16))
@@ -344,11 +332,11 @@ export function packAnoncrypt(plaintext: Uint8Array, recipients: readonly X25519
     recipients: recipients.map(recipient => {
       const z = ecdh(curve, ephemPriv, recipient.publicKey)
       const kek = deriveEcdhEs(z, alg, apu, apv, 256)
-      return { header: { kid: recipient.kid }, encrypted_key: b64url(wrapKey(kek, cek)) }
+      return { header: { kid: recipient.kid }, encrypted_key: bytesToBase64url(wrapKey(kek, cek)) }
     }),
-    iv: b64url(iv),
-    ciphertext: b64url(ciphertext),
-    tag: b64url(tag),
+    iv: bytesToBase64url(iv),
+    ciphertext: bytesToBase64url(ciphertext),
+    tag: bytesToBase64url(tag),
   }
 }
 
@@ -363,7 +351,7 @@ export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recip
   const { privateKey: ephemPriv, publicKey: ephemPub } = generateKeyAgreementKeyPair(curve)
   const apv = apvFor(recipients.map(r => r.kid))
   const { headerStr, apu } = buildProtectedHeader(alg, sender, apv, jwkOfKeyAgreementKey({ curve, publicKey: ephemPub }))
-  const protectedB64 = b64url(utf8(headerStr))
+  const protectedB64 = bytesToBase64url(utf8(headerStr))
 
   const cek = crypto.getRandomValues(new Uint8Array(64))
   const iv = crypto.getRandomValues(new Uint8Array(16))
@@ -375,11 +363,11 @@ export function packAuthcrypt(plaintext: Uint8Array, sender: X25519Sender, recip
       const ze = ecdh(curve, ephemPriv, recipient.publicKey)
       const zs = ecdh(curve, sender.privateKey, recipient.publicKey)
       const kek = deriveEcdh1PU(ze, zs, alg, apu, apv, tag, 256)
-      return { header: { kid: recipient.kid }, encrypted_key: b64url(wrapKey(kek, cek)) }
+      return { header: { kid: recipient.kid }, encrypted_key: bytesToBase64url(wrapKey(kek, cek)) }
     }),
-    iv: b64url(iv),
-    ciphertext: b64url(ciphertext),
-    tag: b64url(tag),
+    iv: bytesToBase64url(iv),
+    ciphertext: bytesToBase64url(ciphertext),
+    tag: bytesToBase64url(tag),
   }
 }
 
@@ -416,7 +404,7 @@ function ephemeralKeyOf(fn: string, header: Record<string, unknown>, recipient: 
 }
 
 function parseProtectedHeader(jwe: DidCommJWE): Record<string, unknown> {
-  return JSON.parse(new TextDecoder().decode(b64urlToBytes(jwe.protected)))
+  return JSON.parse(new TextDecoder().decode(base64ToBytes(jwe.protected)))
 }
 
 export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, resolveSenderKey: ResolveSenderKey): Promise<UnpackedAuthcrypt> {
@@ -431,7 +419,7 @@ export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, 
   if (header.enc !== 'A256CBC-HS512') {
     throw new Error(`unpackAuthcrypt: unsupported enc ${JSON.stringify(header.enc)} — authcrypt is A256CBC-HS512 only`)
   }
-  const apu = b64urlToBytes(header.apu as string)
+  const apu = base64ToBytes(header.apu as string)
   const senderKid = new TextDecoder().decode(apu)
   if (header.skid && header.skid !== senderKid) throw new Error('unpackAuthcrypt: skid does not match apu')
 
@@ -441,14 +429,14 @@ export async function unpackAuthcrypt(jwe: DidCommJWE, recipient: X25519Sender, 
   const epk = ephemeralKeyOf('unpackAuthcrypt', header, recipient)
   const apv = assertApvMatchesRecipients('unpackAuthcrypt', jwe, header)
   const senderPub = await resolveSenderKey(senderKid)
-  const tag = b64urlToBytes(jwe.tag)
+  const tag = base64ToBytes(jwe.tag)
 
   const ze = ecdh(epk.curve, recipient.privateKey, epk.publicKey)
   const zs = ecdh(epk.curve, recipient.privateKey, senderPub)
   const kek = deriveEcdh1PU(ze, zs, header.alg, apu, apv, tag, 256)
-  const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
+  const cek = unwrapKey(kek, base64ToBytes(rec.encrypted_key))
 
-  const plaintext = aesCbcHs512Decrypt(cek, b64urlToBytes(jwe.iv), utf8(jwe.protected), b64urlToBytes(jwe.ciphertext), tag)
+  const plaintext = aesCbcHs512Decrypt(cek, base64ToBytes(jwe.iv), utf8(jwe.protected), base64ToBytes(jwe.ciphertext), tag)
   return { plaintext, senderKid }
 }
 
@@ -467,12 +455,12 @@ export async function unpackAnoncrypt(jwe: DidCommJWE, recipient: X25519Sender):
   if (!rec) throw new Error('unpackAnoncrypt: recipient kid not present in JWE')
 
   const epk = ephemeralKeyOf('unpackAnoncrypt', header, recipient)
-  const apu = header.apu ? b64urlToBytes(header.apu as string) : new Uint8Array(0)
+  const apu = header.apu ? base64ToBytes(header.apu as string) : new Uint8Array(0)
   const apv = assertApvMatchesRecipients('unpackAnoncrypt', jwe, header)
 
   const z = ecdh(epk.curve, recipient.privateKey, epk.publicKey)
   const kek = deriveEcdhEs(z, header.alg as string, apu, apv, 256)
-  const cek = unwrapKey(kek, b64urlToBytes(rec.encrypted_key))
+  const cek = unwrapKey(kek, base64ToBytes(rec.encrypted_key))
 
   // The sender picked `enc`, and for anoncrypt that is genuinely open (see
   // this file's own header). Checking the unwrapped CEK is the length that
@@ -487,4 +475,4 @@ export async function unpackAnoncrypt(jwe: DidCommJWE, recipient: X25519Sender):
 }
 
 // ── exported for test-vector checks ─────────────────────────────────────────
-export const __internal = { concatKDF, deriveEcdh1PU, deriveEcdhEs, ecdh, u32be, utf8, b64url }
+export const __internal = { concatKDF, deriveEcdh1PU, deriveEcdhEs, ecdh, u32be, utf8 }

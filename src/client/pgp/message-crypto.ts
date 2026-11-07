@@ -1,6 +1,7 @@
 // Encrypting to and decrypting from OpenPGP keys, the way Delta Chat does it: every message is signed and also
 // encrypted to ourselves (our other devices read what we sent), with SEIPD v1 (Delta Chat uses v2 only when every
 // recipient supports it). Keys are binary OpenPGP packets: a transferable secret key for ours, public keys for the peers'.
+import { base64ToBytes, bytesToBase64 } from '../../protocol/base64.ts'
 import * as openpgp from 'openpgp'
 
 const ENCRYPT_CONFIG: openpgp.PartialConfig = { aeadProtect: false }
@@ -74,8 +75,8 @@ export function ensureArmorChecksum(armored: string): string {
   const base64 = lines.slice(blank + 1, end).join('').replace(/\s/g, '')
   if (!base64) return armored
   let bytes: Uint8Array
-  try { bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0)) } catch { return armored }
+  try { bytes = base64ToBytes(base64) } catch { return armored }
   const crc = crc24(bytes)
-  const line = '=' + btoa(String.fromCharCode((crc >> 16) & 0xff, (crc >> 8) & 0xff, crc & 0xff))
+  const line = '=' + bytesToBase64(new Uint8Array([(crc >> 16) & 0xff, (crc >> 8) & 0xff, crc & 0xff]))
   return [...lines.slice(0, end), line, ...lines.slice(end)].join(armored.includes('\r\n') ? '\r\n' : '\n')
 }

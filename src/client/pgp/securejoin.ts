@@ -13,12 +13,12 @@
 import * as openpgp from 'openpgp'
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { bytesToBase64url } from '../../protocol/canonical.ts'
 import type { PgpKey } from './keyring.ts'
 import { autocryptKeydata } from './keyring.ts'
 import { decryptMessage, encryptMessage, NotEncryptedToUsError } from './message-crypto.ts'
 import { avatarLine, buildInnerMime, displayNameOfFrom, fromLine, keydataHeader, type OwnProfile, parseInnerMime, parseKeydataHeader } from './mime.ts'
 import { symmetricDecrypt, symmetricEncryptSigned } from './symmetric.ts'
+import { base64ToBytes, bytesToBase64url } from '../../protocol/base64.ts'
 
 export const INVITE_DAYS = 30
 export const SECURE_JOIN_SUBJECT = 'Secure-Join'
@@ -105,7 +105,7 @@ export async function handleSecureJoin(armored: string, from: SecureJoinParty, c
   if (!auth || !auths.includes(auth)) throw new Error('vc-request-with-auth with an auth token that is not one of our invites')
   const held = parseKeydataHeader(mime.headers.autocrypt)
   if (!named || !held || held.addr.toLowerCase() !== from.address.toLowerCase()) throw new Error('vc-request-with-auth without the sender\'s key for the sender\'s address')
-  const keyBytes = Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0))
+  const keyBytes = base64ToBytes(held.keydata)
   const theirs = await openpgp.readKey({ binaryKey: keyBytes })
   if (theirs.getFingerprint().toUpperCase() !== named) throw new Error('the key sent is not the one the fingerprint names')
   // The message must have been signed by that key: only its owner can claim it.

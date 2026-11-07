@@ -24,10 +24,11 @@
 import { identityKey, sameIdentity } from '../../../protocol/vh/identifier.ts'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { sha1 } from '@noble/hashes/legacy.js'
-import { bytesToBase64url, type CanonicalValue } from '../../../protocol/canonical.ts'
+import { type CanonicalValue } from '../../../protocol/canonical.ts'
 import type { VaultMutationIntent } from './mutations.ts'
 import type { LocalJmapEmail } from './gateway.ts'
 import { REPLY_TOKEN_PATTERN } from '../../../protocol/didcomm/reply-token.ts'
+import { bytesToBase64url } from '../../../protocol/base64.ts'
 
 export const JMAP_CONTACTS_CAPABILITY = 'urn:ietf:params:jmap:contacts'
 /** JSContact vendor property holding DIDComm routing state (§12.2). */

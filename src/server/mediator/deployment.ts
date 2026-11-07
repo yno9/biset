@@ -1,6 +1,7 @@
 // Composes the standalone mediator's durable store, its blind DIDComm
 // handler, its HTTP surface, and (optionally) its hop-chain relay poller:
 // what index.ts (the entrypoint) and the tests start.
+import { errorMessage } from '../../protocol/error-message.ts'
 import { serve, type Server } from '../runtime/serve.ts'
 import { createMediator } from './server.ts'
 import { didCommAccepted, didCommPost } from '../../protocol/didcomm/crypto.ts'
@@ -276,8 +277,4 @@ function metrics(stats: ReturnType<SqliteMediatorStore['stats']>): string {
     `biset_mediator_oldest_message_age_seconds ${oldestAgeSeconds}`,
     '',
   ].join('\n')
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

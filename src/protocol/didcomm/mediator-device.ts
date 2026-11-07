@@ -8,14 +8,14 @@
 // only this device holds: stable for this device, unlinkable across DIDs.
 import { hmac } from '@noble/hashes/hmac.js'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { b64url } from './crypto.ts'
+import { bytesToBase64url } from '../base64.ts'
 import type { DidCommSender, MediatorInboxClient } from './mediator-transport.ts'
 
 const LABEL_CONTEXT = 'biset/mediator-device/v1\n'
 
 function mediatorDeviceLabel(deviceSecret: Uint8Array, did: string): string {
   if (deviceSecret.length !== 32) throw new TypeError('mediator device secret must be 32 bytes')
-  return b64url(hmac(sha256, deviceSecret, new TextEncoder().encode(LABEL_CONTEXT + did))).slice(0, 22)
+  return bytesToBase64url(hmac(sha256, deviceSecret, new TextEncoder().encode(LABEL_CONTEXT + did))).slice(0, 22)
 }
 
 /** The inbox a request that names no `device` belongs to: one per sending
@@ -25,7 +25,7 @@ function mediatorDeviceLabel(deviceSecret: Uint8Array, did: string): string {
  * extension for the case where several devices share ONE key (a
  * relationship did:peer), which a kid cannot tell apart. */
 export function defaultDeviceLabel(senderKid: string): string {
-  return 'k' + b64url(sha256(new TextEncoder().encode('biset/mediator-default-device/v1\n' + senderKid))).slice(0, 21)
+  return 'k' + bytesToBase64url(sha256(new TextEncoder().encode('biset/mediator-default-device/v1\n' + senderKid))).slice(0, 21)
 }
 
 /** `identity` (a DID and one of its own keyAgreement keys) as this device's

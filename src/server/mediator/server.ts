@@ -45,10 +45,7 @@
 import { decodePeerDid2, publicKeyOf, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
 import { assertFromMatchesSender, buildPlaintext, isExpired, type DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { buildProblemReport, PROBLEM_REPORT } from '../../protocol/didcomm/problems.ts'
-import {
-  packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, parseJwe, protectedHeaderOf, b64url,
-  DIDCOMM_ENCRYPTED_MEDIA_TYPE, isDidCommEncryptedRequest,
-} from '../../protocol/didcomm/crypto.ts'
+import { packAuthcrypt, unpackAuthcrypt, unpackAnoncrypt, parseJwe, protectedHeaderOf, DIDCOMM_ENCRYPTED_MEDIA_TYPE, isDidCommEncryptedRequest } from '../../protocol/didcomm/crypto.ts'
 import { decodeX25519Multikey } from '../../protocol/didcomm/multikey.ts'
 import { defaultDeviceLabel } from '../../protocol/didcomm/mediator-device.ts'
 import { vhStateFromLog, isLogDid, LogUnavailable, type LogStateResolver } from './log-state.ts'
@@ -56,6 +53,7 @@ import { peerMediatorIdentity, type MediatorIdentity } from './identity.ts'
 import { authenticationSigningKey, DIDCOMM_SIGNED_MEDIA_TYPE, signDidCommMessage, SignatureError, type SigningKey } from '../../protocol/didcomm/jws.ts'
 import { openDidCommPayload } from '../../protocol/didcomm/open.ts'
 import { PING, PING_RESPONSE, TRUST_PING, responseOwedFor } from '../../protocol/didcomm/trust-ping.ts'
+import { bytesToBase64url } from '../../protocol/base64.ts'
 import {
   isDeviceLabel, MediatorFullError, MessageTooBigError, QueueFullError, TooManyDevicesError,
   type QueuedMessage, type SqliteMediatorStore,
@@ -278,7 +276,7 @@ export function createMediator({
    * names back in messages-received. Pickup 3.0 carries each message as
    * `data.base64`: the encrypted message, base64url-encoded. */
   function deliveryAttachments(batch: QueuedMessage[]): NonNullable<DidCommPlaintext['attachments']> {
-    return batch.map(m => ({ id: m.id, media_type: DIDCOMM_ENCRYPTED_MEDIA_TYPE, data: { base64: b64url(utf8(m.packed)) } }))
+    return batch.map(m => ({ id: m.id, media_type: DIDCOMM_ENCRYPTED_MEDIA_TYPE, data: { base64: bytesToBase64url(utf8(m.packed)) } }))
   }
 
   /** An error at the transport level (DIDComm transports: "it is also

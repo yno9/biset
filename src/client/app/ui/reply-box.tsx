@@ -1,6 +1,7 @@
 // The reply box in #reply-dock: a textarea that grows with its text, and a send button (or
 // Ctrl/Cmd+Enter). What was typed survives refreshes and switching threads; it is cleared when it
 // is sent, and put back if the send fails.
+import { errorMessage } from '../../../protocol/error-message.ts'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { createStore, useStore } from '../react/store.ts'
@@ -160,7 +161,7 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
         try {
           // The account is made with the name its face was drawn from (the tab's icon); a name that is taken is replaced, and the face with it.
           try { await createAccountInBackground(provisionalAlias.get()) }
-          catch (error) { if (!/taken/.test(String(error instanceof Error ? error.message : error))) throw error; provisionalAlias.set(randomAlias()); await createAccountInBackground(provisionalAlias.get()) }
+          catch (error) { if (!/taken/.test(String(errorMessage(error)))) throw error; provisionalAlias.set(randomAlias()); await createAccountInBackground(provisionalAlias.get()) }
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error)
           console.info('[signup] the account was not made in the background:', reason)

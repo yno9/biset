@@ -3,10 +3,10 @@
 import { describe, expect, test } from 'vitest'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import type { LogEntry } from '../../src/protocol/vh/log.ts'
+import { bytesToBase64url } from '../../src/protocol/base64.ts'
 import {
   assertKeyNotStale, createFromPrior, FromPriorError, fromPriorClaims, fromPriorKeyResolver, verifyFromPrior,
 } from '../../src/protocol/didcomm/from-prior.ts'
-import { b64url } from '../../src/protocol/didcomm/crypto.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
 import { encodeMultikey } from '../../src/protocol/vh/multikey.ts'
 import { buildDidCommLog } from './support/did-log-fixture.ts'
@@ -50,16 +50,16 @@ describe('from_prior', () => {
     await expect(verifyFromPrior(good, generatePeerIdentity().did, resolver)).rejects.toThrow('sub is not')
     // A header put together by hand, kid on another DID than iss.
     const [, payload, signature] = good.split('.')
-    const header = b64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'EdDSA', kid: `${peer.did}#key-1` })))
+    const header = bytesToBase64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'EdDSA', kid: `${peer.did}#key-1` })))
     await expect(verifyFromPrior(`${header}.${payload}.${signature}`, peer.did, resolver)).rejects.toThrow('kid must be a DID URL of iss')
   })
 
   test('honours exp and nbf', async () => {
     const { did, log } = identity()
-    const header = b64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'EdDSA', kid: `${did}#biset-generation` })))
+    const header = bytesToBase64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'EdDSA', kid: `${did}#biset-generation` })))
     const sign = (claims: object) => {
-      const payload = b64url(new TextEncoder().encode(JSON.stringify({ iss: did, sub: peer.did, iat: 1000, ...claims })))
-      return `${header}.${payload}.${b64url(ed25519.sign(new TextEncoder().encode(`${header}.${payload}`), rotation.secretKey))}`
+      const payload = bytesToBase64url(new TextEncoder().encode(JSON.stringify({ iss: did, sub: peer.did, iat: 1000, ...claims })))
+      return `${header}.${payload}.${bytesToBase64url(ed25519.sign(new TextEncoder().encode(`${header}.${payload}`), rotation.secretKey))}`
     }
     const resolver = fromPriorKeyResolver(serving(log))
     await expect(verifyFromPrior(sign({ exp: 2000 }), peer.did, resolver, 3000 * 1000)).rejects.toThrow('expired')

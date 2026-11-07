@@ -10,7 +10,6 @@
 // events, their encrypted objects, and the SegmentKeys those objects need.
 // DIDComm authcrypt is the only encryption the pack needs.
 import { sameIdentity } from '../../protocol/vh/identifier.ts'
-import { base64urlToBytes, bytesToBase64url } from '../../protocol/canonical.ts'
 import { VAULT_SYNC_STATE_REQUEST, VAULT_SYNC_STATE_RESPONSE, VAULT_SYNC_UPDATE } from '../../protocol/didcomm/vault-sync-protocol.ts'
 import type { DidCommSender } from '../../protocol/didcomm/mediator-transport.ts'
 import type { IdentityId } from '../../protocol/ids.ts'
@@ -23,6 +22,7 @@ import type { IncomingVaultRecords, IncomingVaultRecordsResult, VaultEventRecord
 import { sendFrontDoorMessage } from './front-door-send.ts'
 import { freshFetch } from '../identity/log-io.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../protocol/base64.ts'
 
 /** The most one Vault Sync message carries, from the mediator's disclosed
  * `max_receive_bytes` (Discover Features). A pack grows about 3.2x on the

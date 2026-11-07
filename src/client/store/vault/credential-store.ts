@@ -4,6 +4,7 @@
 // and the noun used in error messages -- everything else (event
 // verification, segment key resolution and zeroing, the atomic local
 // commit) lives here once, so a fix can never reach only one copy.
+import { errorMessage } from '../../../protocol/error-message.ts'
 import type { LocalJmapSnapshot } from '../projection/gateway.ts'
 import type { LocalVaultMutationCommitter } from '../projection/vault-mutation-sink.ts'
 import type { DeviceId, IdentityId, SegmentId, VaultEventId } from '../../../protocol/ids.ts'
@@ -110,7 +111,7 @@ export function readableCredential<T>(label: string, eventId: string, assert: ()
     // Every read meets the same old records again: say so once per record.
     if (!reportedUnreadable.has(eventId)) {
       reportedUnreadable.add(eventId)
-      console.warn(`[vault] skipping a ${label} record in a format this version does not read (${eventId}):`, error instanceof Error ? error.message : error)
+      console.warn(`[vault] skipping a ${label} record in a format this version does not read (${eventId}):`, errorMessage(error))
     }
     return undefined
   }

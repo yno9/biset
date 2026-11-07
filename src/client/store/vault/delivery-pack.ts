@@ -1,7 +1,8 @@
-import { base64urlToBytes, bytesToBase64url, canonicalBytes, equalBytes, type CanonicalValue } from '../../../protocol/canonical.ts'
+import { canonicalBytes, equalBytes, type CanonicalValue } from '../../../protocol/canonical.ts'
 import type { IdentityId } from '../../../protocol/ids.ts'
 import { VAULT_EVENT_KINDS, type VaultEventV1 } from '../../../protocol/vault.ts'
 import type { VaultObjectRecord, VaultSegmentKey } from './store.ts'
+import { base64urlToBytes, bytesToBase64url } from '../../../protocol/base64.ts'
 
 export interface VaultDeliveryPackV1 {
   version: 1

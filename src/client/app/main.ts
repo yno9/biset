@@ -1,3 +1,5 @@
+import { errorMessage } from '../../protocol/error-message.ts'
+import { base64ToBytes, bytesToBase64url } from '../../protocol/base64.ts'
 import './ui/storage-guard.ts'
 import { mountNetworkActivity } from 'lft/net-activity-ui'
 import { watchNetwork } from 'lft/net-activity'
@@ -64,7 +66,7 @@ import { preferredMediatorUrl, isTorEnvironment, sameMediatorUrl } from '../didc
 import { mediatorInbox } from '../../protocol/didcomm/mediator-device.ts'
 import { ingestTransportIngress } from '../store/vault/ingress-ingest.ts'
 import type { IngressEnvelopeV1 } from '../../protocol/ingress.ts'
-import { bytesToBase64url, canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canonical.ts'
+import { canonicalBytes, canonicalHash, sha256Bytes } from '../../protocol/canonical.ts'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { SenderKeyNotPublishedError } from '../../protocol/didcomm/sender-key.ts'
 import { decodePeerDid2, publicKeyOf } from '../../protocol/didcomm/peer.ts'
@@ -387,7 +389,7 @@ async function configureWalletAccountIfPresent(
       publishAccount()
     }, async error => {
       if (stale()) return
-      console.warn('[did.md Wallet restore]', error instanceof Error ? error.message : error)
+      console.warn('[did.md Wallet restore]', errorMessage(error))
       if (await peekDidMdWalletSession()) showSysMsg(`Could not refresh the Wallet session yet: ${error instanceof Error ? error.message : String(error)}`)
       else void bootClient()
     })
@@ -431,7 +433,7 @@ async function configureWalletAccountIfPresent(
       onCrdtCommitted: async events => {
         deviceEvents.push(...events.map(event => ({ ...event, identityId: identityId })))
         await vaultProjector.recomputeEmails(identityId, events.flatMap(event => event.targetIds))
-        if (vaultSync) void vaultSync.push(events).catch(error => console.warn('[did.md Wallet Vault Sync push]', error instanceof Error ? error.message : error))
+        if (vaultSync) void vaultSync.push(events).catch(error => console.warn('[did.md Wallet Vault Sync push]', errorMessage(error)))
       },
     })
     exportMessages = async () => {
@@ -535,7 +537,7 @@ async function configureWalletAccountIfPresent(
         if (Object.keys(update).length === 0) return
         await mutationSink.emailSet({ accountId: `biset:${identityId}`, update }, snapshot)
         await refreshInbox(readModel)
-      })().catch(error => console.warn('[mark read]', error instanceof Error ? error.message : error)).finally(() => markSeenDone(ids))
+      })().catch(error => console.warn('[mark read]', errorMessage(error))).finally(() => markSeenDone(ids))
     })
     setSignedNameHandler((did, profile) => {
       void (async () => {
@@ -549,12 +551,12 @@ async function configureWalletAccountIfPresent(
         if (writes.length === 0) return
         await mutationSink.commitIntents([...(card ? [] : [contactSetIntent(didContactPatch(did))]), ...writes.map(contactSetIntent)], snapshot)
         await refreshInbox(readModel)
-      })().catch(error => console.warn('[contact name]', error instanceof Error ? error.message : error))
+      })().catch(error => console.warn('[contact name]', errorMessage(error)))
     })
     setEncryptedMailOpener(async (rawBody, email, snapshot) => {
       const card = contactCardForDid(snapshot.contactCards, email.from?.[0]?.email ?? '')
       const held = card && currentAutocryptKey(card)
-      return openStoredMail(rawBody, { privateKeys: (await pgp?.all() ?? []).map(key => key.privateKey), senderKeys: held ? [Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0))] : [] })
+      return openStoredMail(rawBody, { privateKeys: (await pgp?.all() ?? []).map(key => key.privateKey), senderKeys: held ? [base64ToBytes(held.keydata)] : [] })
     })
     // Set where the Secure-Join answers are (below), which needs what is built after this card.
     let joinInvite: ((invite: string) => Promise<{ name: string; address: string }>) | undefined
@@ -590,7 +592,7 @@ async function configureWalletAccountIfPresent(
         if (card && contactDisplayName(card)) return
         await profileCard!.setName(randomDisplayName())
         window.dispatchEvent(new Event(PROFILE_CHANGED))
-      }).catch(error => console.warn('[own display name]', error instanceof Error ? error.message : error))
+      }).catch(error => console.warn('[own display name]', errorMessage(error)))
     }, 5000)
     /** What this identity says about itself in what it signs: its name and picture (the base64 of the image), from its card. */
     const ownProfile = async (): Promise<OwnProfile & { avatarHash?: string }> => {
@@ -685,7 +687,7 @@ async function configureWalletAccountIfPresent(
           mediator = await timed('registerWithMediator', registerWithMediator(activeMediatorUrl, frontDoorInbox))
         } catch (error) {
           if (activeMediatorUrl === didCommDevice.mediatorUrl) throw error
-          console.warn('[did.md Wallet DIDComm register] onion entrance unreachable, falling back to canonical', error instanceof Error ? error.message : error)
+          console.warn('[did.md Wallet DIDComm register] onion entrance unreachable, falling back to canonical', errorMessage(error))
           activeMediatorUrl = didCommDevice.mediatorUrl
           mediator = await timed('registerWithMediator', registerWithMediator(activeMediatorUrl, frontDoorInbox))
         }
@@ -728,16 +730,16 @@ async function configureWalletAccountIfPresent(
         })
         generationSeeds = { current: () => seedAuthority.require().then(value => value.seed, () => undefined) }
         await timed('storeApprovedRotationSeed', storeApprovedRotationSeed(device.did, identityId, walletSeedReader, walletSeedSink, seedAuthority))
-          .catch(error => console.warn('[did.md Wallet generation seed]', error instanceof Error ? error.message : error))
+          .catch(error => console.warn('[did.md Wallet generation seed]', errorMessage(error)))
         try {
           const status = await timed('seedAuthority.status', seedAuthority.status())
           if (status.state === 'unpublished' || status.state === 'lost' || status.state === 'stale') rotationKeyState = status.state
           else if (status.state === 'pending') console.info('[did.md Wallet] waiting for the generation seed from another device')
         } catch (error) {
-          console.warn('[did.md Wallet generation seed status]', error instanceof Error ? error.message : error)
+          console.warn('[did.md Wallet generation seed status]', errorMessage(error))
         }
         void vaultSync.requestState()
-          .catch(error => { console.warn('[did.md Wallet Vault Sync bootstrap]', error instanceof Error ? error.message : error) })
+          .catch(error => { console.warn('[did.md Wallet Vault Sync bootstrap]', errorMessage(error)) })
         // DID Rotation (PLAN-refactor.md §4.3, §12.5): every message to a
         // counterparty goes by the route its contact card gives, and a
         // conversation moves to this identity's own did:peer (Y) once the
@@ -778,7 +780,7 @@ async function configureWalletAccountIfPresent(
             })
             mediatorPollHandles.push({ stop: () => watch.close() })
           },
-          onError: error => console.warn('[did.md Wallet DID Rotation]', error instanceof Error ? error.message : error),
+          onError: error => console.warn('[did.md Wallet DID Rotation]', errorMessage(error)),
         })
         // Enrollment alone only lets the mediator queue messages.  Open the
         // device-bound live Pickup watch as well, then project every durable
@@ -804,7 +806,7 @@ async function configureWalletAccountIfPresent(
         // dormant, or full): every one of them also reached a sibling, so
         // catch up from the siblings' Vault.
         const catchUpFromSiblings = () => {
-          void vaultSync?.requestState().catch(error => console.warn('[did.md Wallet Vault Sync catch-up]', error instanceof Error ? error.message : error))
+          void vaultSync?.requestState().catch(error => console.warn('[did.md Wallet Vault Sync catch-up]', errorMessage(error)))
         }
         const reportedOutboxFailures = new Set<string>()
         walletDidCommOutbox = createWalletDidCommOutbox({
@@ -835,7 +837,7 @@ async function configureWalletAccountIfPresent(
               id: message.id, ...(message.thid ? { thid: message.thid } : {}), bridgeHost: host, ...(message.subject ? { subject: message.subject } : {}),
               content, sentAt: message.sentAt, fromAddress: ownMailAddress, toAddress,
               own: { privateKey: own.privateKey, keydata: await autocryptKeydata(own.privateKey, ownMailAddress) },
-              peerKey: Uint8Array.from(atob(held.keydata), char => char.charCodeAt(0)),
+              peerKey: base64ToBytes(held.keydata),
             })
           },
           // A counterparty written to may be one the conversation can move with.
@@ -906,7 +908,7 @@ async function configureWalletAccountIfPresent(
           // without the token of the address it goes to: keep it first.
           const arrived = armored && fromDid ? basicMessageBodyOf(message) : null
           const tokens = arrived && fromDid ? trustedReplyTokens(arrived, fromDid) : {}
-          if (Object.keys(tokens).length > 0) await keepReplyTokens(tokens).catch(error => console.warn('[did.md Wallet Secure-Join] reply token not kept:', error instanceof Error ? error.message : error))
+          if (Object.keys(tokens).length > 0) await keepReplyTokens(tokens).catch(error => console.warn('[did.md Wallet Secure-Join] reply token not kept:', errorMessage(error)))
           const seed = await generationSeeds?.current()
           const key = await pgp?.current()
           if (!armored || !fromDid || !fromAddress || !seed || !key || !ownMailAddress) return false
@@ -922,7 +924,7 @@ async function configureWalletAccountIfPresent(
             return outcome !== undefined
           } catch (error) {
             // Not a valid step (an old invite, a key that does not match): it is not mail either, so it is not shown.
-            console.warn('[did.md Wallet Secure-Join] refused:', error instanceof Error ? error.message : error)
+            console.warn('[did.md Wallet Secure-Join] refused:', errorMessage(error))
             return true
           }
         }
@@ -984,7 +986,7 @@ async function configureWalletAccountIfPresent(
                   // A sibling may have started a move: watch its inbox here too.
                   await rotationManager.sync()
                 } catch (error) {
-                  console.warn('[did.md Wallet Vault Sync projection rebuild]', error instanceof Error ? error.message : error)
+                  console.warn('[did.md Wallet Vault Sync projection rebuild]', errorMessage(error))
                 }
               }
               return
@@ -1018,7 +1020,7 @@ async function configureWalletAccountIfPresent(
             if (receivingKey) void answerTrustPing(dropped, {
               key: { fromKid: receivingKey.kid, x25519PrivateKey: receivingKey.x25519PrivateKey },
             }).then(result => { if (result && !result.ok) console.warn('[did.md Wallet Trust Ping response]', result.error) })
-              .catch(error => console.warn('[did.md Wallet Trust Ping response]', error instanceof Error ? error.message : error))
+              .catch(error => console.warn('[did.md Wallet Trust Ping response]', errorMessage(error)))
             // What this message taught the contact cards (a counterparty's
             // move, a confirmation) may start or end a watch; and a
             // counterparty that moved, or that writes, may be one this
@@ -1028,7 +1030,7 @@ async function configureWalletAccountIfPresent(
               const publicDid = await rotationManager.counterpartyOf(message.senderKid)
               if (publicDid && !publicDid.startsWith('did:peer:')) {
                 void (typeof dropped.from_prior === 'string' ? rotationManager.start(publicDid) : rotationManager.offer(publicDid))
-                  .catch(error => console.warn('[did.md Wallet DID Rotation]', error instanceof Error ? error.message : error))
+                  .catch(error => console.warn('[did.md Wallet DID Rotation]', errorMessage(error)))
               }
             }
             const eventsAfterIngress = await vaultStore.readVaultEvents(identityId)
@@ -1036,7 +1038,7 @@ async function configureWalletAccountIfPresent(
             deviceEvents = eventsAfterIngress
             if (vaultSync && newlyCommitted.length) {
               void vaultSync.push(newlyCommitted)
-                .catch(error => console.warn('[did.md Wallet Vault Sync ingress push]', error instanceof Error ? error.message : error))
+                .catch(error => console.warn('[did.md Wallet Vault Sync ingress push]', errorMessage(error)))
             }
             await refreshInbox(readModel)
         }
@@ -1215,7 +1217,7 @@ async function bootClient(callbackSession?: Awaited<ReturnType<typeof completeDi
     try {
       completedWalletEdit = await completeDidMdWalletCallback()
     } catch (error) {
-      console.warn('[did.md Wallet callback]', error instanceof Error ? error.message : error)
+      console.warn('[did.md Wallet callback]', errorMessage(error))
     }
   }
 

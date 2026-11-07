@@ -12,6 +12,7 @@
 // mediator's point of view the re-Forward it produces is an ordinary
 // inbound Forward request, indistinguishable from one a real sender built
 // directly.
+import { errorMessage } from '../../protocol/error-message.ts'
 import { fetchMediatorInfo, requestMediation, updateRecipient, type MediatorInfo } from '../../protocol/didcomm/mediator-coordinate.ts'
 import { acknowledgeMessages, queuedMessageOf } from '../../protocol/didcomm/mediator-pickup.ts'
 import { sendAndUnpack, type DidCommSender, type MediatorInboxClient } from '../../protocol/didcomm/mediator-transport.ts'
@@ -105,13 +106,13 @@ export function startRelayPoller(
           // batch or leave it acknowledged -- left queued for retry, same
           // resilience shape as mediator-pickup.ts's own per-attachment try.
           opts.onError?.(e)
-          console.warn(`[mediator] relay poll of ${upstreamUrl} skipped an item (${att.id}):`, e instanceof Error ? e.message : e)
+          console.warn(`[mediator] relay poll of ${upstreamUrl} skipped an item (${att.id}):`, errorMessage(e))
         }
       }
       if (ackIds.length) await acknowledgeMessages(mediator, inbox, ackIds, fetchImpl)
     } catch (e) {
       opts.onError?.(e)
-      console.warn(`[mediator] relay poll of ${upstreamUrl} failed (will retry next tick):`, e instanceof Error ? e.message : e)
+      console.warn(`[mediator] relay poll of ${upstreamUrl} failed (will retry next tick):`, errorMessage(e))
     } finally {
       inFlight = false
     }

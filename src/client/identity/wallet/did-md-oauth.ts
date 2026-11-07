@@ -5,6 +5,9 @@
  * it keeps are the DIDComm device's (its X25519 key and mediator inbox-label
  * secret), AES-wrapped under a non-extractable browser key.
  */
+import { errorMessage } from '../../../protocol/error-message.ts'
+import { base64ToBytes, bytesToBase64url } from '../../../protocol/base64.ts'
+import { equalBytes } from '../../../protocol/canonical.ts'
 import { ed25519, x25519 } from '@noble/curves/ed25519.js'
 import { decodeMultikey } from '../../../protocol/vh/multikey.ts'
 import type { DidDocument } from '../../../protocol/vh/document.ts'
@@ -197,18 +200,12 @@ type DidMdBisetMediator = {
   mediatorOnionUrl?: string
 }
 
-function base64url(bytes: Uint8Array): string {
-  let value = ''
-  for (const byte of bytes) value += String.fromCharCode(byte)
-  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
 function randomBase64url(length = 32): string {
-  return base64url(crypto.getRandomValues(new Uint8Array(length)))
+  return bytesToBase64url(crypto.getRandomValues(new Uint8Array(length)))
 }
 
 async function sha256Base64url(value: string): Promise<string> {
-  return base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value))))
+  return bytesToBase64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value))))
 }
 
 function p256PublicJwk(value: JsonWebKey): JsonWebKey {
@@ -373,7 +370,7 @@ async function rollbackPendingMediator(pending: DidMdPendingAuthorization): Prom
   const device = pending.bisetDidCommDevice
   if (!pending.mediatorPreRegistered || !device?.xKid || !pending.did) return
   try { await setMediatorRegistration(pending.did, { ...device, xKid: device.xKid }, 'remove') }
-  catch (error) { console.warn('[mediator edit rollback]', error instanceof Error ? error.message : error) }
+  catch (error) { console.warn('[mediator edit rollback]', errorMessage(error)) }
 }
 
 function redirectUri(): string {
@@ -537,9 +534,8 @@ async function sessionFromVpToken(vpToken: unknown, idToken: string, did: string
 
 const fromBase64url = (value: string): Uint8Array => {
   if (!/^[A-Za-z0-9_-]*$/.test(value)) throw new Error('Not base64url')
-  return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)), character => character.charCodeAt(0))
+  return base64ToBytes(value)
 }
-const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((byte, index) => byte === b[index])
 
 /** What proves this response is for this request and from this identity: the presentation is signed by the
  * identity's Root key over this request's nonce and Client Identifier (OID4VP §8.6), and the id_token passes
@@ -584,7 +580,7 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   // The credential stands only while the DID document still names the key that signed it.
   const named = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
   const signer = resolved.verificationMethod?.find(method => named(method.id) === resolvedPending.verificationMethod)
-  if (!resolved.authentication?.some(reference => named(reference) === resolvedPending.verificationMethod) || !signer || !sameBytes(decodeMultikey(signer.publicKeyMultibase), resolvedPending.rootPublicKey)) throw new Error('The DID document no longer names the key that signed this capability')
+  if (!resolved.authentication?.some(reference => named(reference) === resolvedPending.verificationMethod) || !signer || !equalBytes(decodeMultikey(signer.publicKeyMultibase), resolvedPending.rootPublicKey)) throw new Error('The DID document no longer names the key that signed this capability')
   // A DID URL may be written relative (`#x`) or absolute (`did:...#x`); both name the same.
   const absolute = (id: unknown) => typeof id === 'string' && id.startsWith('#') ? `${resolvedPending.did}${id}` : id
   const serviceOf = (id: string) => resolved.service?.find(value => absolute(value.id) === absolute(id))
@@ -634,7 +630,7 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   if (capability.didCommDevice && options.registerMediator !== false) await setMediatorRegistration(resolvedPending.did, capability.didCommDevice, 'add')
   if (resolvedPending.previousBisetDidCommDevice) {
     try { await setMediatorRegistration(resolvedPending.did, resolvedPending.previousBisetDidCommDevice, 'remove') }
-    catch (error) { console.warn('[mediator edit cleanup]', error instanceof Error ? error.message : error) }
+    catch (error) { console.warn('[mediator edit cleanup]', errorMessage(error)) }
   }
   return { did: session.did, handle: session.handle, clientId: session.clientId, deviceJkt: session.deviceJkt, capabilityExpiresAt: session.capabilityExpiresAt, scope: capability.scope, deviceKid: resolvedPending.vaultDeviceId, ...(capability.didCommDevice ? { didCommKid: capability.didCommDevice.xKid } : {}) }
 }
@@ -666,7 +662,7 @@ function walletClient(): WalletClient {
   return { authorizationEndpoint: walletEndpoint(), clientId: clientIdFor(callback), redirectUri: callback }
 }
 
-const base64urlJson = (value: unknown): string => base64url(encoder.encode(JSON.stringify(value)))
+const base64urlJson = (value: unknown): string => bytesToBase64url(encoder.encode(JSON.stringify(value)))
 
 /** Saves the pending authorization and builds the Wallet's authorization request URL (SIOPv2 / OpenID4VP,
  * `client_id=redirect_uri:<callback>`, the request not signed): the credential asked for is named by `dcql_query`, what the
@@ -750,7 +746,7 @@ async function newLoginPending(mediatorUrls: readonly string[], config: WalletCo
     const mediator = await bisetMediatorFor(mediatorUrls)
     if (mediator) bisetDidCommDevice = await prepareBisetDidCommDevice(mediator)
   } catch (error) {
-    console.warn('[did.md Wallet login] DIDComm mediator unavailable, signing in without it', error instanceof Error ? error.message : error)
+    console.warn('[did.md Wallet login] DIDComm mediator unavailable, signing in without it', errorMessage(error))
   }
   const rotation = bisetDidCommDevice ? await rotationCandidate('ifAbsent') : undefined
   const pending: DidMdPendingAuthorization = {
@@ -921,8 +917,7 @@ export async function approvedRotationSeed(): Promise<{ seed: Uint8Array; forget
     async forget() {
       const latest = await readDidMdDeviceSession()
       // A later approval may have put another seed here meanwhile: keep that one.
-      const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((byte, index) => byte === b[index])
-      if (!latest?.rotationSeed || !same(latest.rotationSeed.sealed.iv, sealed.sealed.iv)) return
+      if (!latest?.rotationSeed || !equalBytes(latest.rotationSeed.sealed.iv, sealed.sealed.iv)) return
       const { rotationSeed: _done, ...rest } = latest
       await saveDidMdDeviceSession(rest)
     },

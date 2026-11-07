@@ -1,5 +1,6 @@
-import { bytesToBase64url, sha256Bytes } from '../../../protocol/canonical.ts'
+import { sha256Bytes } from '../../../protocol/canonical.ts'
 import type { LocalJmapEmail, LocalJmapSnapshot } from '../projection/gateway.ts'
+import { bytesToBase64url } from '../../../protocol/base64.ts'
 
 interface MarkdownFrontmatter { subject?: string; contact: string; id: string; status: string }
 export interface ParsedMarkdown { frontmatter: MarkdownFrontmatter; draft: string }

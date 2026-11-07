@@ -1,3 +1,4 @@
+import { base64ToText } from '../../../../protocol/base64.ts'
 /**
  * Deliberately small, display-only plain-text body extractor. Handles the
  * common cases (bare text/plain, or multipart/alternative|mixed with a
@@ -82,9 +83,7 @@ function splitMultipart(body: string, boundary: string): string[] {
 function decodeBody(body: string, encoding: string): string {
   if (encoding === 'base64') {
     try {
-      const binary = atob(body.replace(/[\r\n \t]/g, ''))
-      const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
-      return new TextDecoder('utf-8').decode(bytes)
+      return base64ToText(body.replace(/[\r\n \t]/g, ''))
     } catch { return '' }
   }
   if (encoding === 'quoted-printable') return decodeQuotedPrintable(body)

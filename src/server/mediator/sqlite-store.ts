@@ -2,7 +2,8 @@ import { Database } from '../runtime/sqlite.ts'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { x25519, ed25519 } from '@noble/curves/ed25519.js'
-import { b64url, b64urlDecodeToBytes, identityFromKeys, type PeerIdentity, type PeerService } from '../../protocol/didcomm/peer.ts'
+import { identityFromKeys, type PeerIdentity, type PeerService } from '../../protocol/didcomm/peer.ts'
+import { base64ToBytes, bytesToBase64url } from '../../protocol/base64.ts'
 
 export interface SqliteMediatorLimits {
   /** Inboxes across the whole mediator -- registering is open, so this is
@@ -129,14 +130,14 @@ export class SqliteMediatorStore {
       const xPriv = x25519.utils.randomSecretKey()
       const edPriv = ed25519.utils.randomSecretKey()
       this.database.query('INSERT INTO mediator_identity (singleton, public_url, x_priv, ed_priv) VALUES (1, ?, ?, ?)')
-        .run(normalized, b64url(xPriv), b64url(edPriv))
-      row = { public_url: normalized, x_priv: b64url(xPriv), ed_priv: b64url(edPriv) }
+        .run(normalized, bytesToBase64url(xPriv), bytesToBase64url(edPriv))
+      row = { public_url: normalized, x_priv: bytesToBase64url(xPriv), ed_priv: bytesToBase64url(edPriv) }
     }
     if (row.public_url !== normalized) {
       throw new Error(`MEDIATOR_PUBLIC_URL differs from the persisted mediator identity (${row.public_url})`)
     }
     const service: PeerService = { uri: row.public_url, accept: ['didcomm/v2'] }
-    return identityFromKeys(b64urlDecodeToBytes(row.x_priv), b64urlDecodeToBytes(row.ed_priv), service)
+    return identityFromKeys(base64ToBytes(row.x_priv), base64ToBytes(row.ed_priv), service)
   }
 
   /** The relay poller's own did:peer key (mediator/relay-poller.ts) --
@@ -152,10 +153,10 @@ export class SqliteMediatorStore {
       const xPriv = x25519.utils.randomSecretKey()
       const edPriv = ed25519.utils.randomSecretKey()
       this.database.query('INSERT INTO relay_poller_identity (singleton, x_priv, ed_priv) VALUES (1, ?, ?)')
-        .run(b64url(xPriv), b64url(edPriv))
-      row = { x_priv: b64url(xPriv), ed_priv: b64url(edPriv) }
+        .run(bytesToBase64url(xPriv), bytesToBase64url(edPriv))
+      row = { x_priv: bytesToBase64url(xPriv), ed_priv: bytesToBase64url(edPriv) }
     }
-    return identityFromKeys(b64urlDecodeToBytes(row.x_priv), b64urlDecodeToBytes(row.ed_priv))
+    return identityFromKeys(base64ToBytes(row.x_priv), base64ToBytes(row.ed_priv))
   }
 
   ready(): boolean {
