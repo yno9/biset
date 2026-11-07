@@ -61,7 +61,6 @@
      27  Installed PWA — Dynamic Island / notch handling
    ============================================================================= */
 
-
 /* ─────────────────────────────────────────────────────────────────────────────
    01  BRAND — title bar
    ────────────────────────────────────────────────────────────────────────── */
@@ -260,19 +259,6 @@ select {
 #menu.open {
   display: block;
 }
-.menu-item {
-  padding: 10px 16px;
-  font-size: 15.5px;
-  color: var(--text);
-  cursor: pointer;
-  display: block;
-}
-.menu-item:hover {
-  background: rgba(128, 128, 128, 0.1);
-}
-.menu-item.danger {
-  color: var(--danger);
-}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    04  SYSTEM TOAST (#sys-msg)
@@ -345,9 +331,6 @@ select {
   transform: translateY(0);
   transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-#left-pane-header.lph-hidden {
-  transform: translateY(-100%);
-}
 /* ── header glass chips ──
    Both header bars — the left pane's and the conversation column's — carry the
    same pair of circular buttons, so they share one rule and cannot drift.
@@ -361,9 +344,7 @@ select {
    into a background it actually matches. The 40px circle is bigger than the
    shared #main-toggle rule's 32px — the icon glyphs stay their own svg size,
    they just get more room around them. */
-#left-pane-header #main-toggle,
 #lp-hamburger-left,
-#thread-title-row #main-toggle-right,
 #right-col #lp-hamburger {
   width: 40px;
   height: 40px;
@@ -379,21 +360,16 @@ select {
 /* Same scroll-hide treatment as #lp-search-wrap (left) / #header-left
    (right) — see setupLeftPane's scroll listener in left-pane.ts and #outer's
    in main.ts. */
-#left-pane-header #main-toggle.lp-search-hidden,
 #lp-hamburger-left.lp-search-hidden,
-#thread-title-row #main-toggle-right.title-hidden,
 #right-col #lp-hamburger.title-hidden {
   opacity: 0;
   pointer-events: none;
 }
-#left-pane-header #main-toggle:hover,
 #lp-hamburger-left:hover,
-#thread-title-row #main-toggle-right:hover,
 #right-col #lp-hamburger:hover {
   opacity: 0.8;
 }
 /* Left pane: its own surface is --card. */
-#left-pane-header #main-toggle,
 #lp-hamburger-left {
   background: var(--glass-btn-bg);
   box-shadow:
@@ -401,19 +377,12 @@ select {
     inset 0 -1px 1.5px var(--glass-btn-lo);
 }
 /* Conversation column: --bg, the same surface the reply box sits on. */
-#thread-title-row #main-toggle-right,
 #right-col #lp-hamburger,
 #thread-title-row #header-left {
   background: var(--glass-surface-bg);
   box-shadow:
     inset 0 1px 0 var(--glass-surface-hi),
     inset 0 -1px 1.5px var(--glass-surface-lo);
-}
-/* An avatar fills the whole circle — no tint behind it. Needs to out-specify
-   the two-ID selectors above, which the plain `#lp-hamburger.has-avatar` rule
-   further down does not. */
-#right-col #lp-hamburger.has-avatar {
-  background: transparent;
 }
 /* The title gets the same material as the buttons flanking it, as a pill that
    hugs its text (flex: 0 1 auto, so a long subject still shrinks + ellipses
@@ -440,13 +409,6 @@ select {
 #thread-title-row #header-left.title-hidden {
   opacity: 0;
   pointer-events: none;
-}
-
-.menu-item.with-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
 }
 .toggle-switch {
   width: 36px;
@@ -510,18 +472,6 @@ select {
 #lp-hamburger-icon {
   display: flex;
 }
-#lp-hamburger.has-avatar {
-  background: transparent;
-}
-#lp-hamburger.has-avatar img {
-  display: block;
-}
-#lp-hamburger.has-avatar span {
-  display: none;
-}
-#lp-hamburger.has-avatar #lp-hamburger-icon {
-  display: none;
-}
 
 #lp-hamburger-menu {
   position: fixed;
@@ -582,61 +532,6 @@ select {
 #lp-hamburger-left-icon {
   display: flex;
 }
-#lp-hamburger-left.has-avatar {
-  background: transparent;
-}
-#lp-hamburger-left.has-avatar img {
-  display: block;
-}
-#lp-hamburger-left.has-avatar span {
-  display: none;
-}
-/* With an avatar set, the shared header-chip hover (opacity: 0.8, above)
-   read as the avatar going lighter/washed out — the opposite of the "this
-   is now clickable" cue it's meant to give (2026-08-17, user-reported).
-   No opacity/filter tricks (2026-08-17, user: opacityいじるのやめよう) — a
-   flat gray fill at 80% instead, same technique as .lp-item .lp-avatar's
-   own hover below. z-index, not DOM order, controls the stack: img (auto)
-   under the fill (1) under the icon (2), since the icon is the last real
-   child in the markup (index.html) and would otherwise paint UNDER a
-   same-order ::after fill. */
-/* Cancels the shared header-chip's own opacity dimming (line ~379 above) —
-   this button stays at full opacity; the fill below is the entire hover
-   effect. */
-#lp-hamburger-left.has-avatar:hover {
-  opacity: 1;
-}
-#lp-hamburger-left.has-avatar::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.15);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-  z-index: 1;
-}
-#lp-hamburger-left.has-avatar:hover::after {
-  opacity: 1;
-}
-#lp-hamburger-left.has-avatar #lp-hamburger-left-icon {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-}
-#lp-hamburger-left.has-avatar:hover #lp-hamburger-left-icon {
-  opacity: 1;
-}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    07  LEFT PANE — search bar & pane-toggle buttons
@@ -687,129 +582,6 @@ select {
 }
 #lp-search::-webkit-search-cancel-button {
   display: none;
-}
-#main-toggle,
-#main-toggle-right,
-#main-toggle-cmd {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  color: var(--text-dim);
-  opacity: 0.55;
-  transition: opacity 0.15s;
-  padding: 0;
-  flex-shrink: 0;
-}
-#main-toggle:hover,
-#main-toggle-right:hover,
-#main-toggle-cmd:hover {
-  opacity: 1;
-}
-/* default: show split icon */
-#main-toggle .lp-ico-right {
-  display: none;
-}
-#main-toggle-right {
-  display: none;
-}
-#main-toggle-right .lp-ico-split {
-  display: none;
-}
-#main-toggle-cmd {
-  display: none;
-}
-#main-toggle-cmd .lp-ico-split {
-  display: none;
-}
-.lp-cmd-item {
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-family: "SF Mono", monospace;
-  color: var(--text);
-  margin: 0 8px;
-  transition: background 0.1s;
-}
-.lp-cmd-item:hover,
-.lp-cmd-item.selected {
-  background: rgba(128, 128, 128, 0.18);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   08  COMMAND PALETTE — pages, forms, new-account panel
-   ────────────────────────────────────────────────────────────────────────── */
-#cmd-page-header {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 11;
-  padding: calc(10px + env(safe-area-inset-top)) 12px 10px 16px;
-  align-items: center;
-  justify-content: space-between;
-  background: linear-gradient(to bottom, var(--bg) 60%, transparent);
-}
-#cmd-page-header.visible {
-  display: flex;
-}
-#cmd-page-title {
-  font-size: 16.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-#cmd-page-avatar-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: rgba(128, 128, 128, 0.18);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  padding: 0;
-  overflow: hidden;
-  font-size: 14.5px;
-  font-weight: 700;
-  color: rgba(120, 120, 128, 0.9);
-  flex-shrink: 0;
-  transition: opacity 0.15s;
-}
-#cmd-page-avatar-btn:hover {
-  opacity: 0.8;
-}
-#cmd-page-avatar-btn img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-  display: none;
-}
-#cmd-page-avatar-btn.has-avatar {
-  background: transparent;
-}
-#cmd-page-avatar-btn.has-avatar img {
-  display: block;
-}
-#cmd-page-avatar-btn.has-avatar span {
-  display: none;
-}
-#cmd-page {
-  display: none;
-  position: absolute;
-  inset: 0;
-  padding: calc(52px + env(safe-area-inset-top)) 24px 24px;
-  overflow-y: auto;
-  background: var(--bg);
 }
 .cmd-thread-card {
   padding: 0 24px 40px;
@@ -885,26 +657,6 @@ select {
   background: var(--danger);
   color: #fff;
 }
-.cmd-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cmd-input {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 0px solid var(--header-border);
-  background: var(--input-bg);
-  color: var(--text);
-  font-size: 15.5px;
-}
-.cmd-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 
 /* "+ New JMAP account" panel — opens on a Sign up / Log in choice, flush
    against the trigger card above it (no gap, no tint). */
@@ -950,180 +702,6 @@ select {
   opacity: 0.6;
   cursor: wait;
   pointer-events: none;
-}
-/* flex column + gap is the ONE spacing mechanism between this panel's rows
-   (relay row, choice buttons, signup body, login form) — ad-hoc margin-top
-   on individual rows used to duplicate/fight this (e.g. .cmd-form's own
-   gap:8px only covers ITS children, not the gap before it, so Log in's
-   form had no spacing above it at all; 2026-07-14, user-reported). gap
-   only counts VISIBLE siblings, so hidden rows (display:none) contribute
-   nothing — no need to zero out margins per visibility state. */
-/* Positioned over the card area, growing upward out of the floating
-   "+ New Relay" button that opens it (#cmd-acc-fab, 2026-08-12) — same
-   bottom edge, same centre line, so the expand reads as the button itself
-   unfolding rather than a separate sheet appearing. Fixed rather than
-   in-flow for exactly that reason: it has to land on the button's own
-   coordinates (both get their `left` from positionAccFloating, measured off
-   the right column), not wherever the list happens to end.
-   Same surface as the button and the fields inside it — one flat white. */
-#cmd-acc-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border-radius: 16px;
-  padding: 16px;
-  margin-top: 0;
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  z-index: 61;
-  width: min(520px, calc(100vw - 32px));
-  max-height: min(70vh, calc(100vh - 96px));
-  overflow-y: auto;
-  box-sizing: border-box;
-  background: var(--input-bg);
-  box-shadow:
-    inset 0 1px 0 var(--glass-btn-hi),
-    0 1px 6px rgba(0, 0, 0, 0.1),
-    0 1px 2px rgba(0, 0, 0, 0.06);
-  transform-origin: bottom center;
-  transform: translateX(-50%) translateY(10px) scale(0.94);
-  opacity: 0;
-  transition: transform 0.18s ease, opacity 0.16s ease;
-}
-#cmd-acc-panel.open {
-  transform: translateX(-50%) translateY(0) scale(1);
-  opacity: 1;
-}
-#cmd-acc-choice {
-  display: flex;
-  gap: 10px;
-}
-.cmd-acc-choice-btn {
-  flex: 1;
-  border: 1px solid var(--header-border);
-  background: var(--input-bg);
-  color: var(--text);
-  font-size: 15.5px;
-  font-weight: 600;
-  padding: 14px;
-  border-radius: 10px;
-  cursor: pointer;
-}
-.cmd-acc-choice-btn:hover {
-  border-color: var(--accent);
-}
-/* One shared row shape for all three "+ New JMAP account" input rows (relay,
-   email, password+Add) — they used to diverge (relay-row was missing
-   display:flex/align-items entirely, block vs flex), which showed up as
-   slightly different line-height/left-alignment between rows (2026-07-14,
-   user-reported). */
-.cmd-acc-login-row,
-.cmd-acc-email-row,
-.cmd-acc-password-row,
-.cmd-acc-relay-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.cmd-acc-login-row .cmd-page-btn {
-  flex-shrink: 0;
-}
-/* Protocol pill sits INSIDE the relay input, pinned to its right edge —
-   not a separate element after it. */
-.cmd-acc-relay-row {
-  position: relative;
-  font-family: ui-monospace, monospace;
-}
-.cmd-acc-relay-row .cmd-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding-right: 44px;
-  font-family: inherit;
-}
-/* Log in's Email/Password/Add — same monospace treatment as the relay
-   row and Sign up body; <input>/<button> don't inherit font-family from an
-   ancestor by default, hence the explicit `inherit` on both children. */
-#cmd-acc-form {
-  font-family: ui-monospace, monospace;
-}
-#cmd-acc-form .cmd-input,
-#cmd-acc-form .cmd-page-btn {
-  font-family: inherit;
-}
-/* display:contents so the <form> itself generates no box — its rows
-   (email-row, login-row, error) join #cmd-acc-panel's flex column directly
-   and share its ONE gap with the relay row above, instead of the form's own
-   .cmd-form gap (8px) fighting the panel's gap (14px) as two different
-   rhythms stacked on top of each other (2026-07-14, user-reported: still
-   not one consistent 3-row rhythm after the panel-level gap fix). The
-   <form> element still exists in the DOM — submit-on-Enter is unaffected. */
-#cmd-acc-form {
-  display: contents;
-}
-/* Once Sign up/Log in commits to this relay, the field is locked for the
-   rest of that flow — no border, no background, reads as plain text instead
-   of an editable field still sitting above steps that already depend on it. */
-.cmd-acc-relay-row.locked .cmd-input {
-  border-color: transparent;
-  background: none;
-  color: var(--text-dim);
-}
-#cmd-acc-signup-body {
-  font-family: ui-monospace, monospace;
-}
-#cmd-acc-relay-badge {
-  position: absolute;
-  right: 11px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-.cmd-acc-error {
-  color: var(--danger);
-  font-size: 13px;
-  margin-top: 8px;
-}
-#cmd-acc-panel .cmd-page-btn {
-  padding: 8px 18px;
-  font-size: 15.5px;
-}
-/* ─────────────────────────────────────────────────────────────────────────────
-   09  LEFT PANE — new-conversation quick bar
-   ────────────────────────────────────────────────────────────────────────── */
-#lp-new-wrap {
-  padding: 0 8px 8px;
-  flex-shrink: 0;
-}
-#lp-new-inner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--input-bg);
-  border-radius: 10px;
-  padding: 6px 10px;
-}
-#lp-new-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  color: var(--text);
-  outline: none;
-}
-#lp-new-input::placeholder {
-  color: var(--text-dim);
-}
-#lp-new-cancel {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-dim);
-  padding: 0;
-  line-height: 1;
-}
-#lp-new-cancel:hover {
-  color: var(--text);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1195,33 +773,6 @@ select {
 .lp-item:has(.lp-thread-list > .lp-thread-row:first-child.focused) .lp-inner {
   background: rgba(128, 128, 128, 0.08);
 }
-.lp-delete-btn {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 72px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--danger);
-  color: #fff;
-  font-size: 14.5px;
-  font-weight: 600;
-  cursor: pointer;
-  border: none;
-  border-radius: 0 10px 10px 0;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.22s;
-}
-.lp-item.swiped .lp-inner {
-  transform: translateX(-72px);
-}
-.lp-item.swiped .lp-delete-btn {
-  opacity: 1;
-  pointer-events: auto;
-}
 
 /* A generated avatar (generated-avatar.tsx) fills its round box, as a picture does. */
 .avatar-generated {
@@ -1234,8 +785,7 @@ select {
 .avatar-generated > svg {
   display: block;
 }
-.lp-avatar-img,
-.t-avatar-img {
+.lp-avatar-img {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1267,28 +817,6 @@ select {
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg);
-}
-/* Numeric equivalent of unread-dot — same corner, shows a count instead of
-   just presence, so a specific inbox's unread pile is identifiable at a
-   glance (see left-pane.ts makeLpItem / the ios badge debugging thread). */
-.lp-avatar .unread-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  width: 17px;
-  height: 17px;
-  padding: 0;
-  border-radius: 50%;
-  background: #007aff;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  overflow: hidden;
 }
 a.lp-avatar {
   text-decoration: none;
@@ -1392,98 +920,6 @@ a.lp-avatar:hover {
   font-variant-numeric: tabular-nums;
 }
 
-#lp-inbox-menu {
-  position: fixed;
-  background: var(--card);
-  border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  padding: 6px 0;
-  min-width: 140px;
-  z-index: 30;
-  display: none;
-}
-#lp-inbox-menu .menu-item {
-  padding: 10px 16px;
-  cursor: pointer;
-}
-#lp-inbox-menu .menu-item.danger {
-  color: var(--danger);
-}
-#lp-inbox-menu .menu-item:not(.danger) {
-  color: var(--text);
-}
-.lp-archive-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  font-weight: 600;
-  color: var(--text-dim);
-  cursor: pointer;
-  user-select: none;
-}
-.lp-archive-toggle:hover {
-  background: rgba(128, 128, 128, 0.08);
-}
-.lp-archive-caret {
-  width: 12px;
-  display: inline-block;
-}
-.lp-archived-item {
-  opacity: 0.68;
-}
-
-#lp-empty {
-  text-align: center;
-  color: var(--text-dim);
-  padding: 40px 0;
-}
-/* ─────────────────────────────────────────────────────────────────────────────
-   11  LEFT PANE — search results & suggestions
-   ────────────────────────────────────────────────────────────────────────── */
-.lp-search-result {
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  margin-bottom: 2px;
-}
-.lp-search-result:hover {
-  background: rgba(128, 128, 128, 0.1);
-}
-.lp-search-header {
-  padding: 6px 10px 4px;
-  font-weight: 600;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.lp-search-status {
-  padding: 8px 12px;
-  color: var(--text-dim);
-}
-.lp-search-contact {
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lp-search-subject,
-.lp-search-preview {
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lp-search-preview {
-  opacity: 0.75;
-}
-.lp-search-subject mark,
-.lp-search-preview mark {
-  background: rgba(11, 147, 246, 0.25);
-  border-radius: 2px;
-  color: inherit;
-}
-
 /* ─────────────────────────────────────────────────────────────────────────────
    12  APP SHELL — right column
    ────────────────────────────────────────────────────────────────────────── */
@@ -1532,9 +968,6 @@ a.lp-avatar:hover {
   transition: none;
   transform: translateY(0);
 }
-body.lp-resizing #reply-dock {
-  transition: none;
-}
 body:has(#app.lp-enabled.show-left) #reply-dock {
   display: none;
 }
@@ -1565,18 +998,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 #reply-dock:empty {
   display: none;
-}
-#reply-dock.group-expanded {
-  bottom: 0;
-}
-#reply-dock.group-expanded .reply-box {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-#reply-dock.group-expanded .reply-content {
-  flex: 1;
-  overflow-y: auto;
 }
 
 :root {
@@ -1773,22 +1194,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   flex-direction: column;
   gap: 2px;
 }
-#conv-via {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  background: rgba(128, 128, 128, 0.12);
-  color: var(--text-dim);
-  border-radius: 5px;
-  padding: 2px 6px;
-  display: none;
-  margin-right: 6px;
-  flex-shrink: 0;
-}
-#conv-via:not(:empty) {
-  display: inline-flex;
-  align-items: center;
-}
 #conv-did {
   font-size: 12px;
   font-weight: 600;
@@ -1907,7 +1312,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   border: 1px solid var(--line); background: transparent; color: inherit; opacity: .8;
 }
 .conv-member-chip:hover { opacity: 1; border-color: var(--danger); color: var(--danger) }
-.conv-member-add:hover { border-color: var(--line); color: inherit }
 
 /* The counterparty, as on the account page's identity card: picture, then name over address. */
 #conv-to:has(#conv-avatar) {
@@ -2018,61 +1422,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   white-space: normal;
   overflow: visible;
 }
-
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   16  ACCOUNT PAGE — identity, storage, devices
-   ────────────────────────────────────────────────────────────────────────── */
-/* Account-page identity heading — avatar + [name / shortened DID]. The whole
-   card is the click target to expand Devices/DID Doc (same expand pattern as
-   #conv-meta and the storage cards below) — avatar/name/copy stop
-   propagation to keep their own single-purpose clicks. */
-#cmd-acc-identity-fields {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  /* Matches the relay/storage cards' own row padding (renderAccountsList's
-     row.style.cssText = 'padding:10px 12px') — before this the identity
-     card's content sat flush against the container edge while every card
-     below it was inset 12px, a visible left-edge mismatch. */
-  padding: 10px 12px 10px 6px;
-}
-#cmd-acc-identity-avatar {
-  flex-shrink: 0;
-  width: 42px;
-  height: 42px;
-  font-size: 20px;
-}
-/* The bar under the identity card: Services | Keys | Files. */
-#cmd-acc-nav {
-  position: relative;
-  display: flex;
-  gap: 4px;
-  margin: 4px 0 2px;
-  padding: 0 6px;
-}
-.acc-nav-tab {
-  padding: 8px 12px;
-  border: 0;
-  background: none;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-.acc-nav-tab[aria-selected="true"] {
-  color: var(--text);
-}
-/* The one underline, sliding to the chosen tab. */
-.acc-nav-underline {
-  position: absolute;
-  bottom: 0;
-  height: 2px;
-  background: var(--accent, currentColor);
-  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
 /* The foot of the account page, one centred row (Delta Chat, and the onion address when there is one). It is at the very bottom:
    the page's boxes grow to fill the column, and the row's auto top margin takes the space between the tabs and itself. */
 #right-pane:has(#cmd-acc-foot) { display: flex; flex-direction: column; }
@@ -2089,12 +1438,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   padding-top: 28px;
   color: var(--text-dim);
   font-size: 13px;
-}
-#cmd-acc-deltachat,
-#cmd-acc-onion {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
 #cmd-acc-foot button {
   padding: 2px 4px;
@@ -2157,45 +1500,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   color: var(--text);
   background: rgba(128, 128, 128, 0.11);
 }
-.acc-nav-empty {
-  padding: 24px 12px;
-  color: var(--text-dim);
-  font-size: 13px;
-}
-#cmd-acc-identity-text {
-  line-height: 1.32;
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-#cmd-acc-identity-name-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  /* Hugs the name text instead of stretching across the card (like
-     #cmd-acc-identity-did-row) — otherwise hover/click would fire over the
-     empty space to the right of a short name too. */
-  align-self: flex-start;
-  max-width: 100%;
-}
-#cmd-acc-identity-name {
-  font-size: 15.5px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-/* Everything in the card that can be clicked darkens a little under the pointer. The name line clips its
-   overflow (ellipsis), so it keeps 4px of room inside for the pieces' background; the pieces pad and pull
-   back by the same amount so the text stays where it was. */
-#cmd-acc-identity-name { padding: 0 4px; margin: 0 -4px; }
-#cmd-acc-identity-name .acc-display-name,
-#cmd-acc-identity-alias-row .acc-alias-edit,
 #cmd-acc-identity-did-row,
 .acc-pgp-row {
   padding: 1px 3px;
@@ -2203,8 +1507,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   border-radius: 8px;
   transition: background-color 0.12s;
 }
-#cmd-acc-identity-name .acc-display-name:hover,
-#cmd-acc-identity-alias-row .acc-alias-edit:hover,
 #cmd-acc-identity-did-row:hover,
 .acc-pgp-row:hover {
   background: rgba(128, 128, 128, 0.11);
@@ -2223,42 +1525,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   opacity: 0;
   transition: opacity 0.12s;
 }
-#cmd-acc-identity-fields:hover .acc-name-add,
 .acc-name-add:focus-visible { opacity: 1; }
-#cmd-acc-identity-fields:has(.acc-alias-edit:hover) .acc-name-add:not(:focus-visible) { opacity: 0; }
-/* The alias line: under the display name, smaller and quieter; alone (no display name) it looks like the name. */
-#cmd-acc-identity-alias-row {
-  display: flex;
-  align-items: center;
-  align-self: flex-start;
-  min-width: 0;
-  max-width: 100%;
-}
-.acc-identity-alias {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 4px;
-  margin: 0 -4px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.acc-identity-alias.as-name {
-  font-size: 15.5px;
-  font-weight: 600;
-  color: inherit;
-}
-#cmd-acc-identity-name-edit {
-  display: flex;
-  flex-shrink: 0;
-  color: var(--text-dim);
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-#cmd-acc-identity-name:hover + #cmd-acc-identity-name-edit {
-  opacity: 0.7;
-}
 #cmd-acc-identity-did-row {
   display: flex;
   align-items: center;
@@ -2345,45 +1612,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#cmd-acc-identity-menu-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 6px;
-  line-height: 0;
-  flex-shrink: 0;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-#cmd-acc-identity-menu-btn:hover {
-  background: rgba(128, 128, 128, 0.12);
-}
-#cmd-acc-identity-expanded {
-  display: none;
-  margin-top: 8px;
-  background: rgba(128, 128, 128, 0.06);
-  border-radius: 8px;
-  padding: 10px 12px;
-}
-#cmd-acc-identity-doc {
-  margin: 0;
-  font-size: 13px;
-  font-family: ui-monospace, "SF Mono", monospace;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.6;
-}
-/* The account page has no header row above it, so the card brings its own top space. */
-#cmd-acc-identity-section {
-  margin-top: calc(28px + env(safe-area-inset-top));
-}
-#cmd-acc-identity-section.expanded #cmd-acc-identity-expanded {
-  display: block;
-}
 
 /* Per-account "how your data is stored" panel (issue #7) — the whole card is
    the click target; the solid border between cards opens into a filled
@@ -2404,195 +1632,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .acc-card-wrap:last-child .cmd-page-row {
   border-bottom: none;
 }
-.acc-new-account-plus {
-  margin-right: 6px;
-}
-
-/* "+ New Relay": a floating button pinned to the bottom of the RIGHT COLUMN
-   (not the viewport — left-pane.ts's positionAccFloating measures #right-col
-   and writes `left`, kept in step by a ResizeObserver so pane toggles and
-   window resizes follow), and the panel it expands into over the card area.
-
-   Raised, not glass: this one sits ON TOP of content rather than in the
-   header furniture, so it takes the same inset top-rim/bottom-rim emboss the
-   header buttons use (--glass-btn-*, "light from above") plus a drop shadow
-   — deliberately a light one, enough to lift it off the cards without
-   reading as a modal. */
-#cmd-acc-fab {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  z-index: 60;
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 999px;
-  background: var(--input-bg);
-  color: var(--text-dim);
-  font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 var(--glass-btn-hi),
-    inset 0 -1px 1.5px var(--glass-btn-lo),
-    0 2px 6px rgba(0, 0, 0, 0.07),
-    0 1px 2px rgba(0, 0, 0, 0.04);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.14s ease, color 0.14s ease;
-}
-/* Recedes until wanted: dimmed label at rest, full-strength text on hover —
-   it's a standing affordance on a page that's mostly about the accounts
-   already there, not a call to action. */
-#cmd-acc-fab:hover {
-  transform: translateX(-50%) translateY(-1px);
-  color: var(--text);
-  box-shadow:
-    inset 0 1px 0 var(--glass-btn-hi),
-    inset 0 -1px 1.5px var(--glass-btn-lo),
-    0 4px 10px rgba(0, 0, 0, 0.09),
-    0 1px 2px rgba(0, 0, 0, 0.04);
-}
-#cmd-acc-fab:active {
-  transform: translateX(-50%) translateY(1px);
-  box-shadow:
-    inset 0 2px 3px var(--glass-btn-lo),
-    0 1px 4px rgba(0, 0, 0, 0.07);
-}
-/* Hidden while its own panel is open — the panel replaces it in place, so
-   leaving it visible would stack the two. Kept in the layout (opacity +
-   pointer-events, not display) so reopening animates from the same spot. */
-#cmd-acc-fab.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* Compose fab — bottom-right corner, round icon-only button, same raised
-   glass treatment as the header buttons. Two instances share this look:
-   #cmd-acc-compose-fab lives in #account's own template (right column) and
-   #lp-compose-fab is persistent chrome in the left pane (2026-08-17, added
-   so mobile's left-pane nav-stack screen has its own compose affordance —
-   see the visibility rules below). Only one is ever shown at a time. */
-.compose-fab {
-  z-index: 60;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border: none;
-  border-radius: 50%;
-  background: var(--input-bg);
-  color: var(--text-dim);
-  cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 var(--glass-btn-hi),
-    inset 0 -1px 1.5px var(--glass-btn-lo),
-    0 2px 6px rgba(0, 0, 0, 0.15),
-    0 1px 2px rgba(0, 0, 0, 0.08);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, color 0.14s ease;
-}
-.compose-fab:hover {
-  color: var(--text);
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 var(--glass-btn-hi),
-    inset 0 -1px 1.5px var(--glass-btn-lo),
-    0 4px 10px rgba(0, 0, 0, 0.18),
-    0 1px 2px rgba(0, 0, 0, 0.08);
-}
-.compose-fab:active {
-  transform: translateY(1px);
-  box-shadow:
-    inset 0 2px 3px var(--glass-btn-lo),
-    0 1px 4px rgba(0, 0, 0, 0.12);
-}
-/* Right column's own coordinates — fixed to the viewport like #cmd-acc-fab. */
-#cmd-acc-compose-fab {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-}
-/* A SIBLING of <aside id="left-pane"> in the markup (index.html), not a
-   descendant — #left-pane both scrolls its own content (overflow-y:auto,
-   section 06) AND, on desktop, carries `backdrop-filter: blur()` (the
-   575px+ pane style below) which makes it the containing block for any
-   `position: fixed` descendant too (same rule as `transform`/`filter`).
-   Either way, a fixed/absolute box whose containing block is that same
-   scrolling element still gets carried along by its internal scroll — two
-   different attempts nested inside #left-pane both drifted with the list on
-   scroll (2026-08-17, user-reported twice: once as `position: absolute`,
-   once as `position: fixed` that turned out pane-relative for this exact
-   reason). Living outside #left-pane entirely, with #app itself having no
-   transform/filter of its own, is what actually makes `fixed` mean
-   viewport-fixed here.
-   Hidden by default: shown whenever the left pane is the on-screen column
-   (rules below, desktop split-view and mobile nav-stack respectively) AND
-   compose itself isn't already open -- unconditional on any OTHER page
-   (user-requested: not #account-only, unlike #cmd-acc-compose-fab), but
-   showing "open compose" on top of the compose page's own send button is
-   never correct regardless of that (found live, 2026-09-09: opening compose
-   on mobile left #lp-compose-fab sitting over #new-send-btn, unclickable). */
-#lp-compose-fab {
-  position: fixed;
-  bottom: 24px;
-  display: none;
-}
-@media (min-width: 575px) {
-  /* Viewport-relative `right`, aimed at the pane's own right edge (which
-     sits at var(--lp-width) from the viewport's left, since #left-pane is
-     #app's first flex child with no left offset) — mirrors #reply-dock's
-     own `left: var(--lp-width)` technique (section 21). */
-  #lp-compose-fab {
-    right: calc(100vw - var(--lp-width, 300px) + 16px);
-  }
-  /* Split view (left pane open, not single-col): compose belongs to
-     whichever column the user is actually looking at — here, the left
-     one — so #account's own copy steps aside when that's the open page. */
-  #app.lp-enabled:not(.single-col)[data-menu-page="/account"] #cmd-acc-compose-fab {
-    display: none;
-  }
-  #app.lp-enabled:not(.single-col):not([data-menu-page="/compose"]) #lp-compose-fab {
-    display: inline-flex;
-  }
-}
-@media (max-width: 574px) {
-  /* The active pane is full viewport width here (section 26), so a plain
-       viewport edge inset lines up with it directly. */
-  #lp-compose-fab {
-    right: 16px;
-  }
-  #app.lp-enabled.show-left[data-menu-page="/account"] #cmd-acc-compose-fab {
-    display: none;
-  }
-  #app.lp-enabled.show-left:not([data-menu-page="/compose"]) #lp-compose-fab {
-    display: inline-flex;
-  }
-}
-/* Click-outside-to-close only — deliberately NOT dimmed (2026-08-12,
-   user-requested): this panel is an inline affordance on the account page,
-   not a modal interrupting it, and a scrim said otherwise. */
-#cmd-acc-panel-backdrop {
-  z-index: 59;
-  pointer-events: none;
-  background: 0 0;
-  position: fixed;
-  inset: 0;
-}
-#cmd-acc-panel-backdrop.open {
-  pointer-events: auto;
-}
-.acc-storage-panel {
-  border-bottom: 1px solid var(--header-border);
-  background: #8080800d;
-  padding: 12px;
-  font-size: 14px;
-  display: none;
-}
-.acc-card-wrap.expanded .acc-storage-panel {
-  display: block;
-}
 .acc-storage-header {
   justify-content: space-between;
   align-items: center;
@@ -2605,58 +1644,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   text-transform: uppercase;
   letter-spacing: .05em;
   font-size: 13px;
-}
-.acc-storage-actions {
-  flex-shrink: 0;
-  gap: 8px;
-  display: flex;
-}
-.acc-storage-icon-btn {
-  color: var(--text-dim);
-  cursor: pointer;
-  opacity: .6;
-  background: 0 0;
-  border: none;
-  border-radius: 4px;
-  padding: 4px;
-  line-height: 0;
-}
-.acc-storage-icon-btn:hover {
-  opacity: 1;
-  background: #8080801f;
-}
-.acc-storage-icon-btn:disabled {
-  opacity: .25;
-  cursor: default;
-}
-.acc-storage-tree {
-  color: var(--text-dim);
-  font-family: ui-monospace,SF Mono,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size: 14px;
-  line-height: 1.8;
-}
-.acc-storage-tree .tree-entry {
-  white-space: nowrap;
-  gap: 8px;
-  display: flex;
-}
-.acc-storage-tree .tree-name {
-  color: var(--text);
-}
-.acc-storage-tree .tree-meta {
-  color: var(--text-dim);
-}
-.acc-storage-tree .tree-expandable {
-  cursor: pointer;
-}
-.acc-storage-tree .tree-expandable:hover .tree-name {
-  text-decoration: underline;
-}
-.acc-storage-tree .tree-sublist {
-  max-height: 240px;
-  padding-left: 20px;
-  display: none;
-  overflow-y: auto;
 }
 .acc-device-list {
   flex-direction: column;
@@ -2767,44 +1754,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .thread-card.clickable:hover {
   background: #8080801a;
 }
-.t-menu-btn {
-  cursor: pointer;
-  width: 32px;
-  height: 32px;
-  color: var(--text-dim);
-  background: 0 0;
-  border: none;
-  border-radius: 8px;
-  flex-shrink: 0;
-  justify-content: center;
-  align-items: center;
-  display: flex;
-}
-.t-menu-btn:hover {
-  background: #8080801f;
-}
-.thread-header-row {
-  border-bottom: 1px solid #80808014;
-  justify-content: space-between;
-  align-items: center;
-  padding: 26px 16px;
-  display: flex;
-}
-.thread-header {
-  color: var(--text);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  flex: 1;
-  font-size: 16.5px;
-  font-weight: 600;
-  overflow: hidden;
-}
-.thread-header.untitled {
-  color: var(--text-dim);
-  font-family: ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;
-  font-size: 14.5px;
-  font-weight: 400;
-}
 /* No padding-bottom here, deliberately. Space below the last message is
    #scroll-spacer's job alone (ui/thread.ts's updateScrollSpacer), because it
    has to COLLAPSE when the conversation only just fits — padding cannot, and
@@ -2901,104 +1850,12 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .t-more:focus-visible .t-time-bubble {
   display: block;
 }
-.t-time {
-  color: var(--text-dim);
-  font-size: 13px;
-}
-.t-edited {
-  color: var(--text-dim);
-  opacity: .65;
-  font-size: 12px;
-  font-style: italic;
-}
 .t-unverified {
   color: var(--warning-text);
   border: 1px solid;
   border-radius: 4px;
   padding: 0 4px;
   font-size: 12px;
-}
-/* ─────────────────────────────────────────────────────────────────────────────
-   18  MESSAGE EDIT/DELETE ACTIONS
-   ────────────────────────────────────────────────────────────────────────── */
-.t-msg-actions-btn {
-  cursor: pointer;
-  width: 20px;
-  height: 20px;
-  color: var(--text-dim);
-  opacity: .6;
-  background: 0 0;
-  border: none;
-  border-radius: 5px;
-  flex-shrink: 0;
-  justify-content: center;
-  align-items: center;
-  display: flex;
-}
-.t-msg-actions-btn:hover {
-  opacity: 1;
-  background: #8080801f;
-}
-.t-msg-actions-menu {
-  z-index: 50;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  flex-direction: column;
-  min-width: 170px;
-  padding: 4px;
-  display: flex;
-  position: fixed;
-  box-shadow: 0 4px 14px #00000024;
-}
-.t-msg-actions-menu button {
-  box-sizing: border-box;
-  text-align: left;
-  width: 100%;
-  color: var(--text);
-  cursor: pointer;
-  background: 0 0;
-  border: none;
-  border-radius: 6px;
-  padding: 9px 12px;
-  font-size: 14.5px;
-  display: block;
-}
-.t-msg-actions-menu button:hover {
-  background: #8080801f;
-}
-.t-msg-delete-btn {
-  color: var(--danger);
-}
-.t-edit-ta {
-  box-sizing: border-box;
-  border: 1px solid var(--header-border);
-  background: var(--input-bg);
-  width: 100%;
-  color: var(--text);
-  font-size: inherit;
-  font-family: var(--font);
-  resize: vertical;
-  border-radius: 8px;
-  min-height: 44px;
-  padding: 6px 8px;
-  line-height: 1.4;
-}
-.t-edit-actions {
-  gap: 8px;
-  margin-top: 6px;
-  display: flex;
-}
-.t-edit-actions button {
-  cursor: pointer;
-  border: none;
-  border-radius: 6px;
-  padding: 4px 12px;
-  font-size: 13px;
-}
-.t-edit-save {
-  background: var(--accent);
-  color: #fff;
 }
 .t-msg.me .t-body {
   background: var(--bubble-me);
@@ -3009,10 +1866,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   color: inherit;
   text-decoration: underline;
 }
-.t-edit-cancel {
-  color: var(--text-dim);
-  background: #80808026;
-}
 .t-body {
   font-size: inherit;
   color: var(--text);
@@ -3022,98 +1875,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   border-radius: 20px;
   padding: 11px 17px;
   line-height: 1.55;
-}
-/* ─────────────────────────────────────────────────────────────────────────────
-   19  ATTACHMENTS, LIGHTBOX & REACTIONS
-   ────────────────────────────────────────────────────────────────────────── */
-.t-attachments {
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-  display: flex;
-}
-.t-attachment-img {
-  cursor: zoom-in;
-  background: 0 0;
-  border: none;
-  border-radius: 10px;
-  max-width: 220px;
-  max-height: 220px;
-  padding: 0;
-  line-height: 0;
-  display: block;
-  overflow: hidden;
-}
-.t-attachment-img img {
-  object-fit: cover;
-  width: 100%;
-  max-width: 220px;
-  height: 100%;
-  max-height: 220px;
-  display: block;
-}
-#t-img-lightbox {
-  z-index: 100;
-  box-sizing: border-box;
-  background: #000000d9;
-  justify-content: center;
-  align-items: center;
-  padding: 32px;
-  position: fixed;
-  inset: 0;
-}
-.t-lightbox-img {
-  object-fit: contain;
-  cursor: default;
-  border-radius: 4px;
-  max-width: 100%;
-  max-height: 100%;
-}
-.t-lightbox-close,
-.t-lightbox-download {
-  color: #fff;
-  cursor: pointer;
-  background: #ffffff1f;
-  border: none;
-  border-radius: 50%;
-  justify-content: center;
-  align-items: center;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  position: fixed;
-  top: 16px;
-}
-.t-lightbox-close {
-  right: 16px;
-}
-.t-lightbox-download {
-  right: 62px;
-}
-.t-lightbox-close:hover,
-.t-lightbox-download:hover {
-  background: #ffffff38;
-}
-.t-attachment-file {
-  color: var(--text);
-  background: #8080801a;
-  border-radius: 8px;
-  align-items: center;
-  gap: 6px;
-  max-width: 220px;
-  padding: 6px 10px;
-  font-size: 14.5px;
-  text-decoration: none;
-  display: inline-flex;
-  overflow: hidden;
-}
-.t-attachment-file span {
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.t-attachment-file:hover {
-  background: #8080802e;
 }
 .t-reactions {
   flex-wrap: wrap;
@@ -3194,10 +1955,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .reply-compose-btn:hover {
   opacity: 0.8;
 }
-.reply-box.compose-mode .reply-compose-btn {
-  opacity: 1;
-  color: var(--accent);
-}
 .reply-attach-btn {
   width: 28px;
   height: 28px;
@@ -3216,41 +1973,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 .reply-attach-btn:hover {
   opacity: 0.8;
-}
-.reply-attachments {
-  display: none;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px 0;
-}
-.reply-attachment-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  padding: 4px 6px 4px 10px;
-  border-radius: 12px;
-  background: rgba(128, 128, 128, 0.14);
-  color: var(--text-dim);
-  max-width: 180px;
-}
-.reply-attachment-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.reply-attachment-remove {
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: var(--text-dim);
-  font-size: 16.5px;
-  line-height: 1;
-  padding: 0 2px;
-  flex-shrink: 0;
-}
-.reply-attachment-remove:hover {
-  color: var(--text);
 }
 /* Resize handle: hidden in reply mode, forces flex line break + drag in compose mode */
 .reply-subject {
@@ -3290,269 +2012,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   background: rgba(128, 128, 128, 0.5);
 }
 
-/* Compose mode */
-.reply-box.compose-mode .reply-content {
-  flex-direction: column;
-  align-items: stretch;
-  padding: 0;
-}
-.reply-row-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-}
-.reply-row-top .reply-subject {
-  display: block;
-  flex: 1;
-  min-width: 0;
-}
-.reply-row-bottom {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 0 12px;
-}
-.reply-row-bottom textarea {
-  flex: 1;
-  min-width: 0;
-  max-height: none;
-}
-/* ─────────────────────────────────────────────────────────────────────────────
-   21  RECIPIENT ROW — remove button
-   ─────────────────────────────────────────────────────────────────────────────
-   All that is left of the inline group composer: the "×" on a recipient row,
-   which the new-conversation composer below reuses (left-pane.ts's addRow).
-   The `group-` prefix is historical — it is not a hint that a group composer
-   still exists; the rest of that section was deleted once nothing rendered it.
-   ────────────────────────────────────────────────────────────────────────── */
-.group-remove-btn {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-dim);
-  font-size: 17.5px;
-  line-height: 1;
-  padding: 4px;
-}
-.group-remove-btn:hover {
-  color: var(--text);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   22  NEW-CONVERSATION COMPOSER (/new, /compose)
-   ────────────────────────────────────────────────────────────────────────── */
-.new-compose-card {
-  background: var(--reply-box-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-radius: 20px;
-  overflow: hidden;
-  margin: 8px 0 0;
-}
-
-.new-compose-field {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.new-compose-field:last-of-type {
-  border-bottom: none;
-}
-.new-field-label {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--text-dim);
-  width: 56px;
-  flex-shrink: 0;
-  padding-top: 2px;
-}
-.new-field-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-size: 16.5px;
-  color: var(--text);
-  font-family: inherit;
-  min-width: 0;
-  padding: 0;
-}
-.new-field-input::placeholder {
-  color: var(--text-dim);
-}
-.new-recipients-list {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.new-recipient-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-/* Strip the native <select> inset so the From value lines up with the text
-     inputs' value column (label 56px + gap 12px). */
-/* The From trigger is a button styled to read like the other field inputs:
-   flush-left, transparent, the protocol pill + address laid out in a row. */
-#new-from.new-from-btn {
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0;
-  width: 100%;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  overflow: hidden;
-  text-align: left;
-  color: var(--text);
-}
-/* From dropdown popup surface. */
-.new-from-menu {
-  position: fixed;
-  z-index: 1000;
-  background: var(--reply-box-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-}
-.new-from-menu-item {
-  display: flex;
-  align-items: center;
-  background: none;
-  border: none;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 15.5px;
-  text-align: left;
-  padding: 7px 10px;
-  border-radius: 7px;
-  cursor: pointer;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.new-from-menu-item:hover {
-  background: rgba(128, 128, 128, 0.14);
-}
-.new-from-menu-item.selected {
-  background: rgba(128, 128, 128, 0.10);
-}
-/* From field's "create account" affordance (shown in place of the address
-   when there's no identity yet) — its own pill, sized for readability as a
-   short call-to-action label rather than a tiny transport badge (a protocol
-   pill's 10px reads fine for 2-3 letters but not for this). Grey by
-   default, darkening on hover. */
-.new-from-create-btn {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: #fff;
-  border-radius: 8px;
-  padding: 1px 8px 3px 8px;
-  background: rgba(128, 128, 128, 0.6);
-
-}
-.new-from-create-btn:hover {
-  background: rgba(128, 128, 128, 0.8);
-}
-.new-recipient-row .new-field-input {
-  flex: 1;
-}
-/* Recipient protocol pills — left of the To/Cc/Bcc address, same slot the
-   From field's pill occupies, and pixel-aligned with it: the pill's own
-   6px margin-right is the ONLY spacing to the address text in both places.
-   .new-recipient-row's flex `gap` would otherwise ALSO add its 12px between
-   this element and the input (an extra gap the From button, a single flex
-   container with no such ancestor, never has) — the negative margin below
-   cancels exactly that contribution so the two fields' address text lines
-   up instead of the To field sitting 12px further right. Collapses to
-   nothing (no dead flex-gap at all) until there's a pill to show. */
-.new-recip-protos {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.new-recip-protos:not(:empty) {
-  margin-right: -12px;
-}
-.new-recip-protos:empty {
-  display: none;
-}
-/* Recipient protocol-resolve spinner — right edge of the To/Cc/Bcc field.
-   The [Mail]/[AP]/[DID] pills a did: address ends up with depend on a real
-   DHT/pkarr document resolve, not an instant lookup; this is the only
-   feedback that anything's happening while it's in flight. */
-.recip-loading {
-  display: none;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 1.5px solid var(--text-dim);
-  border-top-color: transparent;
-  flex-shrink: 0;
-  align-self: center;
-  opacity: 0.7;
-  animation: recip-loading-spin 0.7s linear infinite;
-}
-.recip-loading[data-active="true"] {
-  display: inline-block;
-}
-@keyframes recip-loading-spin {
-  to { transform: rotate(360deg); }
-}
-/* Cc/Bcc row label doubles as a toggle between the two (left-pane.ts's
-   addRow) — no separate chooser menu. */
-.new-field-label-toggle {
-  cursor: pointer;
-  user-select: none;
-}
-.new-field-label-toggle:hover {
-  color: var(--text);
-}
-.new-compose-body-field {
-  display: flex;
-  gap: 12px;
-  padding: 10px 16px 4px;
-}
-.new-compose-body-field textarea {
-  flex: 1;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-size: 16.5px;
-  color: var(--text);
-  font-family: inherit;
-  resize: none;
-  min-height: 180px;
-  line-height: 1.5;
-  scrollbar-width: none;
-}
-.new-compose-body-field textarea::-webkit-scrollbar {
-  display: none;
-}
-.new-compose-body-field textarea::placeholder {
-  color: var(--text-dim);
-}
-.new-compose-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 12px 12px;
-}
-
 /* Full-screen compose: drop the card chrome, fill width + height, let the body
      textarea flex so the send button lands at the bottom-right of the viewport. */
 .cmd-thread-card:has(.compose-page) {
@@ -3584,56 +2043,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   height: calc(100dvh - var(--thread-title-h, calc(62px + env(safe-area-inset-top, 0px))));
   display: flex;
   flex-direction: column;
-}
-.compose-page .new-compose-card {
-  background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-radius: 0;
-  margin: 0;
-  overflow: visible;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-/* Body fills the remaining height. The textarea grows via flex/stretch rather
-     than height:100% (which doesn't resolve against a flex-grown parent). */
-.compose-page .new-compose-body-field {
-  flex: 1;
-  min-height: 0;
-  padding: 12px 16px;
-  align-items: stretch;
-}
-.compose-page .new-compose-body-field .new-field-label {
-  align-self: flex-start;
-}
-/* Shift the whole value column 10px right (wider label column). */
-.compose-page .new-field-label {
-  width: 66px;
-}
-/* Full-screen compose shows a subtle scrollbar. NOTE: setting the standard
-     `scrollbar-width` makes Chrome IGNORE the ::-webkit-scrollbar-* pseudos, so
-     the colour must come from the standard `scrollbar-color` (thumb track). */
-.compose-page .new-compose-body-field textarea {
-  min-height: 0;
-  height: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
-}
-.compose-page .new-compose-actions {
-  padding: 8px 16px 26px;
-}
-.new-compose-add-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 14.5px;
-  padding: 2px 4px;
-}
-.new-compose-add-btn:hover {
-  opacity: 0.8;
 }
 /* ─────────────────────────────────────────────────────────────────────────────
    23  SEND BUTTON, PROTOCOL BADGE & ATTACH
@@ -3699,33 +2108,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   height: 16px;
   fill: #fff;
 }
-/* Compose (#new) send button: no avatar overlay, always visible */
-.t-send-btn.always-send {
-  position: static;
-  opacity: 1;
-}
-
-.attach-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: none;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--text-dim);
-  font-size: 24px;
-  line-height: 1;
-  padding: 0;
-  opacity: 0.5;
-  transition: opacity 0.15s;
-}
-.attach-btn:hover {
-  opacity: 0.9;
-}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    24  AUTH OVERLAYS & NEW-USER PAGE
@@ -3740,231 +2122,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   justify-content: center;
   gap: 20px;
   z-index: 100;
-}
-#owner-avatar {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--input-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26.5px;
-  font-weight: 700;
-  color: var(--text);
-}
-#owner-info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-#owner-msg {
-  font-size: 13px;
-  color: var(--text-dim);
-  text-align: center;
-  line-height: 1.5;
-  margin-bottom: 8px;
-}
-
-.field-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.field-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-#inbox-slots {
-  margin: 0;
-  width: 276px;
-}
-#inbox-slots.connected {
-  border-bottom: 2.5px solid var(--text);
-  gap: 0 !important;
-}
-#inbox-slots.connected .slot-input {
-  border-bottom: none;
-  flex: 1;
-  font-size: calc(260px / var(--slot-n, 5));
-}
-#inbox-slots.connected.focused {
-  border-bottom-color: var(--accent);
-}
-
-#inbox-cursor {
-  position: fixed;
-  height: 2.5px;
-  background: var(--bg);
-  display: none;
-  pointer-events: none;
-  z-index: 101;
-  animation: blink-cursor 1.2s step-end infinite;
-}
-@keyframes blink-cursor {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
-  }
-}
-
-#pin-digits {
-  display: flex;
-  gap: 28px;
-  margin: 8px 0;
-}
-.slot-input {
-  width: 48px;
-  height: 68px;
-  box-sizing: border-box;
-  min-width: 0;
-  font-size: 57px;
-  font-weight: 700;
-  text-align: center;
-  background: transparent;
-  border: none;
-  border-bottom: 2.5px solid var(--text);
-  color: var(--text);
-  font-family: var(--font);
-  outline: none;
-  padding: 0;
-  caret-color: transparent;
-  -webkit-appearance: none;
-  appearance: none;
-}
-.slot-input:focus {
-  border-bottom-color: var(--accent);
-  color: var(--accent);
-}
-.slot-input::selection {
-  background: transparent;
-}
-
-#enter-btn {
-  padding: 10px 28px;
-  border-radius: 10px;
-  border: none;
-  background: var(--accent);
-  color: white;
-  font-size: 16.5px;
-  font-family: var(--font);
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-#enter-btn:hover {
-  opacity: 0.85;
-}
-#pw-error {
-  font-size: 14.5px;
-  color: var(--danger);
-  min-height: 18px;
-}
-
-#pw-inline {
-  display: none;
-  width: 276px;
-}
-#pw-inline-input {
-  background: var(--input-bg);
-  border: none;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-size: 16.5px;
-  font-family: var(--font);
-  color: var(--text);
-  outline: none;
-  width: 100%;
-}
-#pw-inline-input::placeholder {
-  color: var(--text-dim);
-}
-
-#pw-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  z-index: 100;
-}
-#pw-overlay-inbox {
-  font-size: 20px;
-  font-weight: 600;
-}
-#pw-overlay-msg {
-  font-size: 14.5px;
-  color: var(--text-dim);
-}
-#pw-input-wrap {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-#pw-input {
-  background: var(--input-bg);
-  border: none;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-size: 16.5px;
-  font-family: var(--font);
-  color: var(--text);
-  outline: none;
-  width: 220px;
-}
-#pw-input::placeholder {
-  color: var(--text-dim);
-}
-#pw-submit {
-  padding: 10px 18px;
-  border-radius: 10px;
-  border: none;
-  background: var(--accent);
-  color: white;
-  font-size: 16.5px;
-  font-family: var(--font);
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-#pw-submit:hover {
-  opacity: 0.85;
-}
-#pw-error2 {
-  font-size: 14.5px;
-  color: var(--danger);
-  min-height: 18px;
-}
-#relay-status {
-  display: none;
-  font-size: 14.5px;
-}
-#overlay-inbox-label {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-#overlay-msg {
-  font-size: 14.5px;
-  color: var(--text-dim);
-  margin-top: -8px;
-}
-/* ── new-user page branding ── */
-#nu-submit {
-  transition: background 0.12s;
-}
-#nu-submit:hover {
-  background: color-mix(in srgb, var(--accent) 82%, #000) !important;
 }
 
 /* Pigeon mascot on #new screen (no-target state).
@@ -3998,15 +2155,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   display: flex;
   flex-direction: column;
   align-items: center;
-}
-#nu-logo {
-  margin: 0;
-  font-family: "Zen Kaku Gothic Antique", system-ui, sans-serif;
-  font-weight: 900;
-  font-size: 4rem;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  color: var(--text);
 }
 /* The avatar slides up a little, once, when the page has loaded. */
 #nu-intro[data-enter] {
@@ -4125,17 +2273,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   .nu-avatar-layer[data-fresh],
   .nu-avatar-layer[data-leaving] { animation-duration: 0.01ms; }
 }
-/* The logo comes in once: from transparent, rising a few pixels into its place. */
-#nu-logo {
-  animation: nu-logo-in 0.6s ease-out both;
-}
-@keyframes nu-logo-in {
-  from { opacity: 0; transform: translateY(0.4rem); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  #nu-logo { animation: none; }
-}
 #nu-lede {
   display: flex;
   align-items: center;
@@ -4220,19 +2357,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   #app.single-col.lp-enabled #header {
     display: flex;
   }
-  /* left pane hidden → show the right-hand toggle in the right header */
-  body:has(#app.lp-enabled.single-col) #main-toggle .lp-ico-split {
-    display: none;
-  }
-  body:has(#app.lp-enabled.single-col) #main-toggle .lp-ico-right {
-    display: flex;
-  }
-  body:has(#app.lp-enabled.single-col) #main-toggle-right {
-    display: flex;
-  }
-  body:has(#app.lp-enabled.single-col) #main-toggle-cmd {
-    display: flex;
-  }
 
   /* ── pointer & keyboard-nav affordances ──
      :hover sticks after a tap on touch devices, and .focused is the keyboard
@@ -4270,15 +2394,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   #lp-search {
     font-size: 17.5px;
   }
-  .lp-cmd-item {
-    font-size: 16.5px;
-  }
-  #lp-new-input {
-    font-size: 17.5px;
-  }
-  #lp-new-cancel {
-    font-size: 15.5px;
-  }
   .lp-avatar {
     font-size: 17.5px;
   }
@@ -4296,32 +2411,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   }
   .lp-thread-row-ts {
     font-size: 12px;
-  }
-
-  #lp-inbox-menu .menu-item {
-    font-size: 15.5px;
-  }
-  .lp-archive-toggle {
-    font-size: 14.5px;
-  }
-  .lp-archive-caret {
-    font-size: 11px;
-  }
-  #lp-empty {
-    font-size: 15.5px;
-  }
-  .lp-search-header {
-    font-size: 12px;
-  }
-  .lp-search-status {
-    font-size: 14.5px;
-  }
-  .lp-search-contact {
-    font-size: 14.5px;
-  }
-  .lp-search-subject,
-  .lp-search-preview {
-    font-size: 13px;
   }
 
   /* ── right column ──
@@ -4353,9 +2442,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
     margin: 0;
     border-radius: 20px;
   }
-  #reply-dock.group-expanded .reply-box {
-    border-radius: 12px 12px 0 0;
-  }
 
 }
 
@@ -4374,18 +2460,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
      it is showing, and the right header keeps the pane toggle at all times. */
   body:has(#app.lp-enabled.show-left) #lp-hamburger-left {
     display: flex;
-  }
-  body:has(#app.lp-enabled) #main-toggle-right {
-    display: flex;
-  }
-  body:has(#app.lp-enabled.show-left) #main-toggle-right {
-    display: none;
-  }
-  body:has(#app.lp-enabled) #main-toggle-cmd {
-    display: flex;
-  }
-  body:has(#app.lp-enabled.show-left) #main-toggle-cmd {
-    display: none;
   }
 
   /* ── nav stack: both panes full-screen, sliding push/pop like a native
@@ -4464,15 +2538,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   #lp-search {
     font-size: 18.5px;
   }
-  .lp-cmd-item {
-    font-size: 17.5px;
-  }
-  #lp-new-input {
-    font-size: 18.5px;
-  }
-  #lp-new-cancel {
-    font-size: 16.5px;
-  }
   .lp-avatar {
     font-size: 18.5px;
   }
@@ -4490,41 +2555,6 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   }
   .lp-thread-row-ts {
     font-size: 13px;
-  }
-
-  #lp-inbox-menu .menu-item {
-    font-size: 16.5px;
-  }
-  .lp-archive-toggle {
-    font-size: 15.5px;
-  }
-  .lp-archive-caret {
-    font-size: 12px;
-  }
-  #lp-empty {
-    font-size: 16.5px;
-  }
-  .lp-search-header {
-    font-size: 13px;
-  }
-  .lp-search-status {
-    font-size: 15.5px;
-  }
-  .lp-search-contact {
-    font-size: 15.5px;
-  }
-  .lp-search-subject,
-  .lp-search-preview {
-    font-size: 14.5px;
-  }
-
-  /* ── compose ──
-     Drop the "Body" label column so the textarea gets the full row width
-     instead of sharing it with a label like From/To/Subject do — the one field
-     that is actually written in benefits from the space (2026-07-14,
-     user-requested). */
-  .compose-page .new-compose-body-field .new-field-label {
-    display: none;
   }
 }
 
@@ -4613,9 +2643,6 @@ html.pwa-standalone #app {
   border: 1px solid var(--line); background: transparent; color: inherit; opacity: .8;
 }
 .conv-member-chip:hover { opacity: 1; border-color: var(--danger); color: var(--danger) }
-.conv-member-add:hover, .conv-member-leave:hover { border-color: var(--line); color: inherit }
-.conv-member-leave { opacity: .55 }
-
 
 /* The tooltip for [data-tip] elements (account/tooltip.tsx). */
 .tip {
@@ -4747,12 +2774,11 @@ html.pwa-standalone #app {
     --lp-width: 88px;
   }
   #app.lp-compact #lp-search-wrap,
-  #app.lp-compact #lp-hamburger-left,
-  #app.lp-compact .lp-info,
-  #app.lp-compact .lp-thread-toggle,
-  #app.lp-compact .lp-thread-list,
-  #app.lp-compact #lp-compose-fab,
-  #app.lp-compact #lp-resize-handle {
+#app.lp-compact #lp-hamburger-left,
+#app.lp-compact .lp-info,
+#app.lp-compact .lp-thread-toggle,
+#app.lp-compact .lp-thread-list,
+#app.lp-compact #lp-resize-handle {
     display: none !important;
   }
   #app.lp-compact #left-list-wrap {
