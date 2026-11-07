@@ -937,7 +937,9 @@ export async function completeDidMdWalletCallback(delivered?: URLSearchParams): 
   const params = delivered ?? new URLSearchParams(callback.hash.slice(1))
   clearFragment()
   const abandon = async (message: string): Promise<never> => { await rollbackPendingMediator(pending); await clearDidMdPendingAuthorization(); throw new Error(message) }
-  if (params.get('state') !== pending.state) return abandon('did.md Wallet callback state did not match')
+  // A response for another request is not this one's answer: it is refused without touching the sign-in still waiting for it
+  // (anyone can make a page open this address with a fragment of their own).
+  if (params.get('state') !== pending.state) throw new Error('did.md Wallet callback state did not match')
   const error = params.get('error')
   if (error) return abandon(params.get('error_description') ?? `did.md Wallet authorization failed: ${error}`)
   const vpToken = params.get('vp_token')

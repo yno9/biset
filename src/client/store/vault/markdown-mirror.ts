@@ -8,7 +8,8 @@ export interface ParsedMarkdown { frontmatter: MarkdownFrontmatter; draft: strin
 export async function renderMarkdownThread(selfEmail: string, emails: LocalJmapEmail[], body: (email: LocalJmapEmail) => Promise<string>, preservedDraft = ''): Promise<string> {
   if (!emails.length) throw new TypeError('Markdown thread is empty')
   const sorted = [...emails].sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)); const latest = sorted[0]!; const contact = threadContact(selfEmail, emails)
-  const frontmatter = ['---', ...(latest.subject ? [`subject: "${latest.subject.replaceAll('"', '\\"')}"`] : []), `contact: ${contact}`, `id: ${latest.threadId}`, 'status: ', '---', '']
+  // Every value is one line: a subject is the sender's to choose, and a line break in it would write keys (or end the frontmatter) of its own.
+  const frontmatter = ['---', ...(latest.subject ? [`subject: "${oneLine(latest.subject).replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`] : []), `contact: ${oneLine(contact)}`, `id: ${oneLine(latest.threadId)}`, 'status: ', '---', '']
   const blocks = await Promise.all(sorted.map(async email => `- - -\n${formatTimestamp(email.receivedAt)} ${email.from?.[0]?.email ?? ''}\n\n${await body(email)}`))
   return `${frontmatter.join('\n')}\n${preservedDraft.trim()}${preservedDraft.trim() ? '\n\n' : ''}${blocks.join('\n\n')}`
 }
@@ -17,7 +18,13 @@ export function parseMarkdownThread(content: string): ParsedMarkdown {
   const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(content)
   if (!match) throw new TypeError('Markdown frontmatter is invalid')
   const values: Record<string, string> = {}
-  for (const line of match[1]!.split('\n')) { const index = line.indexOf(':'); if (index >= 0) values[line.slice(0, index).trim()] = line.slice(index + 1).trim().replace(/^"|"$/g, '') }
+  for (const line of match[1]!.split('\n')) {
+    const index = line.indexOf(':'); if (index < 0) continue
+    const key = line.slice(0, index).trim()
+    // A key given twice is not a file this app wrote: which one counts would be the writer's choice.
+    if (Object.hasOwn(values, key)) throw new TypeError(`Markdown frontmatter repeats ${key}`)
+    values[key] = unquote(line.slice(index + 1).trim())
+  }
   const remainder = match[2]!.replace(/^\n+/, ''); const divider = remainder.indexOf('- - -')
   return { frontmatter: { ...(values.subject ? { subject: values.subject } : {}), contact: values.contact ?? '', id: values.id ?? '', status: values.status ?? '' }, draft: (divider < 0 ? remainder : remainder.slice(0, divider)).trim() }
 }
@@ -47,6 +54,11 @@ export function markdownStatusMutation(status: string, thread: LocalJmapEmail[],
     if (destination) update[email.id] = { mailboxIds: { [destination.id]: true } }
   }
   return Object.keys(update).length ? { update } : undefined
+}
+function oneLine(value: string): string { return value.replace(/[\r\n\u2028\u2029]+/g, ' ') }
+function unquote(value: string): string {
+  const quoted = /^"(.*)"$/.exec(value)
+  return quoted ? quoted[1]!.replace(/\\(["\\])/g, '$1') : value
 }
 function hash(value: string): string { return bytesToBase64url(sha256Bytes(new TextEncoder().encode(value))) }
 function threadContact(self: string, emails: LocalJmapEmail[]): string { for (const email of emails) { const from = email.from?.[0]?.email ?? ''; if (from.toLowerCase() !== self.toLowerCase()) return from; for (const to of email.to ?? []) if (to.email && to.email.toLowerCase() !== self.toLowerCase()) return to.email } return self }

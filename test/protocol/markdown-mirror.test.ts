@@ -21,4 +21,14 @@ describe('Markdown projection mirror', () => {
     expect(emailSetToVaultMutationIntents(request)).toEqual([{ kind: 'keyword.set', targetIds: ['e1'], payload: { emailId: 'e1', keywords: { '$seen': true } } }])
     expect(candidate.keywords).toEqual({})
   })
+  test('a subject cannot write frontmatter keys or end the frontmatter', async () => {
+    const subject = 'Hello\ncontact: did:web:attacker.example\nid: x\n---\n!b\nz "quoted" \\ end'
+    const rendered = await renderMarkdownThread('alice@example.com', [{ ...email, subject }], async () => 'message body', 'my draft')
+    const parsed = parseMarkdownThread(rendered)
+    expect(parsed.frontmatter).toEqual({ subject: 'Hello contact: did:web:attacker.example id: x --- !b z "quoted" \\ end', contact: 'bob@example.com', id: 'thread-1', status: '' })
+    expect(parsed.draft).toBe('my draft')
+  })
+  test('a frontmatter that names a key twice is not read', () => {
+    expect(() => parseMarkdownThread('---\ncontact: a\ncontact: b\nid: t\nstatus: \n---\n')).toThrow('repeats contact')
+  })
 })

@@ -10,7 +10,9 @@ export function esc(s: string): string {
 }
 
 export function linkify(html: string): string {
-  return html.replace(/(https?:\/\/[^\s<"]+|\/[a-zA-Z0-9][^\s<"]*)/g, url =>
+  // A path of this app (`/alice@example.com`) only where it starts a word -- at the start, after a space or a line break (`<br>`) --
+  // so `and/or` in a sentence stays text.
+  return html.replace(/(https?:\/\/[^\s<"]+|(?<=^|[\s>])\/[a-zA-Z0-9][^\s<"]*)/g, url =>
     `<a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">${url}</a>`
   )
 }

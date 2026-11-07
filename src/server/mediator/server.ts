@@ -154,11 +154,15 @@ class UnknownLogState extends Error {
   constructor(message: string, readonly code: string) { super(message) }
 }
 
+/** How many did:vh this mediator remembers resolving at once. */
+const MAX_LOG_CHECKS = 50_000
+
 export function createMediator({
   mediator: mediatorOption, store, maxReceiveBytes = store.limits.maxMessageBytes, resolveLog,
   logFreshMs = 5 * 60_000, logRetryMs = 10_000, logStaleMs = 60 * 60_000, now = Date.now, registration,
 }: MediatorOptions): MediatorHandler {
   /** Per did:vh: when it was last resolved successfully, and last tried. */
+  // When each did:vh was last resolved (and confirmed), at most MAX_LOG_CHECKS of them.
   const logChecks = new Map<string, { confirmedAt?: number; triedAt: number }>()
   const resolving = new Map<string, Promise<void>>()
   const mediator = 'peerKid' in mediatorOption ? mediatorOption : peerMediatorIdentity(mediatorOption)
@@ -202,7 +206,10 @@ export function createMediator({
     const attempt = (async () => {
       const check = logChecks.get(did) ?? { triedAt: 0 }
       check.triedAt = now()
+      // Kept newest last and bounded: a DID is anyone's to make, and one that is forgotten is only resolved again.
+      logChecks.delete(did)
       logChecks.set(did, check)
+      while (logChecks.size > MAX_LOG_CHECKS) logChecks.delete(logChecks.keys().next().value!)
       const state = await resolveLog!(did)
       if (state) {
         // A log that forks the one held is not the DID's current state: its keys are not used, and nothing is confirmed.

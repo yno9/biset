@@ -34,6 +34,10 @@ const deployment = await createMediatorDeployment({
   port: envInteger('PORT', 8791, 1, 65_535),
   hostname: process.env.MEDIATOR_HOST ?? '127.0.0.1',
   allowedOrigins: new Set((process.env.MEDIATOR_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean)),
+  // How many reverse proxies append to X-Forwarded-For in front of this mediator (deployment.ts `trustedProxyHops`).
+  trustedProxyHops: envInteger('MEDIATOR_TRUSTED_PROXY_HOPS', 1, 0, 8),
+  maxSocketsPerAddress: envInteger('MEDIATOR_MAX_SOCKETS_PER_ADDRESS', 32, 1, 10_000),
+  maxSockets: envInteger('MEDIATOR_MAX_SOCKETS', 10_000, 1, 1_000_000),
   maxRequestBytes: envInteger('MEDIATOR_MAX_REQUEST_BYTES', 2 * 1024 * 1024, 1024, 64 * 1024 * 1024),
   rateLimitPerMinute,
   limits: {

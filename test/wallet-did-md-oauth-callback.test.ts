@@ -125,9 +125,12 @@ describe('did.md SIOPv2 callback validation', () => {
     await expect(completeDidMdWalletCallback()).rejects.toThrow('No matching did.md Wallet authorization is pending')
   })
 
-  test('rejects and consumes a callback whose state differs from pending authorization', async () => {
-    await saveDidMdPendingAuthorization(await pendingFixture())
-    await expectCallbackRejection({ state: 'wrong-state', vp_token: '{}', id_token: 'a.b.c' }, 'state did not match')
+  test('rejects a callback whose state differs, and leaves the pending authorization for its real answer', async () => {
+    const pending = await pendingFixture()
+    await saveDidMdPendingAuthorization(pending)
+    callbackLocation({ state: 'wrong-state', vp_token: '{}', id_token: 'a.b.c' })
+    await expect(completeDidMdWalletCallback()).rejects.toThrow('state did not match')
+    expect((await readDidMdPendingAuthorization())?.state).toBe(pending.state)
   })
 
   test('rejects and consumes an error response', async () => {

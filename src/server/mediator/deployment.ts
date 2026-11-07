@@ -21,6 +21,14 @@ export interface MediatorDeploymentOptions {
   allowedOrigins?: Set<string>
   maxRequestBytes?: number
   rateLimitPerMinute?: number
+  /** How many reverse proxies stand in front of this mediator, each appending the address it saw to `X-Forwarded-For` (nginx's
+   * `$proxy_add_x_forwarded_for`). The client's address is the entry that many places from the right: everything left of it was
+   * written by the client and can say anything. Read only from a peer on the loopback interface (the proxy, or the local Tor
+   * daemon); a peer that connects directly is its own address. 0 never reads the header. Default 1. */
+  trustedProxyHops?: number
+  /** Open WebSockets allowed per client address, and in all (defaults 32 and 10000). */
+  maxSocketsPerAddress?: number
+  maxSockets?: number
   /** Registration policy (server.ts's `registration`). `newInboxesPerAddressPerHour`
    * caps the inboxes one client address may open; absent, no cap. */
   registration?: { newInboxesPerAddressPerHour?: number }
@@ -62,6 +70,9 @@ export interface MediatorDeployment {
 const DEFAULTS = {
   maxRequestBytes: 2 * 1024 * 1024,
   rateLimitPerMinute: 3000,
+  trustedProxyHops: 1,
+  maxSocketsPerAddress: 32,
+  maxSockets: 10_000,
 }
 
 export async function createMediatorDeployment(options: MediatorDeploymentOptions): Promise<MediatorDeployment> {
@@ -95,9 +106,19 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
     },
   })
   const requestLimiter = new IpRateLimiter(liveLimits ? () => liveLimits.requestsPerMinute() : options.rateLimitPerMinute ?? DEFAULTS.rateLimitPerMinute)
-  const clientAddress = (request: Request) => request.headers.get('x-forwarded-for')?.split(',', 1)[0]?.trim()
-    || server.requestIP(request)?.address
-    || 'unknown'
+  const trustedProxyHops = options.trustedProxyHops ?? DEFAULTS.trustedProxyHops
+  const clientAddress = (request: Request): string => {
+    const peer = server.requestIP(request)?.address
+    if (!peer) return 'unknown'
+    if (trustedProxyHops === 0 || !isLoopback(peer)) return peer
+    const forwarded = request.headers.get('x-forwarded-for')?.split(',').map(entry => entry.trim()).filter(Boolean) ?? []
+    return forwarded[Math.max(0, forwarded.length - trustedProxyHops)] ?? peer
+  }
+  // Open WebSockets per client address: each holds memory and a descriptor for as long as it stays (the server keeps it alive).
+  const maxSocketsPerAddress = options.maxSocketsPerAddress ?? DEFAULTS.maxSocketsPerAddress
+  const maxSockets = options.maxSockets ?? DEFAULTS.maxSockets
+  const openSockets = new Map<string, number>()
+  let socketCount = 0
   const server: Server<{ address: string }> = await serve<{ address: string }>({
     hostname: options.hostname ?? '127.0.0.1',
     port: options.port,
@@ -112,7 +133,12 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
         if (!requestLimiter.allow(ws.data.address)) { ws.close(1008, 'rate limit exceeded'); return }
         await live.message(ws, typeof data === 'string' ? data : new TextDecoder().decode(data), ws.data.address)
       },
-      close(ws) { live.close(ws) },
+      close(ws) {
+        live.close(ws)
+        socketCount--
+        const left = (openSockets.get(ws.data.address) ?? 1) - 1
+        if (left > 0) openSockets.set(ws.data.address, left); else openSockets.delete(ws.data.address)
+      },
     },
     async fetch(request) {
       const url = new URL(request.url)
@@ -127,7 +153,15 @@ export async function createMediatorDeployment(options: MediatorDeploymentOption
       if (origin && !allowedOrigins.has(origin)) return new Response('origin not allowed', { status: 403 })
       if (request.method === 'GET' && url.pathname === '/' && request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
         if (shuttingDown) return new Response('shutting down', { status: 503 })
-        if (server.upgrade(request, { data: { address: clientAddress(request) } })) return undefined
+        const address = clientAddress(request)
+        if (!requestLimiter.allow(address)) return new Response('rate limit exceeded', { status: 429, headers: { 'retry-after': '60' } })
+        // Every Tor visitor arrives from the local Tor daemon: one address for all of them, held only to the overall cap.
+        if (socketCount >= maxSockets || (!isLoopback(address) && (openSockets.get(address) ?? 0) >= maxSocketsPerAddress)) return new Response('too many connections', { status: 429, headers: { 'retry-after': '60' } })
+        if (server.upgrade(request, { data: { address } })) {
+          socketCount++
+          openSockets.set(address, (openSockets.get(address) ?? 0) + 1)
+          return undefined
+        }
         return new Response('websocket upgrade failed', { status: 400 })
       }
       if (request.method === 'POST' && (url.pathname === '/' || url.pathname === '/did-log')) {
