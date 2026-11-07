@@ -525,6 +525,25 @@ export function didContactPatch(did: string, verifiedAddress?: string): ContactS
   return { cardId: contactCardId(uid), patch: { '@type': 'Card', version: '1.0', uid, [`addressBookIds/${DEFAULT_ADDRESS_BOOK_ID}`]: true, 'onlineServices/didcomm': { service: 'DIDComm', uri: did }, ...identity } }
 }
 
+/** The writes that change the card of `did`, led by the one that makes the card when there is none yet. `make` is given the
+ * id the card has or will have; when it writes nothing, nothing is made either. */
+export function contactWritesFor(
+  cards: readonly LocalJmapContactCard[],
+  did: string,
+  make: (cardId: string, card: LocalJmapContactCard | undefined) => readonly (ContactSetPayload | undefined)[],
+): ContactSetPayload[] {
+  const card = contactCardForDid(cards, did)
+  const created = card ? undefined : didContactPatch(did)
+  const writes = make(card?.id ?? created!.cardId, card).filter((write): write is ContactSetPayload => write !== undefined)
+  return writes.length > 0 && created ? [created, ...writes] : writes
+}
+
+/** The writes keeping each reply token a mail bridge gave on the card of the address it is for (didmail PROTOCOL.md §7.1). */
+export function replyTokenWrites(cards: readonly LocalJmapContactCard[], tokens: Record<string, string>): ContactSetPayload[] {
+  return Object.entries(tokens).flatMap(([did, token]) =>
+    contactWritesFor(cards, did, (cardId, card) => [replyTokenOf(card) === token ? undefined : replyTokenPatch(cardId, token)]))
+}
+
 /** The id an alias is kept under in `emails` (JMAP ids are letters, digits, `-` and `_`). */
 function aliasKey(address: string): string {
   return 'e' + bytesToBase64url(sha256(new TextEncoder().encode(`biset/contact-alias/v1\n${address}`))).slice(0, 22)

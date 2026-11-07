@@ -9,7 +9,7 @@ import { DISCOVER_FEATURES_DISCLOSE } from '../../protocol/didcomm/mediator-prot
 import { PING } from '../../protocol/didcomm/trust-ping.ts'
 import type { DidCommPlaintext } from '../../protocol/didcomm/message.ts'
 import { decodePeerDid2, type PeerIdentity } from '../../protocol/didcomm/peer.ts'
-import { contactCardForDid, counterpartyOfRotatedDid, didCommStateOf, didContactPatch, ownRotationPatch, publicDidOf, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
+import { contactCardForDid, counterpartyOfRotatedDid, didCommStateOf, contactWritesFor, ownRotationPatch, publicDidOf, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { chooseRoute, disclosesFromPrior, disclosuresFor, fromPriorQuery, isDiscoverFeatures, ownRotationIdentity, startedOwnRotations, type DidCommRoute, type FrontDoorKey } from './did-rotation.ts'
 import type { DidCommSendResult } from './front-door-send.ts'
 
@@ -163,8 +163,7 @@ export function createRotationManager(options: RotationManagerOptions): Rotation
         await options.watch(peer)
         watched.add(peer.did)
         ownKeys.set(peer.xKid, peer.xPriv)
-        const cardId = card?.id ?? didContactPatch(publicDid).cardId
-        await options.commit([...(card ? [] : [didContactPatch(publicDid)]), ownRotationPatch(cardId, peer.did, 'startedAt', now().toISOString())])
+        await options.commit(contactWritesFor(current.cards, publicDid, cardId => [ownRotationPatch(cardId, peer.did, 'startedAt', now().toISOString())]))
         // A ping from Y, carrying from_prior: the counterparty learns Y, and
         // its answer to Y confirms the move (ingress-projector.ts).
         const route = await manager.route(publicDid)

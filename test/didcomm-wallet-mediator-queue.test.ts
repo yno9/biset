@@ -1,5 +1,5 @@
 // Regression coverage for the did.md Wallet account's mediator delivery
-// handler (main.ts's handleWalletDidCommMessage).
+// handler (src/client/app/session/incoming.ts).
 //
 // Besides Vault Sync, the Wallet branch has exactly one branch for a
 // delivered message: hand it to DidCommIngressProjector. That projector
@@ -202,23 +202,17 @@ describe('did.md Wallet mediator delivery handler', () => {
   })
 })
 
-// The Wallet path's guard is the only mediator delivery handler left in
-// main.ts: the local-identity (seed) boot path that carried the second copy
-// of it was removed in N1 (2026-09-05). What this pins is that the guard
-// still calls the projector's own exported allow-list rather than a
-// hand-maintained list of its own that could drift from it.
-//
-// Source-level, for the same reason wallet-vault-sync-timeout.test.ts is:
-// the handler is declared inside a closure in the browser entry point and
-// has no importable seam. The behaviour it produces is already covered
-// above against a real mediator.
-const mainSource = await readFile(new URL('../src/client/app/main.ts', import.meta.url), 'utf8')
+// The Wallet path's guard is the only mediator delivery handler. What this
+// pins is that the guard still calls the projector's own exported allow-list
+// rather than a hand-maintained list of its own that could drift from it.
+// The behaviour it produces is covered above against a real mediator.
+const handlerSource = await readFile(new URL('../src/client/app/session/incoming.ts', import.meta.url), 'utf8')
 const projectorSource = await readFile(new URL('../src/client/didcomm/ingress-projector.ts', import.meta.url), 'utf8')
 
-describe('mediator delivery handler (main.ts)', () => {
+describe('mediator delivery handler (session/incoming.ts)', () => {
   test('the account path shares one allow-list with the projector', () => {
     expect(projectorSource).toContain('export function isProjectableDidCommIngress')
     expect(projectorSource).toContain('if (!isProjectableDidCommIngress(msg)) throw')
-    expect(mainSource).toContain('isProjectableDidCommIngress(')
+    expect(handlerSource).toContain('isProjectableDidCommIngress(')
   })
 })

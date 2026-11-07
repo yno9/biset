@@ -619,7 +619,7 @@ HTML 本文と添付（`attachments`）は今は保存しない（`body.content`
 **返信トークン**（didmail の返信のみモード。`didmail/PROTOCOL.md` §7.1）: didmail は、先に書いてきた宛先にしか送らせない。その許可を、didmail は記憶せず、連絡先ごとのトークンとして oui が持つ。
 - 受信したメールの `body.replyTokens`（差出人と `Reply-To` の DID ごと）を、その連絡先のカードの `biset.md:replyToken` に書く（新しいトークンで差し替える。`ingress-projector.ts`、`contacts.ts` の `replyTokenPatch`）。JMAP の `ContactCard/set` からは書けない。
 - 送るとき、outbox は、宛先のカードのトークンを `body.replyToken` に入れる（`didcomm-outbox.ts` の `replyToken`、`send-message.ts`）。
-- 最初のメッセージ（Secure-Join の招待、`body.introduction`）への 202 の応答の本文 `{"replyTokens": {…}}` も、同じ連絡先のカードに書く（`front-door-send.ts` が読み、`main.ts` の `keepReplyTokens` が書く）。
+- 最初のメッセージ（Secure-Join の招待、`body.introduction`）への 202 の応答の本文 `{"replyTokens": {…}}` も、同じ連絡先のカードに書く（`front-door-send.ts` が読み、`session/account-vault.ts` の `keepReplyTokens` が書く）。
 - トークンは不透明な文字列で、oui は中身を解釈しない（`protocol/didcomm/reply-token.ts` は、形だけを確かめる）。
 
 ## 11. サーバー
@@ -683,7 +683,7 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
 
 ## 12. クライアントの起動
 
-`bootClient`（`main.ts`）。**wallet セッションが唯一のアカウント経路**である。
+`bootClient`（`main.ts`）。**wallet セッションが唯一のアカウント経路**である（`session/wallet-session.ts`）。
 
 0. 前回のセッションの mediator watch を**無条件に**止める。
 1. wallet の callback を先に消費する（DID の編集で古い capability の snapshot が古くなるため、通常の refresh より先）。失敗はコンソールの警告にとどめ、画面は壊さない。
@@ -744,7 +744,7 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
   外部の module script は `file://` では CORS で止まるため、単一ファイルであることが `file://` で動く前提になる。検証は `file://` の `dist/index.html` で行う。
 - 画面は全部 React（19）。`index.html` は `<div id="root">` だけで、`ui/app.tsx` の `App` が全体を描く（`mountApp`）。
   - **状態はストア**（`react/store.ts` の `createStore` / `useStore`）: `ui/stores.ts`（`mail` = メッセージ、`shell` = 開いているスレッド・左ペイン・検索・展開行・キーボードのカーソル）、
-    `ui/state.ts`（`uiPage` = thread | account | config | compose）、`ui/account/state.ts`（`accountConfig`）、`ui/reply-box.tsx`（`composeConfig`）。ロジック（`main.ts`）はここへ書き、画面は購読する。
+    `ui/state.ts`（`uiPage` = thread | account | config | compose）、`ui/account/state.ts`（`accountConfig`）、`ui/reply-box.tsx`（`composeConfig`）。ロジック（`main.ts` と `session/`）はここへ書き、画面は購読する。
   - **ロジックから画面を動かす入口**: `ui/shell.ts`（`showApp` / `refreshInbox`）、`ui/pages/index.ts`（`showAccountPage` ほか）、`configureCompose` / `configureAccountPage` / `configureComposePage`。
   - **画面**: 左ペイン `ui/left-pane.tsx`、右カラム `ui/right-col.tsx`（タイトル行・過去スレッド・会話メタ・リプライドック・スクロール）、ページ `ui/page-host.tsx` →
     `ui/thread-page.tsx` / `ui/pages/{account,config,compose}-page.tsx` / `new-user-page.tsx`（dito の iframe 含む）、`ui/account/account-list.tsx`、`ui/hamburger-menu.tsx`、`ui/scroll-buttons.tsx`。
@@ -833,7 +833,7 @@ PGP（導出、SKESK v6／OCB、Secure-Join、暗号化メールの組み立て�
 4. **セッション復元の失敗が一律にセッション破棄になる**（§14.2-4）。
 5. **file:// 版と https 版が別のアプリとして wallet に登録される**（§5.2）。**RP DID は配備するオリジン（`did.md`）に束縛**されており、ドメインを後から自由に変えられるという方針と衝突しうる。
 6. **git の追跡**: `.gitignore` が `scripts/`・`ops/`・`tasks/`・`docs/`・`deploy.sh`・`home/`・`PLAN*`・`config.json` を除外している。**`pnpm build` が使う `scripts/inline.mjs` が、clone から再現できない。**
-7. **dedupe の `alreadyProcessed()` が常に false**（`main.ts`）。
+7. **dedupe の `alreadyProcessed()` が常に false**（`session/didcomm-connect.ts`）。
 8. **結線の無い UI と config の残骸**: `config-page.ts` の「New Relay」フォームと「Notifications」のトグル（`src.bak` の HTML を改変せずに移植する方針の結果で、意図した「空の UI」）。
    `mimiSelfBaseUrl` と config の `anchor*` も残骸。
 9. **失敗した承認の残骸**: DID Document に、mediator に登録されていない端末鍵が残ると、その鍵にも暗号化される（受け取る受信箱が無いだけで害は無い）。oui 側で自動的に除く処理は無い。
@@ -913,7 +913,7 @@ grep -rnE "^\s*import .*from '[^']*\.\./(\.\./)*server/" src/protocol --include=
 | `mls/` | RFC 9420 の vendored fork。**中身は変更しない**。現在の利用者は biset-mimi のサーバーだけ |
 
 ### 20.2 `client/app/` — 起動、配線、UI
-`main.ts`（唯一の入口、全配線）、`sw.ts`、`ui/`（`shell`、`left-pane`、`thread`、`compose-page`、`account-page`、`account-create`、`account/{state,menu,config-page}`、`config`、`format`、`did-display`、`message/{message-view,body-text,rfc5322-headers}`）。
+`main.ts`（唯一の入口、起動）、`session/`（wallet セッションの配線: `account-vault`・`own-identity`・`seeds`・`didcomm-connect`・`incoming`・`outgoing`・`secure-join`・`markdown-vault`・`message-archive`・`inbox-handlers`）、`sw.ts`、`ui/`（`shell`、`left-pane`、`thread`、`compose-page`、`account-page`、`account-create`、`account/{state,menu,config-page}`、`config`、`format`、`did-display`、`message/{message-view,body-text,rfc5322-headers}`）。
 `ui/message/` は、DIDComm もメール形の read model に projection されるため、その**表示**に使う。
 
 ### 20.3 `client/store/` — Vault と projection
