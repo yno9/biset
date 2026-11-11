@@ -49,11 +49,15 @@ export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<O
   // A client with no Autocrypt (Roundcube, Enigmail) attaches its key to the mail. It is the sender's when it is for the sender's address,
   // the mail passed DMARC, and the mail is signed with it.
   let senderKey: string | undefined
+  // TEMP diagnostics: why a key was or was not taken from a mail.
+  if (keys.sender) console.info('[attached key] mail from', keys.sender.address, { dmarcPass: keys.sender.dmarcPass, signature: decrypted.signature, attachments: inner.attachments.map(a => [a.contentType, a.filename, a.bytes.length]) })
   if (keys.sender?.dmarcPass && decrypted.signature?.verified !== true) {
     for (const attachment of inner.attachments) {
       const candidate = await publicKeyOfAttachment(attachment.bytes, keys.sender.address)
+      console.info('[attached key] attachment', attachment.filename, candidate ? 'is a key for the address' : 'is not a usable key for the address')
       if (!candidate) continue
       const signed = await decryptMessage({ armored, privateKey: usedKey, senderKeys: [base64ToBytes(candidate)] }).catch(() => undefined)
+      console.info('[attached key] signature with it', signed?.signature)
       if (signed?.signature?.verified !== true) continue
       senderKey = candidate; decrypted = signed
       break
