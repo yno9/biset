@@ -1,7 +1,7 @@
 // Opening a stored encrypted mail (stored.ts) for display: decrypt it with this identity's key, check the signature
 // against the key we hold for the sender, and hand back the inner MIME as the message to show.
 import { armorOfStoredBody } from './stored.ts'
-import { base64ToBytes } from '../../protocol/base64.ts'
+import { base64ToBytes, bytesToBase64 } from '../../protocol/base64.ts'
 import { decryptMessage, type Decrypted } from './message-crypto.ts'
 import { publicKeyOfAttachment } from './keyring.ts'
 import { avatarOfHeader, decodeEncodedWords, displayNameOfFrom, isMimeEntity, parseInnerMime } from './mime.ts'
@@ -19,8 +19,8 @@ export interface OpenedMail {
   fromName?: string
   /** The sender's picture from the `Chat-User-Avatar:` inside (a data URL), or `null` when it removed it; absent when the message says nothing, or the signature did not hold. */
   avatar?: string | null
-  /** The sender's public key, which the mail carried as an attachment inside the encryption and signed with (so the key and the mail are
-   * one person's): offered only when the bridge saw it pass DMARC and no key held for the sender verified it. A key to keep, as Autocrypt's. */
+  /** The sender's public key that signed this mail: the key held for the sender, or one the mail carried as an attachment inside the
+   * encryption and signed with (offered only when the bridge saw it pass DMARC). A key to keep as one that wants encryption. */
   senderKey?: string
   /** The signature on it, when it has one. */
   signature?: Decrypted['signature']
@@ -49,15 +49,13 @@ export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<O
   // A client with no Autocrypt (Roundcube, Enigmail) attaches its key to the mail. It is the sender's when it is for the sender's address,
   // the mail passed DMARC, and the mail is signed with it.
   let senderKey: string | undefined
-  // TEMP diagnostics: why a key was or was not taken from a mail.
-  if (keys.sender) console.info('[attached key] mail from', keys.sender.address, { dmarcPass: keys.sender.dmarcPass, signature: decrypted.signature, attachments: inner.attachments.map(a => [a.contentType, a.filename, a.bytes.length]) })
+  // A key we already hold that checks the signature is the sender's own, who wrote encrypted: offered too, to be kept as wanting encryption.
+  if (keys.sender && decrypted.signature?.verified === true && keys.senderKeys.length === 1) senderKey = bytesToBase64(keys.senderKeys[0]!)
   if (keys.sender?.dmarcPass && decrypted.signature?.verified !== true) {
     for (const attachment of inner.attachments) {
       const candidate = await publicKeyOfAttachment(attachment.bytes, keys.sender.address)
-      console.info('[attached key] attachment', attachment.filename, candidate ? 'is a key for the address' : 'is not a usable key for the address')
       if (!candidate) continue
       const signed = await decryptMessage({ armored, privateKey: usedKey, senderKeys: [base64ToBytes(candidate)] }).catch(() => undefined)
-      console.info('[attached key] signature with it', signed?.signature)
       if (signed?.signature?.verified !== true) continue
       senderKey = candidate; decrypted = signed
       break

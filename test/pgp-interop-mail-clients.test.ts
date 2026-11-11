@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest'
 import * as openpgp from 'openpgp'
 import { generatePgpKey } from './support/pgp.ts'
 import { autocryptKeydata } from '../src/client/pgp/keyring.ts'
-import { base64ToBytes } from '../src/protocol/base64.ts'
+import { base64ToBytes, bytesToBase64 } from '../src/protocol/base64.ts'
 import { openStoredMail } from '../src/client/pgp/open.ts'
 import { publicKeyOfAttachment } from '../src/client/pgp/keyring.ts'
 import { storedEncryptedBody } from '../src/client/pgp/stored.ts'
@@ -95,5 +95,15 @@ describe('a key attached by a client with no Autocrypt (Roundcube)', () => {
     expect(await publicKeyOfAttachment(new TextEncoder().encode('hello'), 'thea@example.org')).toBeUndefined()
     expect(await publicKeyOfAttachment(new TextEncoder().encode(sender.privateKey.armor()), 'thea@example.org')).toBeUndefined()
     expect(await publicKeyOfAttachment(sender.publicKey.write(), 'thea@example.org')).toBeDefined()
+  })
+  test('a key already held that verifies the signature is offered again, to be kept as wanting encryption', async () => {
+    const { key, published } = await ours()
+    const sender = await foreign('ecc')
+    const armored = await openpgp.encrypt({ message: await openpgp.createMessage({ text: ENIGMA }), encryptionKeys: published, signingKeys: sender.privateKey }) as string
+    const opened = await openStoredMail(storedEncryptedBody('encrypted', armored), {
+      privateKeys: [key.privateKey], senderKeys: [sender.publicKey.write()], sender: { address: 'thea@example.org', dmarcPass: false },
+    })
+    expect(opened?.signature?.verified).toBe(true)
+    expect(opened?.senderKey).toBe(bytesToBase64(sender.publicKey.write()))
   })
 })
