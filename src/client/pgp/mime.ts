@@ -73,10 +73,18 @@ export function decodeEncodedWords(value: string): string {
   })
 }
 
-/** Parses the plaintext of an OpenPGP message. Text without a header block is just a body. */
+/** Whether the plaintext of an OpenPGP message is a MIME entity (a header block with `Content-Type` or `MIME-Version`, which every
+ * mail client writes, Delta Chat's `Content-Type` first) rather than inline PGP: the text of the mail itself, which may open with
+ * a line that looks like a header ("Note: ...") and is not one. */
+export function isMimeEntity(text: string): boolean {
+  const block = /^[A-Za-z][\w-]*:[ \t][^]*?(?=\r?\n\r?\n|$)/.exec(text)?.[0]
+  return block !== undefined && /^(?:content-type|mime-version):/im.test(block)
+}
+
+/** Parses the plaintext of an OpenPGP message. Text that is not a MIME entity is just a body. */
 export function parseInnerMime(text: string): InnerMime {
   const result: InnerMime = { headers: {}, gossip: [], body: '', attachments: [] }
-  if (!/^[A-Za-z][\w-]*:[ \t]/.test(text.split(/\r?\n/, 1)[0] ?? '')) { result.body = text; return result }
+  if (!isMimeEntity(text)) { result.body = text; return result }
   parseEntity(result, text, 0)
   return result
 }

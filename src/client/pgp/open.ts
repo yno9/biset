@@ -2,7 +2,7 @@
 // against the key we hold for the sender, and hand back the inner MIME as the message to show.
 import { armorOfStoredBody } from './stored.ts'
 import { decryptMessage, type Decrypted } from './message-crypto.ts'
-import { avatarOfHeader, decodeEncodedWords, displayNameOfFrom, parseInnerMime } from './mime.ts'
+import { avatarOfHeader, decodeEncodedWords, displayNameOfFrom, isMimeEntity, parseInnerMime } from './mime.ts'
 
 export interface OpenedMail {
   /** The inner MIME (headers and body), to read like any other mail. */
@@ -41,7 +41,8 @@ export async function openStoredMail(rawBody: string, keys: OpenKeys): Promise<O
   const sentAt = headers.date ? Date.parse(headers.date) : NaN
   const type = headers['content-type']?.toLowerCase() ?? ''
   return {
-    raw: new TextEncoder().encode(decrypted.plaintext),
+    // Inline PGP is the text of the mail with no headers of its own: it is given one, or its first lines would be read as headers.
+    raw: new TextEncoder().encode(isMimeEntity(decrypted.plaintext) ? decrypted.plaintext : `Content-Type: text/plain; charset=utf-8\r\n\r\n${decrypted.plaintext}`),
     ...(type.startsWith('multipart/report') && type.includes('disposition-notification') ? { hidden: true } : {}),
     ...(headers.subject ? { subject: decodeEncodedWords(headers.subject) } : {}),
     ...(Number.isNaN(sentAt) ? {} : { sentAt }),
