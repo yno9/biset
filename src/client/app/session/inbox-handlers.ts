@@ -1,6 +1,8 @@
 // What the inbox asks of the session as it shows messages.
 import { openStoredMail } from '../../pgp/open.ts'
-import { contactAvatarPatch, contactCardForDid, contactNamePatch, currentAutocryptKey } from '../../store/projection/contacts.ts'
+import { dmarcPassOfStoredBody } from '../../pgp/stored.ts'
+import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
+import { autocryptKeyPatch, contactAvatarPatch, contactCardForDid, contactNamePatch, currentAutocryptKey, holdsAutocryptKey } from '../../store/projection/contacts.ts'
 import { base64ToBytes } from '../../../protocol/base64.ts'
 import { errorMessage } from '../../../protocol/error-message.ts'
 import { markSeenDone, setMarkSeenHandler } from '../ui/seen.ts'
@@ -34,6 +36,19 @@ export function installInboxHandlers(vault: AccountVault, mail: OwnMail | undefi
   setEncryptedMailOpener(async (rawBody, email, snapshot) => {
     const card = contactCardForDid(snapshot.contactCards, email.from?.[0]?.email ?? '')
     const held = card && currentAutocryptKey(card)
-    return openStoredMail(rawBody, { privateKeys: (await mail?.pgp.all() ?? []).map(key => key.privateKey), senderKeys: held ? [base64ToBytes(held.keydata)] : [] })
+    const did = email.from?.[0]?.email ?? ''
+    const address = mailAddressOfBridgeDid(did)
+    const opened = await openStoredMail(rawBody, {
+      privateKeys: (await mail?.pgp.all() ?? []).map(key => key.privateKey), senderKeys: held ? [base64ToBytes(held.keydata)] : [],
+      ...(address ? { sender: { address, dmarcPass: dmarcPassOfStoredBody(rawBody) } } : {}),
+    })
+    // The key a mail client with no Autocrypt attached (and signed with) is kept like an Autocrypt key, so the next mail goes to it encrypted.
+    if (opened?.senderKey && !holdsAutocryptKey(card, opened.senderKey)) {
+      const senderKey = opened.senderKey
+      void vault.writeContact(did, (cardId, current) => [holdsAutocryptKey(current, senderKey) ? undefined : autocryptKeyPatch(cardId, { keydata: senderKey, seenAt: new Date(opened.sentAt ?? Date.now()).toISOString() })])
+        .then(async written => { if (written) await vault.refresh() })
+        .catch(error => console.warn('[attached key]', errorMessage(error)))
+    }
+    return opened
   })
 }

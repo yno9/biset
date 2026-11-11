@@ -39,3 +39,27 @@ export async function autocryptKeydata(privateKey: Uint8Array, address: string):
     : []
   return bytesToBase64(key.write())
 }
+
+const MAX_KEY_BYTES = 64 * 1024
+
+/** The public key a mail carries as an attachment (a `.asc` of `application/pgp-keys`, armored or binary, as Roundcube and Enigmail
+ * send it) for `address`, as the base64 an Autocrypt `keydata` is: only the user ID for the address is kept, and the key must be able
+ * to encrypt. `undefined` when the data is no public key, names another address, or has no key to encrypt with. */
+export async function publicKeyOfAttachment(data: Uint8Array, address: string): Promise<string | undefined> {
+  if (data.length === 0 || data.length > MAX_KEY_BYTES) return undefined
+  try {
+    const text = new TextDecoder().decode(data)
+    const key = text.includes('-----BEGIN PGP PUBLIC KEY BLOCK-----')
+      ? await openpgp.readKey({ armoredKey: text.slice(text.indexOf('-----BEGIN PGP PUBLIC KEY BLOCK-----')) })
+      : await openpgp.readKey({ binaryKey: data })
+    if (key.isPrivate()) return undefined
+    const wanted = address.toLowerCase()
+    const named = key.users.filter(user => (user.userID?.email ?? '').toLowerCase() === wanted)
+    if (!named.length) return undefined
+    key.users = named.slice(0, 1)
+    for (const user of key.users) user.otherCertifications = []
+    await key.getEncryptionKey()
+    const bytes = key.write()
+    return bytes.length <= MAX_KEY_BYTES ? bytesToBase64(bytes) : undefined
+  } catch { return undefined }
+}

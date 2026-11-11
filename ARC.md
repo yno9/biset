@@ -588,6 +588,7 @@ didmail が SMTP で受けたメールを、宛先の did:vh の全 keyAgreement
 - 暗号化メールは暗号文のまま保管し（`pgp/stored.ts`）、一覧を更新するときに開く（`pgp/open.ts`。世代ごとの鍵を試す。署名が相手の鍵で検証できたかも記録）。内側の `Date`／`Subject` を表示に使う（Delta Chat は外側の `Date` を乱数にし、`Subject` を `[...]` にする）。
 - 送るときは、`shouldEncrypt`（相手の鍵が `verified`、または `prefer-encrypt=mutual` の相互）なら暗号化する（`pgp/compose.ts`）。内側に本物の件名・Message-ID・自分の `Autocrypt:`・`Chat-Version: 1.0`、外側の件名は `[...]`。宛先と自分の両方に暗号化し、自分の鍵で署名する。
 - メールの `Autocrypt:` の鍵は、DMARC が通ったものだけを連絡先（`biset.md:autocrypt`）に覚える。
+- **Autocrypt を送らないクライアント（Roundcube、Enigmail）**は、公開鍵を暗号化の内側に添付（`application/pgp-keys`）で付ける。DMARC が通ったメールで、添付の鍵が送り主のアドレスの鍵で、メールの署名がその鍵で検証できるときだけ、同じく連絡先に覚える（`pgp/open.ts` の `senderKey`、`inbox-handlers.ts` が書く）。DMARC の結果は、暗号文を保管するときに `X-Biset-Dmarc: pass` として残す（`pgp/stored.ts`）。暗号化しないメールの添付の鍵は、まだ読まない。
 - **まだ**: 暗号化メールの内側の `Autocrypt:`／gossip の取り込み、署名の表示、oui が「招待される側」になる Secure-Join。
 
 ### 10.5 Autocrypt v2（PQ）は保留（2026-10-21）

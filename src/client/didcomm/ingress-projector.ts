@@ -385,7 +385,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
         },
         // An encrypted mail keeps its ciphertext (the bridge cannot read it): it is opened where it is shown, with the
         // key of this identity, which a device that has just joined may not have yet.
-        rawRfc5322: new TextEncoder().encode(body.encryption === 'openpgp' ? storedEncryptedBody(body.content, pgpArmorOf(msg)) : body.content),
+        rawRfc5322: new TextEncoder().encode(body.encryption === 'openpgp' ? storedEncryptedBody(body.content, pgpArmorOf(msg), body.auth?.dmarc === 'pass') : body.content),
       }, context, this.options.signer)
       event = identityScopedObject(record.event, this.options.identityId)
       objectRecords.push(identityScopedObject(record.metadataObject, this.options.identityId))

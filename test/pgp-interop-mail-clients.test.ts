@@ -6,6 +6,7 @@ import { generatePgpKey } from './support/pgp.ts'
 import { autocryptKeydata } from '../src/client/pgp/keyring.ts'
 import { base64ToBytes } from '../src/protocol/base64.ts'
 import { openStoredMail } from '../src/client/pgp/open.ts'
+import { publicKeyOfAttachment } from '../src/client/pgp/keyring.ts'
 import { storedEncryptedBody } from '../src/client/pgp/stored.ts'
 
 async function ours() {
@@ -58,5 +59,41 @@ describe('mail from ordinary OpenPGP clients', () => {
     const text = new TextDecoder().decode(opened!.raw)
     expect(text).toBe('Content-Type: text/plain; charset=utf-8\r\n\r\nHello\nSubject: not a header\n\nbody')
     expect(opened?.subject).toBeUndefined()
+  })
+})
+
+describe('a key attached by a client with no Autocrypt (Roundcube)', () => {
+  const withKey = (publicArmor: string) => [
+    'Content-Type: multipart/mixed; boundary="------------xyz"', 'From: Thea <thea@example.org>', '', '--------------xyz', 'Content-Type: text/plain; charset=UTF-8', '', 'hi', '--------------xyz',
+    'Content-Type: application/pgp-keys; name="0x5C5C3B0A.asc"', 'Content-Disposition: attachment; filename="0x5C5C3B0A.asc"', '', publicArmor, '--------------xyz--', '',
+  ].join('\r\n')
+  async function openWith(options: { dmarcPass: boolean; signWithAttached?: boolean; address?: string }) {
+    const { key, published } = await ours()
+    const sender = await foreign('ecc'), other = await foreign('ecc')
+    const armored = await openpgp.encrypt({
+      message: await openpgp.createMessage({ text: withKey(sender.publicKey.armor()) }), encryptionKeys: published,
+      signingKeys: options.signWithAttached === false ? other.privateKey : sender.privateKey,
+    }) as string
+    const opened = await openStoredMail(storedEncryptedBody('encrypted', armored, options.dmarcPass), {
+      privateKeys: [key.privateKey], senderKeys: [], sender: { address: options.address ?? 'thea@example.org', dmarcPass: options.dmarcPass },
+    })
+    return { opened, sender }
+  }
+  test('the key is offered, and the signature then verifies', async () => {
+    const { opened, sender } = await openWith({ dmarcPass: true })
+    expect(opened?.signature?.verified).toBe(true)
+    expect(opened?.senderKey).toBeDefined()
+    expect((await openpgp.readKey({ binaryKey: base64ToBytes(opened!.senderKey!) })).getFingerprint()).toBe(sender.publicKey.getFingerprint())
+  })
+  test('not without DMARC, not for another address, not when something else signed it', async () => {
+    expect((await openWith({ dmarcPass: false })).opened?.senderKey).toBeUndefined()
+    expect((await openWith({ dmarcPass: true, address: 'someone@example.org' })).opened?.senderKey).toBeUndefined()
+    expect((await openWith({ dmarcPass: true, signWithAttached: false })).opened?.senderKey).toBeUndefined()
+  })
+  test('what is not a public key for the address is refused', async () => {
+    const sender = await foreign('ecc')
+    expect(await publicKeyOfAttachment(new TextEncoder().encode('hello'), 'thea@example.org')).toBeUndefined()
+    expect(await publicKeyOfAttachment(new TextEncoder().encode(sender.privateKey.armor()), 'thea@example.org')).toBeUndefined()
+    expect(await publicKeyOfAttachment(sender.publicKey.write(), 'thea@example.org')).toBeDefined()
   })
 })
