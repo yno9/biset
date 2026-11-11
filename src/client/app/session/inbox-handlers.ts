@@ -42,10 +42,11 @@ export function installInboxHandlers(vault: AccountVault, mail: OwnMail | undefi
       privateKeys: (await mail?.pgp.all() ?? []).map(key => key.privateKey), senderKeys: held ? [base64ToBytes(held.keydata)] : [],
       ...(address ? { sender: { address, dmarcPass: dmarcPassOfStoredBody(rawBody) } } : {}),
     })
-    // The key a mail client with no Autocrypt attached (and signed with) is kept like an Autocrypt key, so the next mail goes to it encrypted.
+    // The key a mail client with no Autocrypt attached (and signed with) is kept like an Autocrypt key. The sender wrote encrypted, so it is
+    // kept as one that wants encryption (`mutual`, as shouldEncrypt reads it): the next mail goes to it encrypted.
     if (opened?.senderKey && !holdsAutocryptKey(card, opened.senderKey)) {
       const senderKey = opened.senderKey
-      void vault.writeContact(did, (cardId, current) => [holdsAutocryptKey(current, senderKey) ? undefined : autocryptKeyPatch(cardId, { keydata: senderKey, seenAt: new Date(opened.sentAt ?? Date.now()).toISOString() })])
+      void vault.writeContact(did, (cardId, current) => [holdsAutocryptKey(current, senderKey) ? undefined : autocryptKeyPatch(cardId, { keydata: senderKey, seenAt: new Date(opened.sentAt ?? Date.now()).toISOString(), preferEncrypt: 'mutual' })])
         .then(async written => { if (written) await vault.refresh() })
         .catch(error => console.warn('[attached key]', errorMessage(error)))
     }
