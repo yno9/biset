@@ -188,6 +188,9 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   const customServer = server.trim() !== '' && server.trim().toLowerCase() !== domain
   // The host the wallet is asked about: only a server other than the deployment's own; what is being typed in the host field waits until it is settled.
   const askHost = customServer && !editingServer ? server.trim().toLowerCase() : undefined
+  // A name that is taken may be the person's own: the page then logs in as it (the Passphrase proves it) instead of making one.
+  const takenHost = !loginAs && free === false && !auto.current && alias.trim() ? `${alias.trim().toLowerCase()}.${askHost ?? domain}` : undefined
+  const loggingIn = Boolean(loginAs || takenHost)
   const create = () => {
     if (free === undefined || free === false) return
     setCreating(true)
@@ -239,22 +242,23 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   // Logging in: the Passphrase is typed in the wallet's own field (a frame holding that one field); this page asks the wallet to sign the
   // sign-in request with it and takes the response. What is typed never reaches this page.
   useEffect(() => {
-    if (!embedded || !loginAs || !box.current) return
+    if (!embedded || !loggingIn || !box.current) return
     preloadSignup()
     setPassphraseHandlers({ submit: () => logInNow.current(), error: message => setResult({ message, error: true }) })
     const away = showPassphraseOver(box.current)
     return () => { away(); setPassphraseHandlers({}) }
-  }, [embedded, Boolean(loginAs)])
+  }, [embedded, loggingIn])
   const logIn = () => {
     setCreating(true)
     setResult(undefined)
     void (async () => {
       const embed = await passphraseEmbed()
       if (!embed) throw new Error('The wallet is not available here.')
-      if (!host) throw new Error('The wallet has not said whose account this is yet.')
+      const handle = takenHost ?? host
+      if (!handle) throw new Error('The wallet has not said whose account this is yet.')
       const config = readBisetConfig()
-      const request = await prepareDidMdWalletLoginRequest(config.mediatorUrls, config, host)
-      const session = await completeDidMdWalletCallback(await embed.approve(request))
+      const request = await prepareDidMdWalletLoginRequest(config.mediatorUrls, config, handle)
+      const session = await completeDidMdWalletCallback(await embed.approve(request, takenHost))
       if (!session) throw new Error('The sign-in was not completed.')
       await walletConnected(session)
     })().catch(error => { setCreating(false); report(error) })
@@ -279,7 +283,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
   const ink = mixInk(usePartColors('avatar'), 8)
   // The face of the address in the field (the tab's icon is the same face: favicon.tsx).
   const face = avatarSeed(loginAs ?? `${alias.trim()}@${domain}`)
-  const blocked = creating || (!loginAs && (!known || free === false || free === undefined))
+  const blocked = creating || (!loggingIn && (!known || free === false || free === undefined))
   return (
     <div id="new-user-page" style={{ '--nu-ink': ink } as React.CSSProperties}>
       <header id="nu-header">
@@ -299,7 +303,7 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
           </div>
         </div>
         {ownCreate ? (
-          <form id="nu-own-create" onSubmit={event => { event.preventDefault(); if (loginAs) logIn(); else create() }}>
+          <form id="nu-own-create" onSubmit={event => { event.preventDefault(); if (loggingIn) logIn(); else create() }}>
             {/* The wallet's own create form, as it looks in its frame: a bold small heading, the field, the full-width button. */}
             <div className="nu-block">
               <label className="nu-label">
@@ -321,10 +325,10 @@ export function NewUserPage({ loginAs: given }: { loginAs?: string } = {}) {
                   )}
                 </span>
               </label>
-              {loginAs ? <div ref={box} className="nu-field nu-passphrase-box">{fieldShown ? null : 'Passphrase'}</div> : null}
-              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loginAs && (!known || free === undefined)) ? <span className="nu-dots" role="status" aria-label={loginAs ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loginAs ? 'Log in' : free === false ? 'ID already taken' : <CreateLabel />}</button>
+              {loggingIn ? <div ref={box} className="nu-field nu-passphrase-box">{fieldShown ? null : 'Passphrase'}</div> : null}
+              <button id="nu-create-button" className="nu-primary" type="submit" disabled={blocked} data-busy={creating ? '' : undefined}>{creating || (!loggingIn && (!known || free === undefined)) ? <span className="nu-dots" role="status" aria-label={loggingIn ? 'Logging in' : creating ? 'Creating' : 'Checking'}><i /><i /><i /></span> : loggingIn ? 'Log in' : <CreateLabel />}</button>
             </div>
-            {loginAs ? null : (
+            {loggingIn ? null : (
               <a id="nu-terms-line" href={`https://${domain}`} target="_blank" rel="noreferrer">
                 By hosting your ID on {domain},<br />you agree to the terms of service.
               </a>

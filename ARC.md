@@ -777,13 +777,12 @@ oui は将来 MIMI クライアントにもなる予定で、そのために MLS
 - mediator の DB は `/var/lib/biset-didcomm-mediator/mediator.sqlite`。`deploy.sh` は mediator の入れ替え前に `sqlite3 .backup` で `/var/backups/biset-didcomm-mediator/` へ退避する。
 
 ### 15.3 デプロイ（`deploy.sh`、git 追跡外）
-`./deploy.sh [app|landing|didcomm-mediator|smtp|ap|relay|tor-backup|all]`。
+`./deploy.sh [mail|didcomm-mediator|tor-backup|all]`。
 - `app`: build → `v2:/opt/biset/app/` へ `index.html` と `sw.js` → sha256 と公開 URL で検証。
 - `tor-backup`: v2 の `/var/lib/tor`（キャッシュを除く）と torrc を、ローカルの `~/.biset-backups/tor/` に 0600 で退避する（暗号化は無い）。
 - メール（didmail）は oui の `deploy.sh` の対象外（別リポジトリ）。
-- **`all`（引数なしも同じ）は mediator を入れ替えない**（app・landing・smtp・ap だけ）。mediator は `./deploy.sh didcomm-mediator` を別に実行する。
+- **`all`（引数なしも同じ）は mediator を入れ替えない**（mail だけ）。mediator は `./deploy.sh didcomm-mediator` を別に実行する。
 - `didcomm-mediator` は入れ替え後に、本番に対してスモークテスト（`scripts/didcomm-mediator-smoke.ts`、`pnpm smoke:didcomm-mediator`）を流す。
-- `smtp`／`ap` は oui repo の外の relay（Rust／Go）を配る。
 
 ### 15.4 2026-10-08 のデプロイ（`PLAN-refactor.md` P0〜P5）
 **app は 2026-10-08 に配備済み**（`5f4d286` のビルド。配信物の sha256 が手元の `dist/index.html` と一致）。

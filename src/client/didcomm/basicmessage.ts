@@ -90,6 +90,19 @@ export function didCommThreadId(selfDid: string, otherDid: string): string {
   return [identityKey(selfDid), identityKey(otherDid)].sort().join('|')
 }
 
+/** A thread of the 1:1 conversation with `otherDid`: the pair (didCommThreadId) and the id of the thread's first message, which is the
+ * `thid` every later message of it carries (DIDComm: a message without `thid` starts one, and its `id` is the thread's). The
+ * conversation is the pair; a new message in it is a thread of its own. Compared case-insensitively (DIDComm v2.1). */
+export function didCommThreadOf(selfDid: string, otherDid: string, thid: string): string {
+  return `${didCommThreadId(selfDid, otherDid)}|${thid.toLowerCase()}`
+}
+
+/** The `thid` of a thread made by didCommThreadOf, or undefined for one that is only the pair (a conversation from before threads). */
+export function didCommThidOf(threadId: string): string | undefined {
+  const parts = threadId.split('|')
+  return parts.length === 3 ? parts[2] : undefined
+}
+
 export function basicMessageBodyOf(msg: { body?: unknown }): BasicMessageBody | null {
   const body = msg.body
   if (typeof body !== 'object' || body === null) return null

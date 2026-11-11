@@ -92,6 +92,9 @@ export async function unpackMediatorMessage(mediator: MediatorInfo, own: DidComm
   return message
 }
 
+/** A little past the mediator's retry window for a DID's log (logRetryMs). */
+const SENDER_KEY_RETRY_MS = 11_000
+
 /** Authcrypts `type`/`body` to the mediator, POSTs it, and unpacks the
  * reply from the HTTP response. A problem-report reply is thrown as a
  * DidCommProblemError rather than returned, so every coordinate/pickup
@@ -100,7 +103,16 @@ export async function sendAndUnpack(
   mediator: MediatorInfo, own: DidCommSender, type: string, body: unknown,
   fetchImpl: typeof fetch = defaultFetch(),
 ): Promise<DidCommPlaintext> {
-  const resp = await fetchImpl(`${trimSlash(mediator.url)}/`, didCommPost(packMediatorRequest(mediator, own, type, body)))
+  const post = () => fetchImpl(`${trimSlash(mediator.url)}/`, didCommPost(packMediatorRequest(mediator, own, type, body)))
+  let resp = await post()
+  if (resp.status === 401) {
+    // A key just added to the DID (a sign-in on a new browser publishes it a moment before this) is unknown to a mediator that
+    // read the log just before: it asks again only after its retry window (logRetryMs, 10 s), so the request is sent once more then.
+    const text = await resp.text()
+    if (!text.includes('e.m.trust.sender-key-not-listed')) throw new Error(`mediator request failed: HTTP ${resp.status} ${text}`)
+    await new Promise(resolve => setTimeout(resolve, SENDER_KEY_RETRY_MS))
+    resp = await post()
+  }
   if (!resp.ok) throw new Error(`mediator request failed: HTTP ${resp.status} ${await resp.text()}`)
   const reply = await unpackMediatorMessage(mediator, own, await resp.json())
   if (isProblemReport(reply)) throw problemReportError(reply)

@@ -5,7 +5,7 @@ vi.mock('../../src/protocol/did-resolve.ts', async importOriginal => ({ ...await
 
 import { AccountList, KeysPanel, ellipsizeScid } from '../../src/client/app/ui/account/account-list.tsx'
 import { TextCardDialog } from '../../src/client/app/ui/account/text-card-dialog.tsx'
-import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
+import { copyInviteLink, joinDeltaChatInvite, PGP_KEY_CHANGED, PgpKeyCard, PgpKeyRow } from '../../src/client/app/ui/account/pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from '../../src/client/app/ui/account/state.ts'
 
 const messages: string[] = []
@@ -238,21 +238,27 @@ test('a failed renewal is reported and the link works again', async () => {
   await waitFor(() => expect(link.getAttribute('aria-disabled')).toBeNull())
 })
 
-test('the PGP key row shows nothing while there is no generation seed, then the derived fingerprint, and a click copies the public key', async () => {
+test('the PGP key row shows nothing while there is no generation seed, then the derived fingerprint, and a click on the card turns it to the public key and copies it', async () => {
   let key: { fingerprint: string; userIds: string[] } | undefined
   const writeText = vi.fn(async () => {})
   vi.stubGlobal('navigator', { clipboard: { writeText } })
   const pgp = { address: 'alice@did.md', current: async () => key, onCopyPublic: vi.fn(async () => 'armor'), inviteLink: vi.fn(async () => 'https://i.delta.chat/#FP&v=3'), joinInvite: vi.fn(async () => ({ name: 'Bob', address: 'bob@x.test' })) }
-  const { container, rerender } = render(<PgpKeyRow config={pgp} showMessage={text => messages.push(text)} />)
+  const { container, rerender } = render(<PgpKeyRow config={pgp} />)
   await waitFor(() => expect(pgp.onCopyPublic).not.toHaveBeenCalled())
   expect(container.querySelector('#cmd-acc-pgp-row')).toBeNull()
 
   key = { fingerprint: 'ABCD1234EF', userIds: ['<alice@did.md>'] }
-  rerender(<PgpKeyRow config={{ ...pgp }} showMessage={text => messages.push(text)} />)
+  rerender(<PgpKeyRow config={{ ...pgp }} />)
   await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-fingerprint')!.textContent).toContain('ABCD 1234 EF'))
-  fireEvent.click(container.querySelector('#cmd-acc-pgp-row')!)
+  const card = render(<PgpKeyCard config={pgp} showMessage={text => messages.push(text)} />)
+  await waitFor(() => expect(card.container.querySelector('#cmd-acc-pgp-fingerprint')).not.toBeNull())
+  fireEvent.click(card.container.querySelector('#cmd-acc-pgp-key-card')!)
+  expect(card.container.querySelector('.acc-flip')!.classList.contains('flipped')).toBe(true)
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('armor'))
   await waitFor(() => expect(messages).toContain('Public key copied'))
+  expect(card.container.querySelector('.acc-pgp-armor')!.textContent).toBe('armor')
+  fireEvent.click(card.container.querySelector('#cmd-acc-pgp-key-card')!)
+  expect(card.container.querySelector('.acc-flip')!.classList.contains('flipped')).toBe(false)
   copyInviteLink(pgp, text => messages.push(text))
   await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://i.delta.chat/#FP&v=3'))
   await waitFor(() => expect(messages.some(text => text.startsWith('Delta Chat invite link copied'))).toBe(true))
@@ -262,7 +268,7 @@ test('the PGP key row shows nothing while there is no generation seed, then the 
 test('the PGP key row looks again while the key is not ready, and shows it as soon as it is, with no reload', async () => {
   let key: { fingerprint: string; userIds: string[] } | undefined
   const pgp = { address: 'alice@did.md', current: async () => key, onCopyPublic: vi.fn(async () => 'armor'), inviteLink: vi.fn(async () => 'link'), joinInvite: vi.fn(async () => ({ name: 'Bob', address: 'bob@x.test' })) }
-  const { container } = render(<PgpKeyRow config={pgp} showMessage={() => {}} />)
+  const { container } = render(<PgpKeyRow config={pgp} />)
   await new Promise(resolve => setTimeout(resolve, 50))
   expect(container.querySelector('#cmd-acc-pgp-row')).toBeNull()
   key = { fingerprint: 'AAAABBBBCC', userIds: ['<alice@did.md>'] }
@@ -282,7 +288,7 @@ test('joining a Delta Chat invite asks for it, starts the join, and says whom wa
 test('the PGP key row looks again when the key it showed turned out to be another', async () => {
   let fingerprint = 'AAAABBBBCC'
   const pgp = { address: 'alice@did.md', current: async () => ({ fingerprint, userIds: ['<alice@did.md>'] }), onCopyPublic: async () => '', inviteLink: async () => '', joinInvite: async () => ({ name: '', address: '' }) }
-  const { container } = render(<PgpKeyRow config={pgp} showMessage={() => {}} />)
+  const { container } = render(<PgpKeyRow config={pgp} />)
   await waitFor(() => expect(container.querySelector('#cmd-acc-pgp-fingerprint')!.textContent).toContain('AAAA BBBB CC'))
   fingerprint = 'DDDDEEEEFF'
   window.dispatchEvent(new Event(PGP_KEY_CHANGED))

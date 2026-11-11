@@ -8,7 +8,7 @@ import { buildPlaintext } from '../../src/protocol/didcomm/message.ts'
 import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { PROBLEM_REPORT } from '../../src/protocol/didcomm/problems.ts'
 import type { LocalJmapEmail } from '../../src/client/store/projection/gateway.ts'
-import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
+import { BASIC_MESSAGE, didCommThreadOf } from '../../src/client/didcomm/basicmessage.ts'
 import { didOfKid } from '../../src/protocol/ids.ts'
 import { DidCommIngressProjector, DidCommReplayError } from '../../src/client/didcomm/ingress-projector.ts'
 import { generatePeerIdentity } from '../../src/protocol/didcomm/peer.ts'
@@ -291,7 +291,7 @@ describe('DIDComm ingress projector', () => {
       signer,
     })
     const result = await projector.verifyAndProject(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe))))
-    expect(result.projection.emails).toMatchObject([{ from: [{ email: agent.did }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, agent.did) }])
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: agent.did }], to: [{ email: identityId }], threadId: didCommThreadOf(identityId, agent.did, plaintext.id) }])
     expect(result.projection.contactCards).toEqual([])
   })
 
@@ -330,7 +330,7 @@ describe('DIDComm ingress projector', () => {
         expect(input.objects).toHaveLength(3) // metadata + raw body, same shape as mail; and the sender's new card
         expect(input.events.map(event => event.kind)).toEqual(['message.add', 'contact.set'])
         expect(input.projection).toMatchObject({
-          emails: [{ from: [{ email: didOfKid(senderKid) }], to: [{ email: identityId }], threadId: didCommThreadId(identityId, didOfKid(senderKid)) }],
+          emails: [{ from: [{ email: didOfKid(senderKid) }], to: [{ email: identityId }], threadId: didCommThreadOf(identityId, didOfKid(senderKid), plaintext.id) }],
         })
         return 'committed'
       },
@@ -362,22 +362,54 @@ describe('DIDComm ingress projector', () => {
     expect(result.projection.emails).toEqual([])
   })
 
-  test('two different basicmessages between the same pair land in the SAME thread, chat-style (not per-subject like mail)', async () => {
+  test('basicmessages between the same pair: each without a thid is a thread of its own; one carrying that thid is in it', async () => {
     const projector = buildProjector()
-    const first = buildPlaintext(BASIC_MESSAGE, { content: 'first message' }, didOfKid(senderKid))
-    const firstJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(first)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
-    let firstThreadId = ''
-    await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(firstJwe)), 'ingress-1'), signer, projector, {
-      async commitIngress(input) { firstThreadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
-    })
+    const threadOf = async (content: string, ingressId: string, thid?: string): Promise<{ id: string; threadId: string }> => {
+      const message = buildPlaintext(BASIC_MESSAGE, { content }, didOfKid(senderKid), undefined, thid ? { thid } : {})
+      const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(message)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+      let threadId = ''
+      await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)), ingressId), signer, projector, {
+        async commitIngress(input) { threadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
+      })
+      return { id: message.id, threadId }
+    }
+    const first = await threadOf('first message', 'ingress-1')
+    const second = await threadOf('second message', 'ingress-2')
+    const reply = await threadOf('a reply in the first', 'ingress-3', first.id)
+    expect(first.threadId).not.toBe(second.threadId)
+    expect(first.threadId).toBe(didCommThreadOf(identityId, didOfKid(senderKid), first.id))
+    expect(reply.threadId).toBe(first.threadId)
+  })
 
-    const second = buildPlaintext(BASIC_MESSAGE, { content: 'second message' }, didOfKid(senderKid))
-    const secondJwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(second)), { kid: senderKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
-    let secondThreadId = ''
-    await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(secondJwe)), 'ingress-2'), signer, projector, {
-      async commitIngress(input) { secondThreadId = (input.projection as { emails: Array<{ threadId: string }> }).emails[0]!.threadId; return 'committed' },
+  test('mail from a bridge: each is a thread of its own, its thid (the message it answers) is its inReplyTo', async () => {
+    const bridgeKid = 'did:web:did.md:gmail.com:alice#key-x25519-1'
+    const projector = new DidCommIngressProjector({
+      identityId, actorDeviceId: recipientKid,
+      resolveOwnKey(kid) { return kid === recipientKid ? { kid: recipientKid, x25519PrivateKey: recipientX } : null },
+      async resolveSenderKey(kid) { if (kid !== bridgeKid) throw new Error('unexpected sender kid ' + kid); return senderXPub },
+      alreadyProcessed: autoMarkingAlreadyProcessed(),
+      async nextActorSeq() { return 1 },
+      async initialParents() { return [] },
+      activeSegment: segmentFor,
+      async currentSnapshot() { return { state: 'state-0', mailboxes: [], emails: [], contactCards: [] } },
+      signer,
+      now: () => new Date('2026-08-25T00:01:00.000Z'),
     })
-    expect(firstThreadId).toBe(secondThreadId)
+    const emailOf = async (content: string, ingressId: string, thid?: string) => {
+      const message = buildPlaintext(BASIC_MESSAGE, { content }, didOfKid(bridgeKid), undefined, thid ? { thid } : {})
+      const jwe = packAuthcrypt(new TextEncoder().encode(JSON.stringify(message)), { kid: bridgeKid, privateKey: senderX }, [{ kid: recipientKid, publicKey: recipientXPub }])
+      let email: { threadId: string; inReplyTo?: string } | undefined
+      await ingestIngress(envelopeFor(new TextEncoder().encode(JSON.stringify(jwe)), ingressId), signer, projector, {
+        async commitIngress(input) { email = (input.projection as { emails: Array<{ threadId: string; inReplyTo?: string }> }).emails[0]; return 'committed' },
+      })
+      return { id: message.id, email: email! }
+    }
+    const first = await emailOf('a mail', 'ingress-1')
+    const answer = await emailOf('an answer to our message', 'ingress-2', 'our-message-id')
+    expect(first.email.threadId).toBe(didCommThreadOf(identityId, didOfKid(bridgeKid), first.id))
+    expect(first.email.inReplyTo).toBeUndefined()
+    expect(answer.email.threadId).toBe(didCommThreadOf(identityId, didOfKid(bridgeKid), answer.id))
+    expect(answer.email.inReplyTo).toBe('our-message-id')
   })
 
   test('an expired message is rejected', async () => {

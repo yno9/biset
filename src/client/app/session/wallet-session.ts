@@ -7,7 +7,7 @@ import {
   prepareDidMdMovedDidLoginRequest, restoreDidMdWalletSession, type DidMdActiveSession, type DidMdBisetDidCommDevice, type DidMdDocumentChange,
 } from '../../identity/wallet/did-md-oauth.ts'
 import { ditoEmbedOrigin } from '../../identity/wallet/dito-embed.ts'
-import type { MediatorPollHandle } from '../../didcomm/mediator-sync.ts'
+import { MediatorDeviceLimitError, type MediatorPollHandle } from '../../didcomm/mediator-sync.ts'
 import { errorMessage } from '../../../protocol/error-message.ts'
 import { requestAliasChange } from '../ui/approve-dialog.tsx'
 import { readBisetConfig } from '../ui/config.ts'
@@ -203,7 +203,7 @@ export async function startWalletSession(host: SessionHost, callbackSession?: Di
           connection = connected
           didComm = { xKid: dc.xKid, mediatorUrl: dc.mediatorUrl }
         } catch (error) {
-          didComm = { xKid: dc.xKid, mediatorUrl: dc.mediatorUrl, error: errorMessage(error) }
+          didComm = { xKid: dc.xKid, mediatorUrl: dc.mediatorUrl, error: errorMessage(error), ...(error instanceof MediatorDeviceLimitError ? { deviceLimit: true } : {}) }
           console.warn('[did.md Wallet DIDComm]', error)
         }
         publishCompose()

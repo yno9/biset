@@ -36,7 +36,7 @@ export interface AccountPageConfig {
     /** The configured mediator remains visible after this browser logs out.
      * `loggedOut` means there is deliberately no local key/registration and
      * the card is only an entry point to the Wallet-backed login saga. */
-    didComm?: { xKid?: string; mediatorUrl: string; loggedOut?: boolean; /** Registering with the mediator is still under way. */ connecting?: boolean; error?: string; /** The deployment's configured Tor entrance for this mediator -- only the prompt's pre-filled value for "Enable Tor". */ onionUrl?: string }
+    didComm?: { xKid?: string; mediatorUrl: string; loggedOut?: boolean; /** Registering with the mediator is still under way. */ connecting?: boolean; error?: string; /** The mediator refused this device: the identity has its maximum of devices there. */ deviceLimit?: boolean; /** The deployment's configured Tor entrance for this mediator -- only the prompt's pre-filled value for "Enable Tor". */ onionUrl?: string }
     /** Starts an explicit, same-tab Wallet approval to add a DIDComm endpoint
      * to an already-connected Oui browser. */
     onEnableMessaging?(): Promise<void>

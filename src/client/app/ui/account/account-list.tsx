@@ -5,7 +5,7 @@ import { useStore } from '../../react/store.ts'
 import { resolveDidDocument, rememberVhLocation } from '../../../../protocol/did-resolve.ts'
 import { OnionIcon } from './onion-icon.tsx'
 import { requestText } from './text-card-dialog.tsx'
-import { PgpKeyRow } from './pgp-card.tsx'
+import { PgpKeyCard } from './pgp-card.tsx'
 import { accountConfig, type AccountPageConfig } from './state.ts'
 
 type Wallet = NonNullable<AccountPageConfig['wallet']>
@@ -146,6 +146,15 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
       .then(onion => { if (onion?.trim()) return wallet.onEnableTor?.(onion.trim()) }).catch(report)
   }
 
+  // Refused for too many devices: the way out is offered right on the error, since the device list may have nothing to choose from.
+  const [removing, setRemoving] = useState(false)
+  const removeAllDevices = () => {
+    if (removing || !config.onRemoveOtherDevices) return
+    if (!confirm('Remove all existing devices except this one? They will need to sign in again. Content they already received cannot be revoked.')) return
+    setRemoving(true)
+    config.onRemoveOtherDevices().catch(error => { setRemoving(false); report(error) })
+  }
+
   const status = didComm.error ? `Needs attention: ${didComm.error}` : loggedOut ? 'Logged out' : ''
   const dotColor = didComm.error ? '#ff3b30' : loggedOut ? '#8e8e93' : didComm.connecting ? '#ff9f0a' : '#34c759'
 
@@ -164,6 +173,9 @@ function MediatorCard({ config, wallet, didComm, showMessage }: { config: Accoun
         </div>
         {/* Enable Tor, then edit the server (the pencil of the alias change): an icon each, on the right, each opening a card. Logged out, the one thing to do is log in. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+          {didComm.deviceLimit && config.onRemoveOtherDevices ? (
+            <button type="button" className="acc-text-btn" disabled={removing} onClick={removeAllDevices}>Remove all existing devices</button>
+          ) : null}
           {loggedOut ? (
             wallet.onEnableMessaging ? <button type="button" className="acc-text-btn" onClick={() => { void wallet.onEnableMessaging?.().catch(report) }}>Log in</button> : null
           ) : (
@@ -194,10 +206,7 @@ export function KeysPanel() {
   return (
     <div id="cmd-acc-keys">
       <DeviceKeyCard config={config} showMessage={showMessage} />
-      <div className="acc-card-wrap acc-key-card" id="cmd-acc-pgp-key-card">
-        <div className="acc-storage-header"><span className="acc-storage-title">PGP Key</span></div>
-        {config.pgp ? <PgpKeyRow config={config.pgp} showMessage={showMessage} /> : <div className="acc-device-empty">No key available</div>}
-      </div>
+      <PgpKeyCard config={config.pgp} showMessage={showMessage} />
     </div>
   )
 }
@@ -233,7 +242,8 @@ function DeviceRow({ device, removable, disabled, onRemove }: { device: Device; 
   const fragment = device.deviceId.includes('#') ? device.deviceId.slice(device.deviceId.indexOf('#')) : device.deviceId
   const content = (
     <>
-      <span className="acc-device-label" title={device.deviceId}>{fragment.length > 18 ? `${fragment.slice(0, 10)}…` : fragment}</span>
+      <svg className="acc-device-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 9.8-9.8M16 7l3 3M14 9l2 2" /></svg>
+      <span className="acc-device-label" title={device.deviceId}>{fragment.replace(/^#/, '')}</span>
       {device.lastActivity ? <span className="acc-device-activity">{new Date(device.lastActivity).toLocaleString()}</span> : null}
       {device.current ? <span className="acc-device-current">this device</span> : removable ? (
         <span className="acc-device-trash" aria-hidden="true">

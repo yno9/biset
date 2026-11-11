@@ -17,7 +17,7 @@ import { FromPriorError, fromPriorKeyResolver, verifyFromPrior, type DidRotation
 import { aliasPatch, autocryptKeyPatch, contactCardForDid, contactNamePatch, contactSetIntent, counterpartyOfRotatedDid, didCommStateOf, didContactPatch, ownRotationPatch, replyTokenOf, replyTokenPatch, rotationPatch, type ContactSetPayload, type LocalJmapContactCard } from '../store/projection/contacts.ts'
 import { defaultFetch } from '../../protocol/net-fetch.ts'
 import { PermanentDeliveryError } from '../../protocol/didcomm/mediator-pickup.ts'
-import { isBasicMessage, basicMessageBodyOf, didCommThreadId, pgpArmorOf } from './basicmessage.ts'
+import { isBasicMessage, basicMessageBodyOf, didCommThreadOf, pgpArmorOf } from './basicmessage.ts'
 import { storedEncryptedBody } from '../pgp/stored.ts'
 import { mailAddressOfBridgeDid } from '../pgp/autocrypt.ts'
 import { trustedReplyTokens } from './reply-tokens.ts'
@@ -313,7 +313,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // same thread.ts UI. The sender is the DID that authenticated it (resolveCounterparty): who that
       // is for the person is decided when it is shown (rotationReader). A message addressed to more than one party is a group
       // conversation, threaded by `thid` (group-chat.ts); any other is the
-      // 1:1 conversation with its sender (didCommThreadId). Every field below
+      // 1:1 conversation with its sender, a thread of it by `thid` (didCommThreadOf). Every field below
       // comes from the message alone, never from this device's own state, so
       // two of this identity's devices record it identically (PLAN-refactor.md
       // §9.1: a mismatch stops the Vault's projection rebuild).
@@ -321,6 +321,7 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
       // Feed Post above, and that type is handled by the branch just above.)
       const { senderDid, partyDid } = counterparty!
       const group = isGroupAudience(msg.to)
+      const bridged = mailAddressOfBridgeDid(senderDid) !== undefined
       // This identity is in `to` by its public DID, or -- when the sender
       // writes to the DID this identity moved to -- by the DID of the key the
       // copy was encrypted to (DIDComm v2.1: `to` contains the recipient
@@ -367,13 +368,16 @@ export class DidCommIngressProjector implements IngressVerifierProjector {
         email: {
           id: dedupeId,
           // A thread is named by an id: compared case-insensitively (DIDComm v2.1).
-          threadId: group ? didcommGroupAddress((msg.thid ?? msg.id).toLowerCase()) : didCommThreadId(this.options.identityId, senderDid),
+          // A mail bridge's `thid` names the message a mail answers, not a thread (didmail PROTOCOL.md §6.2): each mail is a thread of its
+          // own, chained to its parent by `inReplyTo` (below), as a mail client does.
+          threadId: group ? didcommGroupAddress((msg.thid ?? msg.id).toLowerCase()) : didCommThreadOf(this.options.identityId, senderDid, bridged ? msg.id : msg.thid ?? msg.id),
           mailboxIds: { inbox: true },
           keywords: {},
           receivedAt: createdAt,
           sentAt,
           from: [{ email: senderDid, ...(body.fromName ? { name: body.fromName } : {}) }],
           to: (group ? audience : [this.options.identityId]).map(email => ({ email })),
+          ...(bridged && msg.thid ? { inReplyTo: msg.thid } : {}),
           ...(body.subject ? { subject: body.subject } : {}),
           messageId: msg.id,
           ...(body.replyTo ? { replyTo: [{ email: body.replyTo }] } : {}),

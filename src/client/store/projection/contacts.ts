@@ -363,7 +363,7 @@ export interface RotationReader {
   party(did: string): string
   /** True for a rotated DID its counterparty has since left: what it sends now is not shown (it may be a device that was removed). */
   superseded(did: string): boolean
-  /** A 1:1 thread id (`didCommThreadId`: the two identity keys, sorted) with each rotated DID's key replaced by its counterparty's. */
+  /** A 1:1 thread id (`didCommThreadOf`: the two identity keys, sorted, and the id of the thread's first message) with each rotated DID's key replaced by its counterparty's. */
   thread(threadId: string): string
 }
 
@@ -372,7 +372,13 @@ export function rotationReader(cards: readonly LocalJmapContactCard[]): Rotation
   return {
     party,
     superseded: did => counterpartyOfRotatedDid(cards, did)?.current === false,
-    thread: threadId => (threadId.includes('|') ? threadId.split('|').map(key => identityKey(party(key))).sort().join('|') : threadId),
+    thread: threadId => {
+      if (!threadId.includes('|')) return threadId
+      const parts = threadId.split('|')
+      // A thread of a 1:1 conversation (didCommThreadOf) is the pair and the id of its first message: only the pair is read.
+      const pair = parts.length === 3 ? parts.slice(0, 2) : parts
+      return [...pair.map(key => identityKey(party(key))).sort(), ...(parts.length === 3 ? parts.slice(2) : [])].join('|')
+    },
   }
 }
 

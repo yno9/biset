@@ -437,6 +437,20 @@ describe('a mediator that resolves did:vh', () => {
     expect((reply.body as any).updated[0].result).toBe('success')
   })
 
+  test('a full DID is read again before a new device is refused: devices it dropped since lose their inboxes', async () => {
+    const [a, b, c, d] = ['k_a', 'k_b', 'k_c', 'k_d'].map(device)
+    const all = { [`${DID}#k_a`]: a!.hex, [`${DID}#k_b`]: b!.hex, [`${DID}#k_c`]: c!.hex, [`${DID}#k_d`]: d!.hex }
+    const world = { state: stateWith(1, all) as LogState | null }
+    const m = resolving(world)
+    for (const [i, holder] of [a!, b!, c!].entries()) await m.request(holder.holder, T.RECIPIENT_UPDATE, { device: deviceLabel(i + 1), ...add })
+    // "Remove all other devices": the document keeps only d. The state held here is still fresh, so only the refusal reads it again.
+    world.state = stateWith(2, { [`${DID}#k_d`]: d!.hex })
+    m.clock.now += 11_000
+    const reply = await m.request(d!.holder, T.RECIPIENT_UPDATE, { device: deviceLabel(4), ...add })
+    expect((reply.body as any).updated[0].result).toBe('success')
+    expect(m.store.listInboxes(DID)).toHaveLength(1)
+  })
+
   test('a state is trusted for the freshness window, then the DID is resolved again', async () => {
     const a = device('k_a')
     const m = resolving({ state: stateWith(1, { [`${DID}#k_a`]: a.hex }) }, { fresh: 60_000, retry: 1000 })

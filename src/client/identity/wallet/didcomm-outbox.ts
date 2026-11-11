@@ -1,6 +1,8 @@
 import type { LocalJmapReadModel } from '../../store/projection/gateway.ts'
 import type { VaultBackedLocalJmapMutationSink } from '../../store/projection/vault-mutation-sink.ts'
 import { sendDidCommMessage } from '../../didcomm/send-message.ts'
+import { didCommThidOf } from '../../didcomm/basicmessage.ts'
+import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
 import { parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
 import { audienceOfCopy, type DidCommRoute } from '../../didcomm/did-rotation.ts'
 import type { DidCommTransportOutboxRecord } from '../../store/vault/store.ts'
@@ -106,9 +108,13 @@ export function createWalletDidCommOutbox(options: WalletDidCommOutboxOptions): 
             if (!metadata) throw new Error(`local message ${item.emailId} is missing its metadata object`)
             const content = new TextDecoder().decode(await options.readModel.download(blobId))
             const group = metadata.threadId.startsWith('didcomm-group:')
-            // A 1:1 reply names the message it answers by its DIDComm id (a
-            // mail bridge turns it into In-Reply-To, didmail PROTOCOL.md §6.2).
-            const answered = !group && email?.inReplyTo ? snapshot.emails.find(candidate => candidate.id === email.inReplyTo)?.messageId : undefined
+            // A 1:1 message names its thread by the id of the thread's first message (the first one's own id, which is the thread's
+            // when it carries no `thid`). A reply to a message a mail bridge sent turns it into In-Reply-To (didmail PROTOCOL.md §6.2).
+            // To a mail address the `thid` is the message answered (that is what the bridge makes In-Reply-To of); to a DID, the thread's.
+            const answered = group ? undefined
+              : mailAddressOfBridgeDid(item.toDid) !== undefined
+                ? (email?.inReplyTo ? snapshot.emails.find(candidate => candidate.id === email.inReplyTo)?.messageId ?? email.inReplyTo : undefined)
+                : didCommThidOf(metadata.threadId)
             const sent = await send(item.toDid, content, {
               id: item.messageId, sentAt: metadata.sentAt ?? item.createdAt,
               ...(metadata.subject ? { subject: metadata.subject } : {}),

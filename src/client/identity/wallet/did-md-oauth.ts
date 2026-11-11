@@ -627,7 +627,12 @@ async function sessionFromCapabilityValue(value: unknown, did: string, pending: 
   // impossible by construction. Publish + re-resolve above first, persist
   // the recoverable session, then register; boot retries registration if
   // the network fails after the DID commit.
-  if (capability.didCommDevice && options.registerMediator !== false) await setMediatorRegistration(resolvedPending.did, capability.didCommDevice, 'add')
+  // A refusal here (too many devices, a key the mediator has not seen yet) does not undo the sign-in: the session is saved, and
+  // boot registers again and shows why it could not on the mediator card -- not on the page the person signed in from.
+  if (capability.didCommDevice && options.registerMediator !== false) {
+    try { await setMediatorRegistration(resolvedPending.did, capability.didCommDevice, 'add') }
+    catch (error) { console.warn('[mediator registration at sign-in]', errorMessage(error)) }
+  }
   if (resolvedPending.previousBisetDidCommDevice) {
     try { await setMediatorRegistration(resolvedPending.did, resolvedPending.previousBisetDidCommDevice, 'remove') }
     catch (error) { console.warn('[mediator edit cleanup]', errorMessage(error)) }

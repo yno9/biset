@@ -57,7 +57,7 @@ describe('Wallet DIDComm outbox', () => {
     ]])
   })
 
-  test('a 1:1 reply carries the DIDComm id of the message it answers as its thid', async () => {
+  test('to a mail address, a reply carries the DIDComm id of the message it answers as its thid (what the bridge makes In-Reply-To of)', async () => {
     const item = { identityId, outboundEventId: 'event-1' as never, emailId: 'reply-1', messageId: 'message-r', toDid: 'did:web:did.md:gmail.com:alice', createdAt: '2026-10-09T00:00:00.000Z', attempts: 0 }
     const messages: unknown[] = []
     const outbox = createWalletDidCommOutbox({
@@ -69,7 +69,7 @@ describe('Wallet DIDComm outbox', () => {
             state: 's', mailboxes: [], contactCards: [],
             emails: [
               { id: 'parent-1', blobId: 'b0', threadId: 't', mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: item.createdAt, messageId: 'CAF00@mail.gmail.com' },
-              { id: 'reply-1', blobId: 'b1', threadId: 't', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: item.createdAt, sentAt: item.createdAt, inReplyTo: 'parent-1' },
+              { id: 'reply-1', blobId: 'b1', threadId: 'did:vh:a|did:vh:b|caf00-root', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: item.createdAt, sentAt: item.createdAt, inReplyTo: 'parent-1' },
             ],
           }
         },
@@ -82,6 +82,33 @@ describe('Wallet DIDComm outbox', () => {
     })
     await outbox.flush()
     expect(messages).toEqual([{ id: 'message-r', sentAt: item.createdAt, thid: 'CAF00@mail.gmail.com' }])
+  })
+
+  test('to a DID, a message carries the id of its thread\'s first message as its thid', async () => {
+    const item = { identityId, outboundEventId: 'event-1' as never, emailId: 'reply-1', messageId: 'message-r', toDid: 'did:vh:QmBobBobBob', createdAt: '2026-10-09T00:00:00.000Z', attempts: 0 }
+    const messages: unknown[] = []
+    const outbox = createWalletDidCommOutbox({
+      identityId,
+      store: { async readDidCommOutbox() { return [item] }, async noteDidCommOutboxAttempt() {}, async removeDidCommOutbox() {} },
+      readModel: {
+        async snapshot() {
+          return {
+            state: 's', mailboxes: [], contactCards: [],
+            emails: [
+              { id: 'parent-1', blobId: 'b0', threadId: 't', mailboxIds: { inbox: true as const }, keywords: {}, receivedAt: item.createdAt, messageId: 'CAF00@mail.gmail.com' },
+              { id: 'reply-1', blobId: 'b1', threadId: 'did:vh:a|did:vh:b|caf00-root', mailboxIds: { outbox: true as const }, keywords: {}, receivedAt: item.createdAt, sentAt: item.createdAt, inReplyTo: 'parent-1' },
+            ],
+          }
+        },
+        async download() { return new TextEncoder().encode('re: hi') },
+      },
+      mutationSink: { async commitIntents() { return {} } },
+      route: async toDid => ({ toDid, fromKid: `${identityId}#k_a`, x25519PrivateKey: new Uint8Array(32) }),
+      async send(_toDid, _content, message) { messages.push(message); return { ok: true } },
+      onError(error) { throw error },
+    })
+    await outbox.flush()
+    expect(messages).toEqual([{ id: 'message-r', sentAt: item.createdAt, thid: 'caf00-root' }])
   })
 
   test('a stalled row does not block a newly queued message from flushing', async () => {

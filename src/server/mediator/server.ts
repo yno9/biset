@@ -424,7 +424,7 @@ export function createMediator({
     }
 
     try {
-      return msg.type === FORWARD ? { http: forward(msg) } : control(msg, senderKid!, socket, clientAddress)
+      return msg.type === FORWARD ? { http: forward(msg) } : await control(msg, senderKid!, socket, clientAddress)
     } catch (e) {
       console.error('[mediator] failed to handle a message:', e)
       return { http: httpProblem(500, 'e.m.me', 'The mediator failed to handle the message.', [], msg) }
@@ -462,7 +462,7 @@ export function createMediator({
 
   /** Everything but Forward: an authenticated owner of `ownerDid` acting on
    * one of its own inboxes. */
-  function control(msg: DidCommPlaintext, senderKid: string, socket?: LiveSocket, clientAddress?: string): Outcome {
+  async function control(msg: DidCommPlaintext, senderKid: string, socket?: LiveSocket, clientAddress?: string): Promise<Outcome> {
     const ownerDid = didOf(senderKid)
     const body = (msg.body ?? {}) as Record<string, unknown>
 
@@ -525,7 +525,16 @@ export function createMediator({
             return problemTo(msg, senderKid, 'e.m.req.rate-limited', 'too many new inboxes from this address; try again later')
           }
           try {
-            const result = store.addInbox(ownerDid, device, senderKid)
+            let result: ReturnType<typeof store.addInbox>
+            try { result = store.addInbox(ownerDid, device, senderKid) } catch (e) {
+              // Full: the DID may have dropped devices since its log was last read here ("remove all other devices"), and their
+              // inboxes go only when it is read again. It is, once (at most every logRetryMs), before the refusal stands.
+              if (!(e instanceof TooManyDevicesError) || !resolveLog || !isLogDid(ownerDid)) throw e
+              const check = logChecks.get(ownerDid)
+              if (check !== undefined && now() - check.triedAt < logRetryMs) throw e
+              await resolveAndRecord(ownerDid).catch(() => {})
+              result = store.addInbox(ownerDid, device, senderKid)
+            }
             updated.push({ recipient_did: update.recipient_did, action: 'add', result: result === 'unchanged' ? 'no_change' : 'success' })
           } catch (e) {
             if (e instanceof TooManyDevicesError) {

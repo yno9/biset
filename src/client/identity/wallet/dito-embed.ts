@@ -74,9 +74,10 @@ export interface DitoEmbed {
   /**
    * Has dito approve `request` (the query string of a signed request: a sign-in, a DID document
    * edit). The Passphrase is typed in dito's frame; what comes back is the relying-party response
-   * (`vp_token`, `id_token`, `state`, `iss`), the same fields the callback URL would carry.
+   * (`vp_token`, `id_token`, `state`, `iss`), the same fields the callback URL would carry. `host` (the Passphrase frame only):
+   * the identity to sign in as when this browser does not hold it (`alice.did.md`); without it, the one it holds.
    */
-  approve(request: string): Promise<URLSearchParams>
+  approve(request: string, host?: string): Promise<URLSearchParams>
   /**
    * Has dito move this browser's identity to another address (the DID's host), asking for the new
    * name and the Passphrase in the frame. Resolves with the new DID; rejects when it is cancelled.
@@ -112,8 +113,8 @@ export function mountDito(frame: HTMLIFrameElement, origin: string, mode: DitoMo
       port.postMessage({ id, method, params })
     })
     const embed: DitoEmbed = {
-      async approve(request) {
-        const result = await call('wallet.approve', { request }) as { response?: Record<string, unknown> } | null
+      async approve(request, host) {
+        const result = await call('wallet.approve', { request, ...(host ? { host } : {}) }) as { response?: Record<string, unknown> } | null
         const params = new URLSearchParams()
         for (const [name, value] of Object.entries(result?.response ?? {})) if (typeof value === 'string') params.set(name, value)
         return params

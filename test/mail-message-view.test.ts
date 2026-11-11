@@ -35,6 +35,18 @@ describe('computeThreadKeys', () => {
     expect(forward.get('b')).toBe(backward.get('b'))
   })
 
+  test('a chain of mail from a bridge (each a thread of its own, linked by the id it answers) is one thread', () => {
+    const keys = computeThreadKeys([
+      { message_id: 'm1', thread_id: 'pair|m1' },
+      { message_id: 'r1', thread_id: 'pair|r1', in_reply_to: 'm1' },
+      { message_id: 'm2', thread_id: 'pair|m2', in_reply_to: 'r1' },
+      { message_id: 'other', thread_id: 'pair|other' },
+    ])
+    expect(keys.get('m1')).toBe(keys.get('r1'))
+    expect(keys.get('r1')).toBe(keys.get('m2'))
+    expect(keys.get('other')).not.toBe(keys.get('m1'))
+  })
+
   test('leaves unrelated messages in separate threads', () => {
     const keys = computeThreadKeys([
       { message_id: 'a', thread_id: 't1' },

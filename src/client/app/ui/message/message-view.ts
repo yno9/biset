@@ -237,7 +237,8 @@ export function emailToMessageView(email: LocalJmapEmail, rawRfc5322: Uint8Array
     body: extractPlainTextBody(rawRfc5322),
     subject: email.subject ?? headers.subject ?? '',
     ts: Number.isNaN(ts) ? 0 : ts,
-    message_id: headers.messageId ?? email.id,
+    // A DIDComm message is known by its DIDComm id (what a reply names in `thid`, and a mail bridge in `In-Reply-To`), a mail by its header.
+    message_id: headers.messageId ?? email.messageId ?? email.id,
     jmap_id: email.id,
     // Falls back to email.inReplyTo (PLAN-mimi.md §4.2, MimiContent
     // inReplyTo carried as a Vault email id) when there's no RFC 5322

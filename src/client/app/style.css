@@ -718,7 +718,7 @@ select {
   gap: 2px;
 }
 #left-pane::-webkit-scrollbar {
-  width: 6px;
+  display: none;
 }
 #left-pane::-webkit-scrollbar-track {
   background: transparent;
@@ -728,8 +728,7 @@ select {
   border-radius: 3px;
 }
 #left-pane {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(128, 128, 128, 0.25) transparent;
+  scrollbar-width: none;
 }
 
 .lp-item {
@@ -1012,8 +1011,8 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   z-index: 11;
   display: flex;
   border-radius: 16px;
-  /* The same frosted glass as the menu button at the top right (see "header glass chips"). */
-  background: var(--glass-surface-bg);
+  /* The frosted glass of the menu button at the top right (see "header glass chips"), but more opaque: it sits over text. */
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   box-shadow:
@@ -1039,7 +1038,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   border: none;
   border-radius: 16px;
   background: none;
-  color: var(--text-dim);
+  color: var(--text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1231,7 +1230,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   border-radius: 40px;
   background: var(--reply-bg);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0);
-  transition: box-shadow 0.15s;
+  transition: box-shadow 0.15s, border-radius 0.3s;
 }
 /* Shrunk to the avatar alone (right-col.tsx: 3 seconds after the conversation scrolled); hovering the island opens it again. */
 :root {
@@ -1239,11 +1238,13 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 }
 #conv-top #conv-fields,
 #conv-top #conv-text,
+#conv-top #conv-meta-expanded,
 #conv-top #conv-nav,
 #conv-top #conv-avatar,
 #conv-top #conv-to:has(#conv-avatar) {
   transition:
     padding 0.3s ease,
+    height 0.3s ease,
     margin 0.3s ease,
     background 0.3s ease,
     gap 0.3s ease,
@@ -1252,8 +1253,10 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
     box-shadow 0.15s;
 }
 #conv-top #conv-text,
+#conv-top #conv-meta-expanded,
 #conv-top #conv-nav {
   width: auto;
+  height: auto;
   overflow: hidden;
 }
 /* The padding goes to 0 and the margin takes its place, so the avatar does not move by a pixel; the island's own card (colour and shadow) fades away, and the avatar carries the shadow. */
@@ -1267,9 +1270,12 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   gap: 0;
 }
 #conv-top.compact #conv-fields:has(#conv-avatar):not(:hover) #conv-text,
+#conv-top.compact #conv-fields:has(#conv-avatar):not(:hover) #conv-meta-expanded,
 #conv-top.compact #conv-fields:has(#conv-avatar):not(:hover) #conv-nav {
   width: 0;
+  height: 0;
   opacity: 0;
+  overflow: hidden;
 }
 #conv-top.compact #conv-fields:has(#conv-avatar):not(:hover) #conv-avatar {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
@@ -1416,6 +1422,37 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   padding: 10px 12px;
   line-height: 1.6;
 }
+/* The thread's headers take the place of the card's name, address and title (a click goes back), in the same card (its fill and
+   shadow), with a less round corner: it is no longer a pill. */
+#conv-fields.info {
+  border-radius: 16px;
+}
+#conv-to > #conv-meta-expanded {
+  /* Lines are not wrapped: when the island shrinks its width goes to 0, and text that wrapped to that width would grow the card
+     to a column of single letters on the way. A line too long for the card is cut at its edge. */
+  white-space: pre;
+  word-break: normal;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+/* What arrives (the headers, or the name and title coming back) fades in and settles up from a few pixels below, as the card changes height. */
+@keyframes conv-meta-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+#conv-to > #conv-meta-expanded,
+#conv-top:not(.compact) #conv-fields:not(.info) #conv-text {
+  animation: conv-meta-in 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  #conv-to > #conv-meta-expanded,
+  #conv-top:not(.compact) #conv-fields:not(.info) #conv-text { animation: none; }
+}
 #conv-meta.expanded #conv-to,
 #conv-meta.expanded #conv-cc,
 #conv-meta.expanded #conv-bcc {
@@ -1507,8 +1544,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   border-radius: 8px;
   transition: background-color 0.12s;
 }
-#cmd-acc-identity-did-row:hover,
-.acc-pgp-row:hover {
+#cmd-acc-identity-did-row:hover {
   background: rgba(128, 128, 128, 0.11);
 }
 /* Without a display name, "Set display name" shows when the pointer is on the card, except over the alias (a
@@ -1601,10 +1637,10 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   cursor: pointer;
   align-self: flex-start;
   max-width: 100%;
-  color: var(--text-dim);
+  color: var(--text);
 }
 #cmd-acc-identity-copy-icon { flex-shrink: 0; color: var(--text-dim); }
-.acc-pgp-row svg { flex-shrink: 0; }
+.acc-pgp-row svg { flex-shrink: 0; color: var(--text-dim); }
 .acc-pgp-fingerprint {
   font-size: 13px;
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -1652,7 +1688,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   display: flex;
 }
 .acc-device-row {
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: 8px;
   padding: 6px 0;
@@ -1672,12 +1708,18 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   cursor: wait;
   opacity: .6;
 }
+.acc-device-icon {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  margin-right: -2px;
+}
 .acc-device-label {
   color: var(--text);
   white-space: nowrap;
   text-overflow: ellipsis;
   font-family: ui-monospace,SF Mono,SFMono-Regular,Menlo,Consolas,monospace;
   font-size: 14px;
+  min-width: 0;
   overflow: hidden;
 }
 .acc-device-activity {
@@ -1687,6 +1729,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   font-size: 13px;
 }
 .acc-device-current {
+  margin-left: auto;
   color: var(--accent);
   flex-shrink: 0;
   font-size: 12px;
@@ -1780,7 +1823,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
-  max-width: min(78%,640px);
+  max-width: min(90%, 640px);
   display: flex;
 }
 .t-msg.me .t-meta {
@@ -1929,7 +1972,7 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
   align-items: flex-start;
   gap: 8px;
   position: relative;
-  padding: 16px 8px 14px 16px;
+  padding: 16px 10px 16px 24px;
   border-radius: 30px;
   background: var(--reply-bg);
   border: 1px solid rgba(128, 128, 128, 0.22);
@@ -2075,12 +2118,14 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .t-send-wrap {
   position: relative;
   width: 0;
-  height: 32px;
+  height: 34px;
   flex-shrink: 0;
   overflow: hidden;
 }
 .reply-box:has(textarea:not(:placeholder-shown)) .t-send-wrap {
-  width: 32px;
+  width: 34px;
+  /* With the field's own 10px, 16px in all: the button sits as far from the rounded edge as the text does from the left one. */
+  margin-right: 6px;
 }
 .t-send-avatar {
   display: none;
@@ -2093,20 +2138,39 @@ body:has(#app[data-menu-page="/compose"]) #scroll-island {
 .t-send-btn {
   position: absolute;
   inset: 0;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: var(--accent);
+  /* The Log in button's colour (the five avatar colours mixed: set as --nu-ink by the box), not the translucent accent. */
+  background: var(--nu-ink, #0e3049);
+  color: var(--on-primary);
   border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: filter 0.12s, opacity 0.12s;
 }
+/* No scaling: the wrap clips to its box (it collapses to zero width while the field is empty), so a larger button is cut square. */
+.t-send-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+.t-send-btn:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+.t-send-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+/* An arrow pointing up, drawn as a line: lighter than the filled paper plane it replaces. */
 .t-send-btn svg {
-  width: 16px;
-  height: 16px;
-  fill: #fff;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -2681,6 +2745,48 @@ html.pwa-standalone #app {
   padding: 14px;
 }
 
+/* The PGP Key card switches between the fingerprint (front) and the armored public key (back). The faces lie over each other and
+   cross-fade; the card's height (set from the face that is up) transitions, so it grows and shrinks rather than sizing to the taller. */
+.acc-flip-card {
+  cursor: pointer;
+  border-radius: 8px;
+  outline-offset: 2px;
+}
+.acc-flip {
+  position: relative;
+  transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.acc-flip-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--surface-grey);
+  transition: opacity 0.2s;
+}
+.acc-flip-back,
+.acc-flip.flipped .acc-flip-face:first-child {
+  opacity: 0;
+  pointer-events: none;
+}
+.acc-flip.flipped .acc-flip-back {
+  opacity: 1;
+  pointer-events: auto;
+}
+.acc-pgp-armor {
+  margin: 0;
+  color: var(--text);
+  font: 13px/1.4 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow: hidden;
+  user-select: all;
+}
+@media (prefers-reduced-motion: reduce) {
+  .acc-flip, .acc-flip-face { transition: none; }
+}
+
 /* The thread title in the island rolls like a counter wheel when the thread changes: the old one leaves one way, the new one arrives from the other. */
 .title-clip {
   position: relative;
@@ -2739,7 +2845,7 @@ html.pwa-standalone #app {
   height: 64px;
   border: 0;
   border-radius: 50%;
-  background: none;
+  background: var(--bg);
   color: var(--text);
   cursor: pointer;
   padding: 0;
@@ -2754,7 +2860,38 @@ html.pwa-standalone #app {
   }
 }
 #pane-btn:hover {
-  background: rgba(128, 128, 128, 0.14);
+  /* The grey of a hover, laid over the opaque page colour (a bare translucent grey would let the list show through). */
+  background: linear-gradient(rgba(128, 128, 128, 0.14), rgba(128, 128, 128, 0.14)), var(--bg);
+}
+/* The pane's foot: the list fades into the page's colour behind the button (which has no fill of its own), so the button stays readable
+   over rows scrolling beneath it. Only while the pane is shown (compact or normal; not hidden). */
+@media (min-width: 575px) {
+  #app.lp-enabled:not(.single-col)::before {
+    content: "";
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: var(--lp-width, 300px);
+    height: 140px;
+    z-index: 60;
+    pointer-events: none;
+    /* Starts well above the button and is nearly opaque by the time it reaches it (the button is 64px high, 16px up). */
+    background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 60%, transparent) 40%, color-mix(in srgb, var(--bg) 90%, transparent) 62%, var(--bg) 80%);
+  }
+}
+@media (max-width: 574px) {
+  #app.lp-enabled.show-left::before {
+    content: "";
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 140px;
+    z-index: 60;
+    pointer-events: none;
+    /* Starts well above the button and is nearly opaque by the time it reaches it (the button is 64px high, 16px up). */
+    background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 60%, transparent) 40%, color-mix(in srgb, var(--bg) 90%, transparent) 62%, var(--bg) 80%);
+  }
 }
 /* The reply field leaves the button's place free when the pane is not beside it (no pane, or the narrow screen). */
 @media (min-width: 575px) {
@@ -2913,11 +3050,14 @@ html.pwa-standalone #app {
 #conv-line1.conv-recipients {
   /* As tall as a line with a chip in it (16px at 1.4, and 3px of padding), so that the first chip does not push the lines below. */
   min-height: calc(16px * 1.4 + 3px);
-  flex-wrap: wrap;
+  /* One line: a long address is cut short (an ellipsis) to leave the cursor its place at the right end, not pushed to a second line. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 6px;
 }
 .conv-chip {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 100%;
   padding: 1px 10px 2px;
   border-radius: 12px;
@@ -2935,7 +3075,8 @@ html.pwa-standalone #app {
   background: rgba(128, 128, 128, 0.22);
 }
 .conv-recipients .conv-input {
-  flex: 1 1 14ch;
+  flex: 1 0 2ch;
+  min-width: 2ch;
 }
 
 /* The chip taken by the arrow keys. */

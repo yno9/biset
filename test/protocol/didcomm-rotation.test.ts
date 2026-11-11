@@ -12,7 +12,7 @@ import { PING, PING_RESPONSE } from '../../src/protocol/didcomm/trust-ping.ts'
 import { DISCOVER_FEATURES_DISCLOSE, DISCOVER_FEATURES_QUERIES } from '../../src/protocol/didcomm/mediator-protocol.ts'
 import { decodePeerDid2, publicKeyOf } from '../../src/protocol/didcomm/peer.ts'
 import type { LogEntry } from '../../src/protocol/vh/log.ts'
-import { BASIC_MESSAGE, didCommThreadId } from '../../src/client/didcomm/basicmessage.ts'
+import { BASIC_MESSAGE, didCommThreadId, didCommThreadOf } from '../../src/client/didcomm/basicmessage.ts'
 import { DidCommIngressProjector } from '../../src/client/didcomm/ingress-projector.ts'
 import { PermanentDeliveryError } from '../../src/protocol/didcomm/mediator-pickup.ts'
 import { audienceOfCopy, chooseRoute, ownRotationIdentity } from '../../src/client/didcomm/did-rotation.ts'
@@ -152,11 +152,12 @@ describe('ingress of a moved counterparty', () => {
     const message = buildPlaintext(BASIC_MESSAGE, { content: 'hi from my private DID' }, bobY.did, alice.did, { fromPrior: signedRotation() })
     const result = await projector([]).verifyAndProject(envelope(message, fromBobY, toAliceFrontDoor))
     // Recorded under the DID that authenticated it; it is Bob's when it is shown (PLAN-refactor.md §14).
-    expect(result.projection.emails).toMatchObject([{ from: [{ email: bobY.did }], threadId: didCommThreadId(alice.did, bobY.did) }])
+    expect(result.projection.emails).toMatchObject([{ from: [{ email: bobY.did }], threadId: didCommThreadOf(alice.did, bobY.did, message.id) }])
     expect(result.projection.contactCards[0]![DIDCOMM_CONTACT_PROPERTY]).toEqual({ rotations: { [bobY.did]: { prior: bob.did, iat: 100 } } })
     const reader = rotationReader(result.projection.contactCards)
     expect(reader.party(bobY.did)).toBe(bob.did)
     expect(reader.thread(didCommThreadId(alice.did, bobY.did))).toBe(didCommThreadId(alice.did, bob.did))
+    expect(reader.thread(didCommThreadOf(alice.did, bobY.did, 'm-1'))).toBe(didCommThreadOf(alice.did, bob.did, 'm-1'))
   })
 
   test('a from_prior that does not verify is refused for good', async () => {

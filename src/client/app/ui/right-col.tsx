@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { useStore } from '../react/store.ts'
 import { DIDCOMM_GROUP_THREAD_PREFIX } from './message/message-view.ts'
 import type { ThreadGroup } from './message/message-view.ts'
-import { avatarOf, displayName, labelForDid, shortDid, avatarSeed } from './did-display.ts'
+import { avatarOf, displayName, labelForDid, avatarSeed } from './did-display.ts'
 import { GeneratedAvatar } from './generated-avatar.tsx'
 import { avatarColor } from './format.ts'
 import { hamburgerTrigger } from './hamburger-menu.tsx'
@@ -132,23 +132,21 @@ function GroupStrip({ groupId, name }: { groupId: string; name: string }) {
   )
 }
 
-/** The thread's headers, shown under the title when the subject is clicked. */
-function MetaInfo({ group, open }: { group: ThreadGroup | undefined; open: boolean }) {
+/** The thread's headers, which take the place of the card's name, address and title while it is open; a click on them goes back. */
+function MetaInfo({ group, onClose }: { group: ThreadGroup; onClose: () => void }) {
   const self = useSelf()
-  const msgs = group?.messages.map(p => p.msg) ?? []
+  const msgs = group.messages.map(p => p.msg)
   const first = msgs[0]
   const lines: string[] = []
-  if (group && first) {
+  if (first) {
     if (first.message_id) lines.push(`message-id: ${first.message_id}`)
     if (first.in_reply_to) lines.push(`in-reply-to: ${first.in_reply_to}`)
     if (first.subject) lines.push(`subject: ${first.subject}`)
     if (first.ts) lines.push(`date: ${new Date(first.ts).toISOString()}`)
     lines.push(`participants: ${displayParticipantsOf(msgs, self)}`)
-    // A DIDComm thread's key joins two full DIDs with '|': each is elided the same way.
-    lines.push(`thread_id: ${group.key.split('|').map(s => s.startsWith('did:') ? shortDid(s) : s).join('|')}`)
-    lines.push(`messages: ${group.messages.length}`)
+    lines.push(`thread_id: ${group.key}`)
   }
-  return open && group ? <div id="conv-meta-expanded">{lines.join('\n')}</div> : null
+  return <div id="conv-meta-expanded" role="button" tabIndex={0} onClick={onClose} onKeyDown={event => { if (event.key === 'Enter' || event.key === 'Escape') onClose() }}>{lines.join('\n')}</div>
 }
 
 /** With no account, the line under the island says what sending does: the account is made first, and the message goes out right after. */
@@ -181,7 +179,13 @@ const joinRecipients = (chips: string[], typing: string): string => [...chips, t
 function ComposeMeta() {
   const draft = useStore(composeDraft)
   const to = useRef<HTMLInputElement>(null)
-  useEffect(() => { to.current?.focus() }, [])
+  // The cursor starts where the person has something left to say: in the To field while there is nobody there, in the Subject once
+  // the page opened addressed (from a conversation, or a path in the address bar).
+  useEffect(() => {
+    if (splitRecipients(composeDraft.get().to).chips.length === 0) { to.current?.focus(); return }
+    const frame = requestAnimationFrame(() => document.getElementById('conv-subject-input')?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [])
   const { chips, typing } = splitRecipients(draft.to)
   const known = chips[0] ?? typing.trim()
   // Two or more recipients are a group: the picture is then drawn in the other style (Bauhaus), from all their names.
@@ -243,7 +247,7 @@ function ComposeMeta() {
 }
 
 /** Who the thread is with. */
-function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadGroup | undefined; hidden: boolean; groupName: string | undefined; titleLine: ReactNode; nav: ThreadNav | undefined }) {
+function ConvMeta({ group, hidden, groupName, titleLine, nav, infoOpen, onCloseInfo }: { group: ThreadGroup | undefined; hidden: boolean; groupName: string | undefined; titleLine: ReactNode; nav: ThreadNav | undefined; infoOpen: boolean; onCloseInfo: () => void }) {
   const self = useSelf()
   const msgs = group?.messages.map(p => p.msg) ?? []
   const first = msgs[0]
@@ -253,13 +257,32 @@ function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadG
   const address = counterpart.startsWith('did:') ? labelForDid(counterpart) : counterpart
   const fields = useRef<HTMLDivElement>(null)
   useIslandWheel(fields, nav)
+  // The card grows or shrinks to what it now shows: its height is set from the old one to the new one and let go when it arrives.
+  const card = fields
+  const lastHeight = useRef(0)
+  useLayoutEffect(() => {
+    const el = card.current
+    if (!el || hidden) return
+    const to = el.offsetHeight
+    const from = lastHeight.current
+    lastHeight.current = to
+    if (!from || from === to || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    el.style.height = `${from}px`
+    el.style.overflow = 'hidden'
+    void el.offsetHeight
+    el.style.transition = 'height 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+    el.style.height = `${to}px`
+    const done = () => { el.style.height = ''; el.style.overflow = ''; el.style.transition = ''; el.removeEventListener('transitionend', done) }
+    el.addEventListener('transitionend', done)
+  }, [infoOpen, group?.key, hidden])
+  useLayoutEffect(() => { if (card.current && !hidden && !card.current.style.height) lastHeight.current = card.current.offsetHeight })
   return (
     <div id="conv-meta" style={hidden ? { display: 'none' } : undefined}>
-      <div id="conv-fields" ref={fields}>
+      <div id="conv-fields" ref={fields} className={group && infoOpen ? 'info' : undefined}>
         <div id="conv-to">
           <span id="conv-did" />
           {isGroup ? <>
-            <div id="conv-text">
+            <div id="conv-text" style={group && infoOpen ? { display: 'none' } : undefined}>
               <div id="conv-line1"><GroupStrip groupId={first.thread_id.slice(DIDCOMM_GROUP_THREAD_PREFIX.length)} name={groupName ?? 'Group'} /></div>
               <div id="conv-line2">{titleLine}</div>
             </div>
@@ -267,7 +290,7 @@ function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadG
             // Like the account page's identity card: the counterparty's picture, and beside it two lines: the name and the address, then the new-message button and the subject.
             <>
               <div id="conv-avatar" className="lp-avatar" style={{ background: avatarColor(avatarSeed(counterpart) || name) }}>{avatarOf(counterpart) ? <img className="lp-avatar-img" src={avatarOf(counterpart)} alt="" /> : <GeneratedAvatar name={avatarSeed(counterpart) || name} />}</div>
-              <div id="conv-text">
+              <div id="conv-text" style={group && infoOpen ? { display: 'none' } : undefined}>
                 <div id="conv-line1">
                   <span id="conv-name">{name}</span>
                   {address && address !== name ? <span id="conv-address">{address}</span> : null}
@@ -276,6 +299,8 @@ function ConvMeta({ group, hidden, groupName, titleLine, nav }: { group: ThreadG
               </div>
             </>
           ) : null}
+          {/* The headers take the place of the name and title; the picture stays where it is. */}
+          {group && infoOpen ? <MetaInfo group={group} onClose={onCloseInfo} /> : null}
           <IslandNav nav={nav} />
         </div>
         <div id="conv-cc" />
@@ -415,8 +440,16 @@ export function RightCol() {
   }, [])
 
 
+  // From a conversation, a new message starts addressed to the people it is with (settled with a space, so each shows as a chip).
+  const newMessage = () => {
+    if (onThread && focused) {
+      const to = participantsOf(focused.messages.map(p => p.msg), self).split(', ').filter(Boolean).map(a => a.startsWith('did:') ? labelForDid(a) : a)
+      if (to.length) composeDraft.set(current => ({ ...current, to: `${to.join(' ')} ` }))
+    }
+    showComposePage()
+  }
   const newThreadButton = (
-    <button className="reply-compose-btn" type="button" title="New message" aria-label="New message" onClick={showComposePage} onMouseEnter={() => setComposeHover(true)} onMouseLeave={() => setComposeHover(false)} onFocus={() => setComposeHover(true)} onBlur={() => setComposeHover(false)}>
+    <button className="reply-compose-btn" type="button" title="New message" aria-label="New message" onClick={newMessage} onMouseEnter={() => setComposeHover(true)} onMouseLeave={() => setComposeHover(false)} onFocus={() => setComposeHover(true)} onBlur={() => setComposeHover(false)}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -447,7 +480,7 @@ export function RightCol() {
         <div id="conv-top" className={[scrolled ? 'scrolled' : '', compact ? 'compact' : ''].filter(Boolean).join(' ') || undefined}>
           {page === 'account' ? <AccountIsland /> : null}
           {page === 'compose' ? <ComposeMeta /> : null}
-          <ConvMeta group={focused} hidden={!onThread} groupName={groupName} titleLine={<>{newThreadButton}{titleText}</>} nav={nav} />
+          <ConvMeta group={focused} hidden={!onThread} groupName={groupName} titleLine={<>{newThreadButton}{titleText}</>} nav={nav} infoOpen={onThread && metaOpen} onCloseInfo={() => setMetaOpen(false)} />
           {/* On the account page the menu button sits at the end of the identity card instead (pages/account-page.tsx). */}
           {page === 'account' ? null : <div id="header-right">
             <button id="lp-hamburger" aria-label="menu" className={titleClass} {...hamburgerTrigger}><HamburgerDots id="lp-hamburger-icon" /></button>
@@ -462,7 +495,6 @@ export function RightCol() {
           </div>
         )}
         <div id="right-pane">
-          <MetaInfo group={focused} open={onThread && metaOpen} />
           {/* No account: the message can be written, but sending needs one. The line is said in the field the thread's headers use. */}
           {page === 'compose' && (accountless || problem) ? <SendAsNotice /> : null}
           <PageHost />

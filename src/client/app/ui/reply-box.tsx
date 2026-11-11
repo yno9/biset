@@ -12,6 +12,7 @@ import { savePendingSend, sendComposed, sendProblem, signingUp } from './pages/c
 import { randomAlias, canSignUpInBackground, createAccountInBackground, heldIdentity, provisionalAlias } from './signup-preload.ts'
 import { getAccountConfig } from './account/state.ts'
 import { shell } from './stores.ts'
+import { mixInk, usePartColors } from './color-settings.ts'
 import { sendToHelper } from './helper.ts'
 
 export interface ReplySendInput {
@@ -80,6 +81,8 @@ export const setReplyDraft = (key: string, text: string): void => { drafts.set(k
 
 export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftKey: string; group?: ThreadGroup; mode?: ReplyBoxMode; command?: ReactNode }) {
   const config = useStore(composeConfig)
+  // The Log in button's colour: the five avatar colours mixed, darker than white needs.
+  const ink = mixInk(usePartColors('avatar'), 8)
   const [text, setText] = useState(() => drafts.get(draftKey) ?? '')
   useEffect(() => { if (text) drafts.set(draftKey, text); else drafts.delete(draftKey) }, [draftKey, text])
   const [sending, setSending] = useState(false)
@@ -228,13 +231,13 @@ export function ReplyBox({ draftKey, group, mode = 'normal', command }: { draftK
           {/* The account's box shows its shortcuts while it is empty; once something is typed they step aside for the send button. */}
           {mode === 'me' ? command : (
             <button className="reply-attach-btn" type="button" title="Attach file">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14" /><path d="M5 12h14" /></svg>
             </button>
           )}
           <div className="t-send-wrap">
             <div className="t-send-avatar" />
-            <button className="t-send-btn" disabled={sending} onClick={() => { void send() }}>
-              <svg viewBox="0 0 24 24"><path d="M2 12L22 2L12 22L10 14L2 12Z" /></svg>
+            <button className="t-send-btn" disabled={sending} style={{ '--nu-ink': ink } as React.CSSProperties} onClick={() => { void send() }}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
             </button>
           </div>
         </div>

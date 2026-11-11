@@ -60,12 +60,18 @@ export interface PlaintextOptions {
   fromPrior?: string
 }
 
+/** A message id (DIDComm v2.1, "Message IDs": at most 32 bytes of unreserved URI characters, globally unique): a random UUID's 32
+ * hexadecimal digits. (A UUID as written, with its hyphens, is 36 bytes.) */
+export function newDidCommId(): string {
+  return crypto.randomUUID().replaceAll('-', '')
+}
+
 /** `to` is the message's audience: one DID, or several when the same
  * plaintext goes to several parties (DIDComm v2.1 `to`; each recipient learns
  * who else it was addressed to, like an email's To/Cc). */
 export function buildPlaintext(type: string, body: unknown, from?: string, to?: string | readonly string[], opts: PlaintextOptions = {}): DidCommPlaintext {
   const msg: DidCommPlaintext = {
-    id: opts.id ?? crypto.randomUUID(),
+    id: opts.id ?? newDidCommId(),
     typ: 'application/didcomm-plain+json',
     type, body,
     created_time: opts.createdTime ?? nowEpochSeconds(),

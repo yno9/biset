@@ -2,8 +2,10 @@
 //
 // A message is committed locally first (the durable outbox), then sent to each recipient's public DID from this device's own
 // key. `thid` makes it part of a group conversation: the same message, addressed to every participant (group-chat.ts).
+import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
+import { newDidCommId } from '../../../protocol/didcomm/message.ts'
 import { resolveRecipient } from '../../didcomm/address-resolver.ts'
-import { didCommThreadId } from '../../didcomm/basicmessage.ts'
+import { didCommThidOf, didCommThreadOf } from '../../didcomm/basicmessage.ts'
 import { didcommGroupAddress, groupConversation, parseDidCommGroupAddress } from '../../didcomm/group-chat.ts'
 import type { WalletDidCommOutbox } from '../../identity/wallet/didcomm-outbox.ts'
 import { rotationReader } from '../../store/projection/contacts.ts'
@@ -34,22 +36,29 @@ export function createOutgoing(options: {
     const snapshot = await vault.snapshot()
     return groupConversation(thid, snapshot.emails, rotationReader(snapshot.contactCards))
   }
-  const queue = async (recipients: string[], input: ReplySendInput, group?: { thid: string }, inReplyTo?: string): Promise<void> => {
+  const queue = async (recipients: string[], input: ReplySendInput, group?: { thid: string }, answered?: { id: string; threadId: string; messageId?: string }): Promise<void> => {
     const outbox = options.outbox()
     if (!outbox) throw new Error('DIDComm is still connecting for this Wallet session')
     if (recipients.length === 0) throw new Error('A DIDComm message needs a recipient')
     const now = new Date().toISOString()
-    const messageId = crypto.randomUUID()
+    const messageId = newDidCommId()
+    // A 1:1 message with a DID is a thread of the conversation: a reply is in the thread it answers (named by the id of its first
+    // message), and anything else starts one, named by its own id. A reply in a conversation from before threads starts one at the
+    // message it answers. With a mail address (a bridge DID) every message is a thread of its own and a reply is chained to the
+    // message it answers by `inReplyTo`, as a mail client does: the bridge sends that message's id as In-Reply-To (didmail
+    // PROTOCOL.md §6.2), and mail coming back names its parent the same way.
+    const mail = !group && mailAddressOfBridgeDid(recipients[0]!) !== undefined
+    const thid = group ? undefined : mail || !answered ? messageId : (didCommThidOf(answered.threadId) ?? answered.messageId ?? messageId)
     await vault.mutationSink.commitMailMessage({
       email: {
         id: crypto.randomUUID(),
         // A group conversation is its `thid`, carried by every message of it.
-        threadId: group ? didcommGroupAddress(group.thid) : didCommThreadId(vault.identityId, recipients[0]!),
+        threadId: group ? didcommGroupAddress(group.thid) : didCommThreadOf(vault.identityId, recipients[0]!, thid!),
         mailboxIds: { outbox: true }, keywords: { '$seen': true },
         receivedAt: now, sentAt: now, from: [{ email: vault.identityId }], to: recipients.map(email => ({ email })),
         ...(input.subject ? { subject: input.subject } : {}),
         messageId,
-        ...(inReplyTo ? { inReplyTo } : {}),
+        ...(answered ? { inReplyTo: answered.messageId ?? answered.id } : {}),
       },
       rawRfc5322: new TextEncoder().encode(input.body),
       didComm: recipients.map(toDid => ({ messageId, toDid })),
@@ -64,7 +73,7 @@ export function createOutgoing(options: {
     async send(input) {
       if (!options.outbox()) throw new Error('DIDComm is still connecting for this Wallet session')
       const snapshot = await vault.snapshot()
-      const answered = input.inReplyTo ? snapshot.emails.find(email => email.id === input.inReplyTo) : undefined
+      const answered = input.inReplyTo ? snapshot.emails.find(email => email.messageId === input.inReplyTo || email.id === input.inReplyTo) : undefined
       // A reply in a group conversation goes to every participant of its latest message but this identity (reply-all).
       if (answered?.threadId.startsWith('didcomm-group:')) {
         const thid = parseDidCommGroupAddress(answered.threadId)
@@ -78,9 +87,9 @@ export function createOutgoing(options: {
       if (toDids.length === 0 || !toDids.every(address => address.startsWith('did:'))) throw new Error('A did.md Wallet session composes to DID recipients or mail addresses only')
       const recipients = [...new Set(toDids)].filter(address => !sameIdentity(address, options.did))
       // Several recipients start a group conversation of its own.
-      if (recipients.length >= 2) return queue(recipients, input, { thid: crypto.randomUUID() })
+      if (recipients.length >= 2) return queue(recipients, input, { thid: newDidCommId() })
       // A reply to the one counterparty answers the message it replies to.
-      await queue(recipients, input, undefined, recipients.length === 1 ? answered?.id : undefined)
+      await queue(recipients, input, undefined, recipients.length === 1 ? answered : undefined)
     },
     async writeNote(body) {
       const now = new Date().toISOString()
