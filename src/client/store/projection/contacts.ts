@@ -512,9 +512,10 @@ export function autocryptKeyPatch(cardId: string, entry: AutocryptKeyEntry): Con
   return { cardId, patch: { [`${pointerToken(AUTOCRYPT_CONTACT_PROPERTY)}/keys/${autocryptKeyId(entry.keydata)}`]: { ...entry } as unknown as CanonicalValue } }
 }
 
-/** Whether `keydata` is among the keys held for the card. */
-export function holdsAutocryptKey(card: LocalJmapContactCard | undefined, keydata: string): boolean {
-  return card !== undefined && autocryptKeyId(keydata) in ((card[AUTOCRYPT_CONTACT_PROPERTY] as AutocryptContactState | undefined)?.keys ?? {})
+/** Whether `keydata` is already held for the card as one that is to be written to encrypted (verified, or `mutual`). */
+export function holdsKeyForEncryption(card: LocalJmapContactCard | undefined, keydata: string): boolean {
+  const entry = card && (card[AUTOCRYPT_CONTACT_PROPERTY] as AutocryptContactState | undefined)?.keys?.[autocryptKeyId(keydata)]
+  return entry !== undefined && (entry.verified === true || entry.preferEncrypt === 'mutual')
 }
 
 /** The counterparty's current key: a verified one first (a Secure-Join handshake vouched for it), else the one its newest

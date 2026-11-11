@@ -2,7 +2,7 @@
 import { openStoredMail } from '../../pgp/open.ts'
 import { dmarcPassOfStoredBody } from '../../pgp/stored.ts'
 import { mailAddressOfBridgeDid } from '../../pgp/autocrypt.ts'
-import { autocryptKeyPatch, contactAvatarPatch, contactCardForDid, contactNamePatch, currentAutocryptKey, holdsAutocryptKey } from '../../store/projection/contacts.ts'
+import { autocryptKeyPatch, contactAvatarPatch, contactCardForDid, contactNamePatch, currentAutocryptKey, holdsKeyForEncryption } from '../../store/projection/contacts.ts'
 import { base64ToBytes } from '../../../protocol/base64.ts'
 import { errorMessage } from '../../../protocol/error-message.ts'
 import { markSeenDone, setMarkSeenHandler } from '../ui/seen.ts'
@@ -44,9 +44,9 @@ export function installInboxHandlers(vault: AccountVault, mail: OwnMail | undefi
     })
     // The key a mail client with no Autocrypt attached (and signed with) is kept like an Autocrypt key. The sender wrote encrypted, so it is
     // kept as one that wants encryption (`mutual`, as shouldEncrypt reads it): the next mail goes to it encrypted.
-    if (opened?.senderKey && !holdsAutocryptKey(card, opened.senderKey)) {
+    if (opened?.senderKey && !holdsKeyForEncryption(card, opened.senderKey)) {
       const senderKey = opened.senderKey
-      void vault.writeContact(did, (cardId, current) => [holdsAutocryptKey(current, senderKey) ? undefined : autocryptKeyPatch(cardId, { keydata: senderKey, seenAt: new Date(opened.sentAt ?? Date.now()).toISOString(), preferEncrypt: 'mutual' })])
+      void vault.writeContact(did, (cardId, current) => [holdsKeyForEncryption(current, senderKey) ? undefined : autocryptKeyPatch(cardId, { keydata: senderKey, seenAt: new Date(opened.sentAt ?? Date.now()).toISOString(), preferEncrypt: 'mutual' })])
         .then(async written => { if (written) await vault.refresh() })
         .catch(error => console.warn('[attached key]', errorMessage(error)))
     }
